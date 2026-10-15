@@ -19,7 +19,7 @@ Leave the `PORT` stack variable unset to run and publish the app on port **5656*
 
 ### Choose where persistent data lives
 
-The stack stores its data in a folder on the **Docker host** (the machine managed by this Portainer endpoint), mounted inside the container at `/var/lib/101conv`. The H2 database, uploads, user settings, converter configuration, and job files remain in that host folder when the container is replaced.
+The stack stores its data in a folder on the **Docker host** (the machine managed by this Portainer endpoint), mounted inside the container at `/var/lib/101conv`. The H2 database, uploads, user settings, converter configuration, and job files remain in that host folder when the container is replaced. At startup, the app creates a `tmp` subfolder inside the data folder for Tomcat and upload temporary files.
 
 In the Portainer stack editor, add a stack environment variable named `DATA_PATH` and set it to your chosen folder's absolute path on the Docker host, for example `/mnt/storage/apps/101conv`. The path must be on the machine managed by the Portainer endpoint, not inside the app container or on your browser's computer. `DATA_PATH` is required; the stack does not assume a particular host folder.
 

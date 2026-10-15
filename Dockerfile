@@ -42,4 +42,4 @@ ENV SERVER_PORT=5656 \
     APP_USER_CONFIG_FILE=/var/lib/101conv/user-config.properties \
     SPRING_DATASOURCE_URL='jdbc:h2:file:/var/lib/101conv/convdb;MODE=MySQL'
 EXPOSE 5656
-ENTRYPOINT ["java", "-Djava.io.tmpdir=/var/lib/101conv/tmp", "-jar", "/opt/101conv/app.jar"]
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p /var/lib/101conv/tmp && exec java -Djava.io.tmpdir=/var/lib/101conv/tmp -jar /opt/101conv/app.jar"]
