@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Converter Dashboard</title>
+  <title>Convert · 101conv</title>
   <script>
     (function() {
       const savedTheme = localStorage.getItem('theme') || 'dark';
@@ -26,16 +26,14 @@
 
   <div class="dashboard">
     <aside class="sidebar" id="sidebar">
-      <div class="logo">
-        <div class="logo-icon">CV</div>
-        <span class="logo-text">101Conv</span>
-      </div>
+      <a class="logo" href="/html/index.html"><div class="logo-icon">101</div><span class="logo-text">101conv</span></a>
 
       <nav class="nav-section">
         <div class="nav-label">Converter</div>
         <a href="/html/index.html" class="nav-item active">Convert</a>
         <a href="/html/compress.html" class="nav-item">Compress</a>
         <a href="/html/history.html" class="nav-item">History</a>
+        <a href="/html/profiles.html" class="nav-item">Profiles</a>
         <a href="/html/settings.html" class="nav-item">Settings</a>
       </nav>
 
@@ -50,8 +48,9 @@
     <main class="main-content">
       <div class="header">
         <div class="header-left">
-          <h1>File Converter</h1>
-          <p class="header-subtitle">Signed-in single-file conversions run as background jobs with live status and downloadable results.</p>
+          <div class="eyebrow">PRIVATE FILE WORKSPACE</div>
+          <h1>Convert files, your way.</h1>
+          <p class="header-subtitle">Pick a format, choose an installed engine, and follow the job through to its result.</p>
           <p id="conversionModeHint" class="status-line" aria-live="polite"></p>
         </div>
       </div>
@@ -134,7 +133,7 @@
       </div>
 
       <footer class="copyright">
-        Converter UI based on TemplateMo 609 Crypto Vault
+        101conv · Private file conversion
       </footer>
     </main>
   </div>
@@ -560,7 +559,7 @@ async function loadUiConfig() {
       const conversionModeHint = document.getElementById("conversionModeHint");
       if (convUser.isAuthenticated()) {
         conversionModeHint.textContent = Array.isArray(payload.converters) && payload.converters.length === 0
-          ? "You are signed in. No converters are installed yet, so format choices are unavailable. Add a reviewed converter configuration under DATA_PATH/converter-configs on the Docker host to enable jobs."
+          ? "Your engine library is empty. An administrator can add a trusted catalog and install a profile from Profiles."
           : "You are signed in. Single-file conversions are submitted to the background worker; this page tracks the job and keeps the result available for download. Folder batches still use the current synchronous workflow.";
       } else {
         conversionModeHint.textContent = "Sign in to use tracked background jobs. Anonymous conversions continue using the existing workflow.";

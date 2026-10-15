@@ -31,9 +31,9 @@ public class ConverterRegistry {
 
     private final ObjectMapper objectMapper;
     private final ConversionOptionsService conversionOptionsService;
-    private final List<ConverterModule> activeConverters;
-    private final Map<String, ConverterModule> byId;
-    private final Map<String, Set<String>> mergedFormats;
+    private volatile List<ConverterModule> activeConverters = List.of();
+    private volatile Map<String, ConverterModule> byId = Map.of();
+    private volatile Map<String, Set<String>> mergedFormats = Map.of();
 
     public ConverterRegistry(
             UserConfigService userConfigService,
@@ -43,9 +43,14 @@ public class ConverterRegistry {
         this.processRunner = processRunner;
         this.objectMapper = new ObjectMapper();
         this.conversionOptionsService = conversionOptionsService;
-        this.activeConverters = discoverActiveConverters();
-        this.byId = indexById(activeConverters);
-        this.mergedFormats = buildMergedFormatMap(activeConverters);
+        refresh();
+    }
+
+    public synchronized void refresh() {
+        List<ConverterModule> discovered = discoverActiveConverters();
+        activeConverters = discovered;
+        byId = indexById(discovered);
+        mergedFormats = buildMergedFormatMap(discovered);
     }
 
     public List<ConverterModule> getActiveConverters() {

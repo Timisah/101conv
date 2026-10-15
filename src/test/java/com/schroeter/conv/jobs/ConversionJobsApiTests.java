@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.nio.file.Files;
@@ -50,6 +51,12 @@ class ConversionJobsApiTests {
     void submitsDurableJobAndScopesStatusAndResultToOwner() throws Exception {
         Cookie alice = register("alice");
         Cookie bob = register("bob");
+        mvc.perform(get("/api/v1/profiles")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/profiles").cookie(bob)).andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/profiles").cookie(alice)).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/profiles/catalogs").cookie(alice)
+                        .contentType("application/json").content("{\"url\":\"http://localhost/catalog.json\"}"))
+                .andExpect(status().isBadRequest());
         MockMultipartFile file = new MockMultipartFile("file", "input.txt", "text/plain", "hello jobs".getBytes());
 
         MvcResult submitted = mvc.perform(multipart("/api/v1/jobs").file(file)
