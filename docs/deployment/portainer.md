@@ -21,14 +21,16 @@ Leave the `PORT` stack variable unset to run and publish the app on port **5656*
 
 The stack stores its data in a folder on the **Docker host** (the machine managed by this Portainer endpoint), mounted inside the container at `/var/lib/101conv`. The H2 database, uploads, user settings, converter configuration, and job files remain in that host folder when the container is replaced.
 
-Before deploying, create the folder on the Docker host and give it to the container's unprivileged user (UID/GID `10001`):
+In the Portainer stack editor, add a stack environment variable named `DATA_PATH` and set it to your chosen folder's absolute path on the Docker host, for example `/mnt/storage/apps/101conv`. The path must be on the machine managed by the Portainer endpoint, not inside the app container or on your browser's computer. `DATA_PATH` is required; the stack does not assume a particular host folder.
+
+Before deploying, create your chosen folder on the Docker host and give it to the container's unprivileged user (UID/GID `10001`). For example, if you set `DATA_PATH=/mnt/storage/apps/101conv`:
 
 ```sh
-sudo mkdir -p /srv/101conv
-sudo chown 10001:10001 /srv/101conv
+sudo mkdir -p /mnt/storage/apps/101conv
+sudo chown 10001:10001 /mnt/storage/apps/101conv
 ```
 
-The default host folder is `/srv/101conv`. To use a different location, add a Portainer stack environment variable named `DATA_PATH` with the absolute path, such as `/mnt/storage/101conv`. Create that folder and set the same ownership before deploying. The folder must already exist; the stack deliberately fails instead of silently creating an unexpected host folder.
+The folder must already exist; the stack deliberately fails instead of silently creating an unexpected host folder. If your host uses a different UID mapping or filesystem permission model, make sure UID `10001` can write to the selected folder.
 
 Open `http://<docker-host-address>:5656/`, or use the host port you selected.
 

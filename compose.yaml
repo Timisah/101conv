@@ -13,7 +13,7 @@ services:
       SPRING_SERVLET_MULTIPART_LOCATION: /var/lib/101conv/tmp
     volumes:
       - type: bind
-        source: ${DATA_PATH:-/srv/101conv}
+        source: ${DATA_PATH:?Set DATA_PATH to an existing directory on the Docker host}
         target: /var/lib/101conv
         bind:
           create_host_path: false
