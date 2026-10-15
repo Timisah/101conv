@@ -47,6 +47,8 @@ input,select,textarea { background: #101b18 !important; color: var(--conv-paper)
 .catalog-title,.catalog-profile,.profile-item { display:flex; align-items:center; justify-content:space-between; gap:14px; }
 .catalog-title h3,.catalog-profile h4,.profile-item h3 { margin:0 0 4px; color:var(--conv-paper); font-size:14px; }
 .catalog-title p,.catalog-profile p,.profile-item p { color:var(--conv-muted); margin:0; font-size:12px; overflow-wrap:anywhere; line-height:1.5; }
+.official-badge { display:inline-block; vertical-align:middle; padding:3px 6px; border:1px solid #63784d; border-radius:999px; color:var(--conv-lime); font-size:9px; letter-spacing:.08em; }
+.catalog-version { margin-top:14px; color:#82958a; font-size:11px; text-align:right; }
 .catalog-profile { padding:14px 0 0; }
 .catalog-profile>div { min-width:0; }
 .profile-item { justify-content:flex-start; padding:17px 0; border-bottom:1px solid var(--conv-line); }

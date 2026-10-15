@@ -9,15 +9,19 @@ public final class ProfileCatalogModels {
     private ProfileCatalogModels() {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Catalog(int version, List<Entry> profiles) {}
+    public record Catalog(int version, String minimumAppVersion, String maximumAppVersionExclusive, List<Entry> profiles) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Entry(String id, String version, String name, String description, String manifestUrl) {}
+    public record Entry(String id, String version, String name, String description, String manifestUrl,
+            String minimumAppVersion, String maximumAppVersionExclusive) {}
+
+    public record CatalogResponse(List<Entry> profiles, int incompatibleProfiles, String applicationVersion) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Manifest(
             int schemaVersion, String id, String version, String name, String description,
-            String author, String license, String homepage, Artifact artifact, Converter converter) {}
+            String author, String license, String homepage, String minimumAppVersion,
+            String maximumAppVersionExclusive, Artifact artifact, Converter converter) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Artifact(String url, String sha256, String format, String platform, String executable) {}
@@ -32,6 +36,6 @@ public final class ProfileCatalogModels {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Installed(String id, String version, String name, String license, String sha256) {}
 
-    public record Source(String id, String url) {}
+    public record Source(String id, String name, String url, boolean builtIn) {}
     public record CatalogView(List<Source> sources, List<Entry> profiles, List<Installed> installed) {}
 }

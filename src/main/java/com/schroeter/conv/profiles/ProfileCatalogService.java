@@ -36,6 +36,8 @@ import com.schroeter.conv.converters.ConverterRegistry;
 
 @Service
 public class ProfileCatalogService {
+    private static final String BUILT_IN_CATALOG_ID = "101conv-official";
+    private static final String BUILT_IN_CATALOG_NAME = "101conv Official Catalog";
     private static final long MAX_CATALOG_BYTES = 1_000_000;
     private static final long MAX_MANIFEST_BYTES = 256_000;
     private static final long MAX_PACKAGE_BYTES = 512L * 1024 * 1024;
@@ -45,6 +47,8 @@ public class ProfileCatalogService {
     private final Path dataDir;
     private final Path converterConfigDir;
     private final ConverterRegistry registry;
+    private final String builtInCatalogUrl;
+    private final String applicationVersion;
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
             .followRedirects(HttpClient.Redirect.NEVER)
@@ -52,39 +56,51 @@ public class ProfileCatalogService {
 
     public ProfileCatalogService(
             @Value("${app.data-dir:./data/101conv}") String dataDir,
+            @Value("${app.profiles.catalog-url:https://raw.githubusercontent.com/Timisah/101conv/main/catalog/index.json}") String builtInCatalogUrl,
             UserConfigService userConfigService,
             ConverterRegistry registry) {
         this.dataDir = Path.of(dataDir).toAbsolutePath().normalize();
         this.converterConfigDir = Path.of(userConfigService.converterConfigDir()).toAbsolutePath().normalize();
         this.registry = registry;
+        this.builtInCatalogUrl = builtInCatalogUrl.trim();
+        String implementationVersion = ProfileCatalogService.class.getPackage().getImplementationVersion();
+        this.applicationVersion = implementationVersion == null || implementationVersion.isBlank() ? "0.0.1-SNAPSHOT" : implementationVersion;
     }
 
     public synchronized List<Source> sources() {
-        return loadSources();
+        List<Source> all = new ArrayList<>();
+        all.add(new Source(BUILT_IN_CATALOG_ID, BUILT_IN_CATALOG_NAME, builtInCatalogUrl, true));
+        all.addAll(loadSources());
+        return List.copyOf(all);
     }
 
     public synchronized List<Source> addSource(String rawUrl) {
         URI uri = safeHttps(rawUrl);
         List<Source> sources = new ArrayList<>(loadSources());
-        if (sources.stream().noneMatch(s -> s.url().equals(uri.toString()))) {
-            sources.add(new Source(UUID.randomUUID().toString(), uri.toString()));
+        if (sources().stream().noneMatch(s -> s.url().equals(uri.toString()))) {
+            sources.add(new Source(UUID.randomUUID().toString(), uri.getHost(), uri.toString(), false));
             saveSources(sources);
         }
-        return List.copyOf(sources);
+        return sources();
     }
 
-    public synchronized List<Entry> catalog(String sourceId) {
+    public synchronized CatalogResponse catalog(String sourceId) {
         Catalog catalog = fetchCatalog(source(sourceId).url());
         if (catalog == null || catalog.version() != 1 || catalog.profiles() == null) {
             throw new IllegalArgumentException("Catalog must use version 1 and contain a profiles list.");
         }
-        return catalog.profiles().stream().map(this::validateEntry).toList();
+        validateVersionRange(catalog.minimumAppVersion(), catalog.maximumAppVersionExclusive());
+        requireApplicationCompatibility(catalog.minimumAppVersion(), catalog.maximumAppVersionExclusive());
+        List<Entry> entries = catalog.profiles().stream().map(this::validateEntry).toList();
+        List<Entry> compatible = entries.stream().filter(this::supportsApplication).toList();
+        return new CatalogResponse(compatible, entries.size() - compatible.size(), applicationVersion);
     }
 
     public synchronized Manifest profile(String sourceId, String profileId, String version) {
         Entry entry = findEntry(sourceId, profileId, version);
         Manifest manifest = fetchJson(entry.manifestUrl(), MAX_MANIFEST_BYTES, Manifest.class);
         validateManifest(manifest, entry);
+        requireApplicationCompatibility(manifest.minimumAppVersion(), manifest.maximumAppVersionExclusive());
         return manifest;
     }
 
@@ -106,6 +122,7 @@ public class ProfileCatalogService {
         Entry entry = findEntry(sourceId, profileId, version);
         Manifest manifest = fetchJson(entry.manifestUrl(), MAX_MANIFEST_BYTES, Manifest.class);
         validateManifest(manifest, entry);
+        requireApplicationCompatibility(manifest.minimumAppVersion(), manifest.maximumAppVersionExclusive());
         Path installedRoot = dataDir.resolve("profiles").resolve(manifest.id()).resolve(manifest.version()).normalize();
         Path profileRoot = dataDir.resolve("profiles").resolve(manifest.id()).normalize();
         if (!installedRoot.startsWith(profileRoot) || Files.exists(profileRoot)) {
@@ -161,7 +178,7 @@ public class ProfileCatalogService {
     }
 
     private Entry findEntry(String sourceId, String profileId, String version) {
-        return catalog(sourceId).stream().filter(e -> e.id().equals(profileId) && e.version().equals(version))
+        return catalog(sourceId).profiles().stream().filter(e -> e.id().equals(profileId) && e.version().equals(version))
                 .findFirst().orElseThrow(() -> new IllegalArgumentException("Profile is not listed in this catalog."));
     }
 
@@ -169,6 +186,7 @@ public class ProfileCatalogService {
         if (entry == null || !safeId(entry.id()) || entry.version() == null || entry.version().isBlank()
                 || entry.name() == null || entry.name().isBlank()) throw new IllegalArgumentException("Catalog contains an invalid profile entry.");
         safeHttps(entry.manifestUrl());
+        validateVersionRange(entry.minimumAppVersion(), entry.maximumAppVersionExclusive());
         return entry;
     }
 
@@ -182,6 +200,7 @@ public class ProfileCatalogService {
         if (!"zip".equalsIgnoreCase(m.artifact().format())) throw new IllegalArgumentException("Only ZIP packages are supported in this release.");
         if (!platform().equalsIgnoreCase(m.artifact().platform())) throw new IllegalArgumentException("This profile package is not compatible with the running server (" + platform() + ").");
         safeHttps(m.artifact().url());
+        validateVersionRange(m.minimumAppVersion(), m.maximumAppVersionExclusive());
         if (m.artifact().sha256() == null || !m.artifact().sha256().matches("(?i)[0-9a-f]{64}")) throw new IllegalArgumentException("Profile must provide a SHA-256 checksum.");
         String executable = m.artifact().executable();
         if (executable == null || executable.isBlank() || executable.startsWith("/") || executable.contains("\\") || executable.contains("..")) throw new IllegalArgumentException("Profile executable path is unsafe.");
@@ -252,11 +271,11 @@ public class ProfileCatalogService {
     }
 
     private Source source(String id) {
-        return loadSources().stream().filter(s -> s.id().equals(id)).findFirst().orElseThrow(() -> new IllegalArgumentException("Catalog source not found."));
+        return sources().stream().filter(s -> s.id().equals(id)).findFirst().orElseThrow(() -> new IllegalArgumentException("Catalog source not found."));
     }
 
     private void saveSources(List<Source> sources) {
-        try { Files.createDirectories(dataDir); writeAtomic(dataDir.resolve("profile-catalogs.json"), mapper.writeValueAsBytes(sources)); }
+        try { Files.createDirectories(dataDir); writeAtomic(dataDir.resolve("profile-catalogs.json"), mapper.writeValueAsBytes(sources.stream().filter(s -> !s.builtIn()).toList())); }
         catch (IOException e) { throw new IllegalStateException("Could not save profile catalogs.", e); }
     }
 
@@ -308,6 +327,26 @@ public class ProfileCatalogService {
     }
 
     private static boolean safeId(String s) { return s != null && SAFE_ID.matcher(s).matches(); }
+
+    private boolean supportsApplication(Entry entry) {
+        return AppVersion.supports(applicationVersion, entry.minimumAppVersion(), entry.maximumAppVersionExclusive());
+    }
+
+    private void requireApplicationCompatibility(String minimum, String maximumExclusive) {
+        if (!AppVersion.supports(applicationVersion, minimum, maximumExclusive)) {
+            throw new IllegalArgumentException("This profile does not support 101conv " + applicationVersion + ".");
+        }
+    }
+
+    private static void validateVersionRange(String minimum, String maximumExclusive) {
+        if ((minimum == null || minimum.isBlank()) && (maximumExclusive == null || maximumExclusive.isBlank())) return;
+        if (minimum != null && !minimum.isBlank()) AppVersion.parse(minimum);
+        if (maximumExclusive != null && !maximumExclusive.isBlank()) AppVersion.parse(maximumExclusive);
+        if (minimum != null && !minimum.isBlank() && maximumExclusive != null && !maximumExclusive.isBlank()
+                && AppVersion.parse(minimum).compareTo(AppVersion.parse(maximumExclusive)) >= 0) {
+            throw new IllegalArgumentException("Profile app-version range must have a maximum greater than its minimum.");
+        }
+    }
 
     private static boolean isPublicAddress(InetAddress address) {
         byte[] b = address.getAddress();

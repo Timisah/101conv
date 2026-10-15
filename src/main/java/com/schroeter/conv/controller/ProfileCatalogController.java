@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.RestController;
 import com.schroeter.conv.auth.AuthService;
 import com.schroeter.conv.profiles.ProfileCatalogModels.Installed;
 import com.schroeter.conv.profiles.ProfileCatalogModels.Manifest;
-import com.schroeter.conv.profiles.ProfileCatalogModels.Source;
 import com.schroeter.conv.profiles.ProfileCatalogService;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -47,7 +46,7 @@ public class ProfileCatalogController {
     @GetMapping("/catalogs/{sourceId}")
     public ResponseEntity<?> catalog(@PathVariable String sourceId, HttpServletRequest request) {
         if (!admin(request)) return unauthorized();
-        try { return ResponseEntity.ok(Map.of("profiles", profiles.catalog(sourceId))); }
+        try { return ResponseEntity.ok(profiles.catalog(sourceId)); }
         catch (IllegalArgumentException e) { return badRequest(e); }
     }
 

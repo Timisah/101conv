@@ -53,7 +53,10 @@ class ConversionJobsApiTests {
         Cookie bob = register("bob");
         mvc.perform(get("/api/v1/profiles")).andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/profiles").cookie(bob)).andExpect(status().isForbidden());
-        mvc.perform(get("/api/v1/profiles").cookie(alice)).andExpect(status().isOk());
+        MvcResult profiles = mvc.perform(get("/api/v1/profiles").cookie(alice)).andExpect(status().isOk()).andReturn();
+        JsonNode profileBody = mapper.readTree(profiles.getResponse().getContentAsString());
+        assertEquals("101conv-official", profileBody.path("sources").get(0).path("id").asText());
+        assertEquals(true, profileBody.path("sources").get(0).path("builtIn").asBoolean());
         mvc.perform(post("/api/v1/profiles/catalogs").cookie(alice)
                         .contentType("application/json").content("{\"url\":\"http://localhost/catalog.json\"}"))
                 .andExpect(status().isBadRequest());

@@ -1,11 +1,81 @@
 openapi: 3.1.0
 info:
-  title: 101Conv Jobs API
+  title: 101Conv API
   version: 1.0.0
   description: Authenticated, asynchronous conversion jobs.
 servers:
   - url: /
 paths:
+  /api/v1/profiles:
+    get:
+      summary: List profile catalogs and installed profiles
+      description: Administrator session required.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Catalog sources and installed profile summaries }
+        '403': { description: Administrator access required }
+  /api/v1/profiles/catalogs:
+    post:
+      summary: Add a community profile catalog
+      description: The built-in 101conv catalog is always present and cannot be removed.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri, description: Public HTTPS catalog URL }
+      responses:
+        '200': { description: Updated catalog sources }
+        '400': { description: URL is invalid or not public HTTPS }
+        '403': { description: Administrator access required }
+  /api/v1/profiles/catalogs/{sourceId}:
+    parameters:
+      - { in: path, name: sourceId, required: true, schema: { type: string } }
+    get:
+      summary: List profiles supported by the running 101conv version
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Compatible profiles and count filtered out by app-version bounds
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profiles, incompatibleProfiles, applicationVersion]
+                properties:
+                  profiles: { type: array, items: { type: object } }
+                  incompatibleProfiles: { type: integer }
+                  applicationVersion: { type: string }
+        '400': { description: Catalog could not be read or does not support this app version }
+        '403': { description: Administrator access required }
+  /api/v1/profiles/catalogs/{sourceId}/{profileId}/{version}:
+    parameters:
+      - { in: path, name: sourceId, required: true, schema: { type: string } }
+      - { in: path, name: profileId, required: true, schema: { type: string } }
+      - { in: path, name: version, required: true, schema: { type: string } }
+    get:
+      summary: Fetch a compatible profile manifest for review
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Profile metadata, compatibility range, package checksum, and converter rules }
+        '400': { description: Profile is incompatible or its manifest is invalid }
+        '403': { description: Administrator access required }
+  /api/v1/profiles/catalogs/{sourceId}/{profileId}/{version}/install:
+    parameters:
+      - { in: path, name: sourceId, required: true, schema: { type: string } }
+      - { in: path, name: profileId, required: true, schema: { type: string } }
+      - { in: path, name: version, required: true, schema: { type: string } }
+    post:
+      summary: Verify and install a reviewed profile package
+      security: [{ sessionCookie: [] }]
+      responses:
+        '201': { description: Installed profile summary }
+        '400': { description: Package, checksum, or compatibility validation failed }
+        '403': { description: Administrator access required }
   /api/v1/jobs:
     post:
       summary: Submit a conversion job

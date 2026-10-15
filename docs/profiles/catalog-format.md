@@ -1,6 +1,6 @@
 # Converter profile catalogs
 
-Converter profiles let an administrator add a conversion engine without rebuilding the 101conv image. A fresh install has no profiles or catalogs. Catalogs are fetched only when an administrator opens them in **Profiles**.
+Converter profiles let an administrator add a conversion engine without rebuilding the 101conv image. The **101conv Official Catalog** is pre-added on every install; its current index is intentionally empty until official packages are published. Administrators can add community catalogs too. Catalogs are fetched only when an administrator opens them in **Profiles**.
 
 ## Catalog index
 
@@ -9,23 +9,27 @@ Serve a JSON document from a public HTTPS URL on port 443. Catalog URLs that res
 ```json
 {
   "version": 1,
+  "minimumAppVersion": "0.0.1",
+  "maximumAppVersionExclusive": "2.0.0",
   "profiles": [
     {
       "id": "example-converter",
       "version": "1.0.0",
       "name": "Example Converter",
       "description": "Example format support",
-      "manifestUrl": "https://downloads.example.org/profiles/example-converter-1.0.0.json"
+      "manifestUrl": "https://downloads.example.org/profiles/example-converter-1.0.0.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
     }
   ]
 }
 ```
 
-IDs and versions use letters, numbers, dots, underscores, and hyphens. The catalog document is limited to 1 MB.
+The catalog's application-version range applies to the entire index. Each entry can narrow the supported 101conv release range; incompatible entries are hidden and cannot be installed. The minimum is inclusive and the maximum is exclusive. Version comparison uses numeric major/minor/patch values; suffixes such as `-SNAPSHOT` do not change that release line. Omitted bounds mean unbounded compatibility. IDs and versions use letters, numbers, dots, underscores, and hyphens. The catalog document is limited to 1 MB.
 
 ## Profile manifest
 
-The linked manifest must repeat the catalog ID and version, describe the license and package source, provide a ZIP URL and SHA-256, and define the converter's format rules. Every rule must use `{var:executable}` as its first argument. Arguments are passed directly to the process without shell expansion.
+The linked manifest must repeat the catalog ID and version, describe the license and package source, provide a ZIP URL and SHA-256, and define the converter's format rules. Its optional 101conv version range can further narrow the catalog entry's range. Every rule must use `{var:executable}` as its first argument. Arguments are passed directly to the process without shell expansion.
 
 ```json
 {
@@ -37,6 +41,8 @@ The linked manifest must repeat the catalog ID and version, describe the license
   "author": "Example Maintainers",
   "license": "MIT",
   "homepage": "https://example.org/converter",
+  "minimumAppVersion": "0.1.0",
+  "maximumAppVersionExclusive": "1.0.0",
   "artifact": {
     "url": "https://downloads.example.org/example-converter-1.0.0-linux-amd64.zip",
     "sha256": "<64 hexadecimal characters>",
@@ -61,7 +67,7 @@ The linked manifest must repeat the catalog ID and version, describe the license
 
 The app accepts packages up to 512 MB, at most 10,000 ZIP entries, and expanded contents up to 2 GB. Paths that escape the package are rejected. The selected executable must exist in the extracted package and cannot be a `#!` script. Installer scripts are never run. The installed converter itself is still third-party software and runs when a conversion invokes it; only install profiles from sources you trust. Licenses remain the operator's responsibility.
 
-An administrator must review the manifest, source, license, and checksum in the UI and explicitly confirm installation. SHA-256 detects package mismatch; it does not establish who published a manifest. Signed catalog metadata and a curated official catalog are future work. Remove a catalog by deleting its entry from `profile-catalogs.json` under the persistent app data directory; installed profiles are stored separately under `profiles/` and their generated converter definitions in `converter-configs/`.
+The built-in catalog is hosted at `https://raw.githubusercontent.com/Timisah/101conv/main/catalog/index.json` and can be overridden with `app.profiles.catalog-url`. An administrator must review the manifest, source, license, and checksum in the UI and explicitly confirm installation. SHA-256 detects package mismatch; it does not establish who published a manifest. Signed catalog metadata and official profile packages are future work. Remove an added community catalog by deleting its entry from `profile-catalogs.json` under the persistent app data directory; installed profiles are stored separately under `profiles/` and their generated converter definitions in `converter-configs/`.
 
 ## Admin API
 
