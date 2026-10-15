@@ -12,7 +12,11 @@ services:
       SPRING_DATASOURCE_URL: "jdbc:h2:file:/var/lib/101conv/convdb;MODE=MySQL"
       SPRING_SERVLET_MULTIPART_LOCATION: /var/lib/101conv/tmp
     volumes:
-      - 101conv-data:/var/lib/101conv
+      - type: bind
+        source: ${DATA_PATH:-/srv/101conv}
+        target: /var/lib/101conv
+        bind:
+          create_host_path: false
     working_dir: /var/lib/101conv
     read_only: true
     tmpfs:
@@ -24,6 +28,3 @@ services:
     pids_limit: 128
     mem_limit: 2g
     cpus: 2.0
-
-volumes:
-  101conv-data:
