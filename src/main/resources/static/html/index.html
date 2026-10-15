@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Converter Dashboard</title>
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', savedTheme);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/html/template_609_crypto_vault/css/templatemo-crypto-style.css">
+  <link rel="stylesheet" href="/html/template_609_crypto_vault/css/templatemo-crypto-pages.css">
+  <link rel="stylesheet" href="/html/template_609_crypto_vault/css/templatemo-crypto-dashboard.css">
+  <link rel="stylesheet" href="/html/css/conv-crypto-overrides.css">
+</head>
+<body>
+  <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Toggle menu">
+    <div class="hamburger"><span></span><span></span><span></span></div>
+  </button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <div class="dashboard">
+    <aside class="sidebar" id="sidebar">
+      <div class="logo">
+        <div class="logo-icon">CV</div>
+        <span class="logo-text">101Conv</span>
+      </div>
+
+      <nav class="nav-section">
+        <div class="nav-label">Converter</div>
+        <a href="/html/index.html" class="nav-item active">Convert</a>
+        <a href="/html/compress.html" class="nav-item">Compress</a>
+        <a href="/html/history.html" class="nav-item">History</a>
+        <a href="/html/settings.html" class="nav-item">Settings</a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="theme-toggle">
+          <div class="theme-toggle-label">Theme</div>
+          <div class="theme-switch" id="themeSwitch"></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div class="header">
+        <div class="header-left">
+          <h1>File Converter</h1>
+          <p class="header-subtitle">Single file and folder batch conversion with configurable converters.</p>
+        </div>
+      </div>
+
+      <div class="app-grid-2">
+        <section class="card stack-16">
+          <h3 class="card-title">Input</h3>
+          <div id="dropZone">
+            Drag and drop file(s) here<br>
+            or
+            <div style="margin-top: 12px;">
+              <button class="btn" type="button" onclick="document.getElementById('fileInput').click()">Choose File</button>
+            </div>
+            <div style="margin-top: 8px;">
+              or
+            </div>
+            <div style="margin-top: 8px;">
+              <button class="btn" type="button" onclick="document.getElementById('folderInput').click()">Select Folder</button>
+            </div>
+          </div>
+
+          <input type="file" id="fileInput" multiple>
+          <input type="file" id="folderInput" webkitdirectory directory multiple>
+
+          <div class="stack-16">
+            <div class="app-grid-2 format-pair">
+              <div>
+                <label for="sourceFormat" class="form-label">Source format</label>
+                <select id="sourceFormat" disabled>
+                  <option value="">Select source format</option>
+                </select>
+              </div>
+              <div>
+                <label for="targetFormat" class="form-label">Convert to</label>
+                <select id="targetFormat" disabled>
+                  <option value="">Select format</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label for="converterSelect" class="form-label">Converter</label>
+              <select id="converterSelect" disabled>
+                <option value="">Auto</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="optionPanel"></div>
+
+          <div class="app-controls">
+            <button id="uploadButton" class="action-btn primary" type="button">Convert</button>
+            <button id="downloadButton" class="action-btn" type="button" disabled>Download</button>
+            <button id="saveAsButton" class="action-btn" type="button" disabled>Save As...</button>
+          </div>
+
+          <div id="fileInfo" class="entry-meta">No file selected yet.</div>
+
+          <div class="app-controls">
+            <button id="nerdToggleButton" class="btn" type="button">Stats for nerds</button>
+          </div>
+
+          <div id="nerdStats" style="display:none;">
+            <pre id="nerdStatsContent"></pre>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3 class="card-title">Preview</h3>
+          <div id="previewPane">
+            <div class="preview-empty">No preview available yet.</div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="copyright">
+        Converter UI based on TemplateMo 609 Crypto Vault
+      </footer>
+    </main>
+  </div>
+
+  <script src="/html/js/user.js"></script>
+  <script>
+const dropZone = document.getElementById("dropZone");
+const fileInput = document.getElementById("fileInput");
+const folderInput = document.getElementById("folderInput");
+const sourceFormatSelect = document.getElementById("sourceFormat");
+const targetFormatSelect = document.getElementById("targetFormat");
+const converterSelect = document.getElementById("converterSelect");
+const optionPanel = document.getElementById("optionPanel");
+const uploadButton = document.getElementById("uploadButton");
+const downloadButton = document.getElementById("downloadButton");
+const saveAsButton = document.getElementById("saveAsButton");
+const nerdToggleButton = document.getElementById("nerdToggleButton");
+const nerdStats = document.getElementById("nerdStats");
+const nerdStatsContent = document.getElementById("nerdStatsContent");
+const fileInfo = document.getElementById("fileInfo");
+const previewPane = document.getElementById("previewPane");
+let selectedFile = null;
+let selectedFolderFiles = [];
+let sessionId = null;
+let currentDownloadUrl = "";
+let showNerdStats = false;
+let conversionInProgress = false;
+let previewBlobUrl = "";
+let preserveOptionsOnTargetChange = true;
+
+function clearPreview(message = "No preview available yet.") {
+  if (previewBlobUrl) {
+    URL.revokeObjectURL(previewBlobUrl);
+    previewBlobUrl = "";
+  }
+  previewPane.innerHTML = `<div class="preview-empty">${message}</div>`;
+}
+
+function isImageFormat(fmt) {
+  return ["jpeg", "jpg", "png", "webp", "gif", "bmp", "tiff", "jxl"].includes(String(fmt || "").toLowerCase());
+}
+
+function isVideoFormat(fmt) {
+  return ["mp4", "mkv", "mov", "webm", "avi"].includes(String(fmt || "").toLowerCase());
+}
+
+function isAudioFormat(fmt) {
+  return ["mp3", "wav", "flac", "ogg", "aac", "m4a"].includes(String(fmt || "").toLowerCase());
+}
+
+function detectFormatFromName(name) {
+  if (!name || !name.includes(".")) {
+    return "";
+  }
+  return name.split(".").pop().toLowerCase();
+}
+
+function probeVideoDimensions(file) {
+  return new Promise((resolve) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      const width = Number(video.videoWidth || 0);
+      const height = Number(video.videoHeight || 0);
+      URL.revokeObjectURL(url);
+      resolve(width > 0 && height > 0 ? { width, height } : null);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    video.src = url;
+  });
+}
+
+async function resolveSelectedVideoDimensions() {
+  if (selectedFile && isVideoFormat(detectFormatFromName(selectedFile.name))) {
+    return probeVideoDimensions(selectedFile);
+  }
+  if (selectedFolderFiles.length > 0) {
+    const selectedSource = sourceFormatSelect.value;
+    const candidate = selectedFolderFiles.find((file) => {
+      const ext = detectExtension(file.name);
+      if (!isVideoFormat(ext)) {
+        return false;
+      }
+      return !selectedSource || ext === selectedSource;
+    });
+    if (candidate) {
+      return probeVideoDimensions(candidate);
+    }
+  }
+  return null;
+}
+
+function renderPreviewElement(src, format, fileName) {
+  const fmt = String(format || "").toLowerCase();
+  previewPane.innerHTML = "";
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "preview-box";
+
+  if (isImageFormat(fmt)) {
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = fileName || "preview";
+    wrapper.appendChild(img);
+    previewPane.appendChild(wrapper);
+    return;
+  }
+
+  if (isVideoFormat(fmt)) {
+    const video = document.createElement("video");
+    video.controls = true;
+    video.src = src;
+    wrapper.appendChild(video);
+    previewPane.appendChild(wrapper);
+    return;
+  }
+
+  if (isAudioFormat(fmt)) {
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.src = src;
+    wrapper.appendChild(audio);
+    previewPane.appendChild(wrapper);
+    return;
+  }
+
+  clearPreview(`No inline preview for .${fmt || "unknown"} files.`);
+}
+
+function renderSelectedFilePreview(file) {
+  const fmt = detectFormatFromName(file?.name || "");
+  if (!file || !(isImageFormat(fmt) || isVideoFormat(fmt) || isAudioFormat(fmt))) {
+    clearPreview("No inline preview for this selected file.");
+    return;
+  }
+  if (previewBlobUrl) {
+    URL.revokeObjectURL(previewBlobUrl);
+  }
+  previewBlobUrl = URL.createObjectURL(file);
+  renderPreviewElement(previewBlobUrl, fmt, file.name);
+}
+
+function previewFirstFileFromCollection(files, label) {
+  const confirmPreview = window.confirm(`Enable preview for this ${label}?`);
+  if (!confirmPreview) {
+    clearPreview("Preview disabled for this selection.");
+    return;
+  }
+
+  const previewable = files.find((f) => {
+    const fmt = detectFormatFromName(f?.name || "");
+    return isImageFormat(fmt) || isVideoFormat(fmt) || isAudioFormat(fmt);
+  });
+
+  if (!previewable) {
+    clearPreview("No previewable file found in selection.");
+    return;
+  }
+
+  if (previewBlobUrl) {
+    URL.revokeObjectURL(previewBlobUrl);
+  }
+  previewBlobUrl = URL.createObjectURL(previewable);
+  renderPreviewElement(previewBlobUrl, detectFormatFromName(previewable.name), previewable.name);
+}
+
+function renderConvertedPreview(url, format, fileName) {
+  const fmt = String(format || "").toLowerCase();
+  if (!(isImageFormat(fmt) || isVideoFormat(fmt) || isAudioFormat(fmt))) {
+    clearPreview("Converted file has no inline preview. Use Download.");
+    return;
+  }
+  if (previewBlobUrl) {
+    URL.revokeObjectURL(previewBlobUrl);
+    previewBlobUrl = "";
+  }
+  renderPreviewElement(url, fmt, fileName || "converted-file");
+}
+
+async function showFile(file) {
+  resetDownloadButton();
+
+  const ext = file.name.includes(".")
+    ? file.name.split(".").pop().toLowerCase()
+    : "none";
+  sourceFormatSelect.innerHTML = `<option value="${ext}">${ext}</option>`;
+  sourceFormatSelect.value = ext;
+  sourceFormatSelect.disabled = false;
+  await populateTargetFormats(ext);
+
+  fileInfo.innerHTML = `
+    <b>Name:</b> ${file.name}<br>
+    <b>Size:</b> ${(file.size / 1024).toFixed(1)} KB<br>
+    <b>MIME:</b> ${file.type || "unknown"}<br>
+    <b>Extension:</b> .${ext}<br>
+    <b>Status:</b> File detected. Not uploaded yet.
+  `;
+  renderSelectedFilePreview(file);
+  refreshActionState();
+}
+
+async function showFolder(files, sourceLabel = "folder") {
+  selectedFolderFiles = files;
+  selectedFile = null;
+  resetDownloadButton();
+
+  const formats = Array.from(new Set(
+    files.map(f => detectExtension(f.name)).filter(f => f !== "none")
+  )).sort();
+
+  sourceFormatSelect.innerHTML = '<option value="">Select source format</option>';
+  for (const fmt of formats) {
+    const option = document.createElement("option");
+    option.value = fmt;
+    option.textContent = fmt;
+    sourceFormatSelect.appendChild(option);
+  }
+  sourceFormatSelect.disabled = formats.length === 0;
+
+  targetFormatSelect.innerHTML = '<option value="">Select format</option>';
+  targetFormatSelect.disabled = true;
+  optionPanel.innerHTML = "";
+
+  fileInfo.innerHTML = `
+    <b>${sourceLabel} selected:</b> ${files.length} file(s)<br>
+    <b>Detected source formats:</b> ${formats.length ? formats.join(", ") : "none"}<br>
+    <b>Status:</b> Choose source and target format, then click Convert.
+  `;
+  previewFirstFileFromCollection(files, sourceLabel.toLowerCase());
+  refreshActionState();
+}
+
+function detectExtension(fileName) {
+  return fileName.includes(".")
+    ? fileName.split(".").pop().toLowerCase()
+    : "none";
+}
+
+async function populateTargetFormats(sourceFormat) {
+  let targets = [];
+  const selectedConverter = converterSelect.value;
+
+  try {
+    const converterParam = selectedConverter ? `&converterId=${encodeURIComponent(selectedConverter)}` : "";
+    const res = await fetch(`/api/formats?sourceFormat=${encodeURIComponent(sourceFormat)}${converterParam}`);
+    const payload = await res.json();
+    if (res.ok && payload.ok && Array.isArray(payload.targetFormats)) {
+      targets = payload.targetFormats;
+    }
+  } catch (e) {
+    targets = [];
+  }
+
+  targetFormatSelect.innerHTML = '<option value="">Select format</option>';
+
+  for (const format of targets) {
+    const option = document.createElement("option");
+    option.value = format;
+    option.textContent = format;
+    targetFormatSelect.appendChild(option);
+  }
+
+  targetFormatSelect.disabled = targets.length === 0;
+  optionPanel.innerHTML = "";
+  if (targets.length === 0 && selectedFile) {
+    fileInfo.innerHTML += "<br><b>Note:</b> This source format is currently not supported for conversion.";
+  }
+  refreshActionState();
+}
+
+async function loadOptionsForTargetFormat(targetFormat) {
+  const previousValues = preserveOptionsOnTargetChange ? collectOptions() : {};
+  optionPanel.innerHTML = "";
+  if (!targetFormat) {
+    return;
+  }
+
+  try {
+    let optionsUrl = `/api/options?targetFormat=${encodeURIComponent(targetFormat)}&mode=convert`;
+    if (isVideoFormat(targetFormat)) {
+      const dims = await resolveSelectedVideoDimensions();
+      if (dims) {
+        optionsUrl += `&sourceWidth=${encodeURIComponent(String(dims.width))}&sourceHeight=${encodeURIComponent(String(dims.height))}`;
+      }
+    }
+    const res = await fetch(optionsUrl);
+    const payload = await res.json();
+    if (!res.ok || !payload.ok || !Array.isArray(payload.options) || payload.options.length === 0) {
+      return;
+    }
+
+    const title = document.createElement("h4");
+    title.textContent = "Conversion options";
+    optionPanel.appendChild(title);
+
+    for (const option of payload.options) {
+      const wrapper = document.createElement("div");
+      const label = document.createElement("label");
+      label.textContent = option.label;
+      label.htmlFor = `option_${option.key}`;
+      wrapper.appendChild(label);
+
+      let input;
+      if (option.type === "select") {
+        input = document.createElement("select");
+        for (const choice of option.choices || []) {
+          const opt = document.createElement("option");
+          opt.value = choice;
+          opt.textContent = (choice === "original" && option.originalLabel) ? option.originalLabel : choice;
+          input.appendChild(opt);
+        }
+      } else {
+        input = document.createElement("input");
+        input.type = option.type || "text";
+        if (option.min !== undefined) {
+          input.min = option.min;
+        }
+        if (option.max !== undefined) {
+          input.max = option.max;
+        }
+        if (option.step !== undefined) {
+          input.step = option.step;
+        }
+      }
+
+      input.id = `option_${option.key}`;
+      input.setAttribute("data-option-key", option.key);
+      if (option.value !== undefined && option.value !== null) {
+        input.value = option.value;
+      }
+      if (Object.prototype.hasOwnProperty.call(previousValues, option.key)) {
+        input.value = previousValues[option.key];
+      }
+
+      wrapper.appendChild(input);
+      optionPanel.appendChild(wrapper);
+    }
+  } catch (e) {
+    optionPanel.innerHTML = "";
+  }
+}
+
+function collectOptions() {
+  const options = {};
+  const fields = optionPanel.querySelectorAll("[data-option-key]");
+  for (const field of fields) {
+    const key = field.getAttribute("data-option-key");
+    const value = field.value;
+    if (key && value !== "") {
+      options[key] = value;
+    }
+  }
+  return options;
+}
+
+function setDownloadButton(url, label) {
+  currentDownloadUrl = url || "";
+  downloadButton.textContent = label || "Download";
+  const disabled = conversionInProgress || !currentDownloadUrl;
+  downloadButton.disabled = disabled;
+  saveAsButton.disabled = disabled;
+}
+
+function resetDownloadButton() {
+  setDownloadButton("", "Download");
+}
+
+function setConversionInProgress(inProgress) {
+  conversionInProgress = !!inProgress;
+  sourceFormatSelect.disabled = conversionInProgress || sourceFormatSelect.options.length === 0;
+  targetFormatSelect.disabled = conversionInProgress || targetFormatSelect.options.length <= 1;
+  converterSelect.disabled = conversionInProgress || converterSelect.options.length <= 1;
+  if (conversionInProgress) {
+    resetDownloadButton();
+  } else {
+    setDownloadButton(currentDownloadUrl, downloadButton.textContent || "Download");
+  }
+  refreshActionState();
+}
+
+function canConvertNow() {
+  const hasSingleFile = !!selectedFile;
+  const hasFolderFiles = selectedFolderFiles.length > 0;
+  const hasInput = hasSingleFile || hasFolderFiles;
+  const hasTarget = !!targetFormatSelect.value;
+  return hasInput && hasTarget;
+}
+
+function refreshActionState() {
+  uploadButton.disabled = conversionInProgress || !canConvertNow();
+}
+
+function addNerdStat(message) {
+  const timestamp = new Date().toISOString();
+  nerdStatsContent.textContent += `[${timestamp}] ${message}\n`;
+}
+
+function setNerdStatsVisible(visible) {
+  showNerdStats = visible;
+  nerdStats.style.display = visible ? "block" : "none";
+  nerdToggleButton.textContent = visible ? "Hide stats for nerds" : "Stats for nerds";
+}
+
+async function loadUiConfig() {
+  try {
+    const res = await fetch("/api/ui-config");
+    const payload = await res.json();
+    if (res.ok && payload.ok) {
+      setNerdStatsVisible(!!payload.showNerdStatsDefault);
+      preserveOptionsOnTargetChange = payload.preserveOptionsOnTargetChange !== false;
+      const converters = Array.isArray(payload.converters) ? payload.converters : [];
+      converterSelect.innerHTML = '<option value="">Auto</option>';
+      for (const converter of converters) {
+        const option = document.createElement("option");
+        option.value = converter.id || "";
+        option.textContent = converter.friendlyName || converter.id || "Converter";
+        converterSelect.appendChild(option);
+      }
+      converterSelect.value = "";
+      converterSelect.disabled = converters.length === 0;
+      refreshActionState();
+      addNerdStat(
+        `UI config loaded: showNerdStatsDefault=${payload.showNerdStatsDefault}, preserveOptionsOnTargetChange=${preserveOptionsOnTargetChange}`
+      );
+      return;
+    }
+  } catch (e) {
+    addNerdStat(`UI config load failed: ${e.message}`);
+  }
+  setNerdStatsVisible(false);
+  refreshActionState();
+}
+
+async function ensureSession() {
+  if (sessionId) {
+    return sessionId;
+  }
+
+  const res = await fetch("/api/session/start", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+    },
+    body: `userId=${encodeURIComponent(convUser.getUserId())}`
+  });
+  const payload = await res.json();
+
+  if (!res.ok || !payload.ok || !payload.sessionId) {
+    throw new Error(payload.message || "Could not create session.");
+  }
+
+  sessionId = payload.sessionId;
+  return sessionId;
+}
+
+async function uploadFile(file) {
+  addNerdStat(`Single conversion started for file=${file.name}`);
+
+  const currentSessionId = await ensureSession();
+  const targetFormat = targetFormatSelect.value;
+  const options = collectOptions();
+  const selectedConverter = converterSelect.value;
+  const data = new FormData();
+  convUser.applyUserToFormData(data);
+  data.append("sessionId", currentSessionId);
+  data.append("targetFormat", targetFormat);
+  if (selectedConverter) {
+    data.append("converterId", selectedConverter);
+  }
+  for (const [key, value] of Object.entries(options)) {
+    data.append(`option_${key}`, value);
+  }
+  data.append("file", file);
+
+  try {
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      body: data
+    });
+
+    const payload = await res.json();
+    addNerdStat(`Single conversion response status=${res.status} payload=${JSON.stringify(payload)}`);
+
+    if (res.ok && payload.ok) {
+      setDownloadButton(payload.downloadUrl, "Download Converted File");
+      renderConvertedPreview(payload.downloadUrl, payload.targetFormat, payload.convertedFileName || payload.fileName);
+      addNerdStat(
+        `Saved single: sessionId=${payload.sessionId}, uploadId=${payload.uploadId}, convertedId=${payload.convertedId}, uploadedPath=${payload.savedTo}, convertedPath=${payload.convertedTo}`
+      );
+      fileInfo.innerHTML += `
+        <br><br><b>Status:</b> Uploaded successfully
+        <br><b>Session ID:</b> ${payload.sessionId}
+        <br><b>Upload ID:</b> ${payload.uploadId}
+        <br><b>Converted ID:</b> ${payload.convertedId}
+        <br><b>Converted Format:</b> ${payload.targetFormat}
+        <br><b>Applied Options:</b> ${JSON.stringify(payload.appliedOptions || {})}
+        <br><b>Converter:</b> ${payload.converterName || payload.converterId || "auto"}
+        <br><b>Uploaded File:</b> ${payload.savedTo}
+        <br><b>Converted File:</b> ${payload.convertedTo || "n/a"}
+      `;
+      return;
+    }
+
+    fileInfo.innerHTML += `
+      <br><br>
+      <b>Status:</b> Upload failed
+      <br>
+      <b>Reason:</b> ${payload.message || "Unknown error"}
+    `;
+  } catch (err) {
+    addNerdStat(`Single conversion error=${err.message}`);
+    fileInfo.innerHTML += `
+      <br><br>
+      <b>Status:</b> Upload failed
+      <br>
+      <b>Reason:</b> ${err.message}
+    `;
+  }
+}
+
+async function convertFolderBatch() {
+  const sourceFormat = sourceFormatSelect.value;
+  const targetFormat = targetFormatSelect.value;
+
+  if (!sourceFormat) {
+    fileInfo.innerHTML = "<b>Status:</b> Please choose a source format first.";
+    return;
+  }
+
+  const filesToConvert = selectedFolderFiles.filter(f => detectExtension(f.name) === sourceFormat);
+  if (filesToConvert.length === 0) {
+    fileInfo.innerHTML = "<b>Status:</b> No files found for selected source format.";
+    return;
+  }
+
+  fileInfo.innerHTML = `
+    <b>Status:</b> Converting ${filesToConvert.length} file(s) from .${sourceFormat} to .${targetFormat}...
+  `;
+  addNerdStat(`Batch conversion started source=${sourceFormat} target=${targetFormat} files=${filesToConvert.length}`);
+
+  const successfulUploadIds = [];
+  const failures = [];
+
+  try {
+    const currentSessionId = await ensureSession();
+    const options = collectOptions();
+    const selectedConverter = converterSelect.value;
+
+    for (let i = 0; i < filesToConvert.length; i += 1) {
+      const file = filesToConvert[i];
+      const data = new FormData();
+      convUser.applyUserToFormData(data);
+      data.append("sessionId", currentSessionId);
+      data.append("targetFormat", targetFormat);
+      if (selectedConverter) {
+        data.append("converterId", selectedConverter);
+      }
+      for (const [key, value] of Object.entries(options)) {
+        data.append(`option_${key}`, value);
+      }
+      data.append("file", file);
+
+      fileInfo.innerHTML = `
+        <b>Status:</b> Converting file ${i + 1}/${filesToConvert.length}...<br>
+        <b>Current file:</b> ${file.name}<br>
+        <b>Successful so far:</b> ${successfulUploadIds.length}<br>
+        <b>Failed so far:</b> ${failures.length}
+      `;
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: data
+      });
+      const payload = await res.json();
+      addNerdStat(`Batch file ${i + 1}/${filesToConvert.length} status=${res.status} file=${file.name}`);
+
+      if (res.ok && payload.ok && payload.uploadId) {
+        successfulUploadIds.push(payload.uploadId);
+      } else {
+        failures.push(`${file.name}: ${payload.message || "Unknown error"}`);
+      }
+    }
+
+    if (successfulUploadIds.length === 0) {
+      fileInfo.innerHTML = `
+        <b>Status:</b> Batch conversion failed.<br>
+        <b>Reason:</b> No file converted successfully.
+      `;
+      if (failures.length > 0) {
+        fileInfo.innerHTML += `<br><br><b>Failures:</b><br>${failures.join("<br>")}`;
+      }
+      return;
+    }
+
+    const sessionZipUrl = `/api/history/session/download?sessionId=${encodeURIComponent(currentSessionId)}&userId=${encodeURIComponent(convUser.getUserId())}`;
+    setDownloadButton(sessionZipUrl, "Download");
+    clearPreview("Batch conversion complete. Download the session archive.");
+    addNerdStat(
+      `Saved batch: sessionId=${currentSessionId}, successful=${successfulUploadIds.length}, failed=${failures.length}, zipUrl=${sessionZipUrl}`
+    );
+    fileInfo.innerHTML = `
+      <b>Status:</b> Batch conversion finished.<br>
+      <b>Session ID:</b> ${currentSessionId}<br>
+      <b>Source:</b> .${sourceFormat}<br>
+      <b>Target:</b> .${targetFormat}<br>
+      <b>Successful:</b> ${successfulUploadIds.length}<br>
+      <b>Failed:</b> ${failures.length}
+    `;
+    if (failures.length > 0) {
+      fileInfo.innerHTML += `<br><br><b>Failures:</b><br>${failures.join("<br>")}`;
+    }
+    return;
+  } catch (err) {
+    addNerdStat(`Batch conversion error=${err.message}`);
+    fileInfo.innerHTML = `
+      <b>Status:</b> Batch conversion failed.<br>
+      <b>Reason:</b> ${err.message}
+    `;
+  }
+}
+
+dropZone.addEventListener("dragover", e => {
+  e.preventDefault();
+  dropZone.classList.add("dragover");
+});
+
+dropZone.addEventListener("dragleave", () => {
+  dropZone.classList.remove("dragover");
+});
+
+dropZone.addEventListener("drop", e => {
+  e.preventDefault();
+  dropZone.classList.remove("dragover");
+
+  const files = Array.from(e.dataTransfer.files || []);
+  if (files.length === 1) {
+    selectedFile = files[0];
+    selectedFolderFiles = [];
+    void showFile(files[0]);
+    return;
+  }
+  if (files.length > 1) {
+    void showFolder(files, "Files");
+  }
+});
+
+fileInput.addEventListener("change", () => {
+  const files = Array.from(fileInput.files || []);
+  if (files.length === 1) {
+    selectedFile = files[0];
+    selectedFolderFiles = [];
+    void showFile(files[0]);
+    return;
+  }
+  if (files.length > 1) {
+    void showFolder(files, "Files");
+  }
+});
+
+folderInput.addEventListener("change", () => {
+  const files = Array.from(folderInput.files || []);
+  if (files.length > 0) {
+    void showFolder(files, "Folder");
+  } else {
+    refreshActionState();
+  }
+});
+
+targetFormatSelect.addEventListener("change", () => {
+  void loadOptionsForTargetFormat(targetFormatSelect.value);
+  refreshActionState();
+});
+
+sourceFormatSelect.addEventListener("change", () => {
+  targetFormatSelect.value = "";
+  void populateTargetFormats(sourceFormatSelect.value);
+  refreshActionState();
+});
+
+converterSelect.addEventListener("change", () => {
+  targetFormatSelect.value = "";
+  if (sourceFormatSelect.value) {
+    void populateTargetFormats(sourceFormatSelect.value);
+  }
+  refreshActionState();
+});
+
+downloadButton.addEventListener("click", () => {
+  if (!currentDownloadUrl) {
+    return;
+  }
+  window.location.href = currentDownloadUrl;
+});
+
+async function saveAsFromUrl(url) {
+  if (!url) {
+    return;
+  }
+
+  if (!window.showSaveFilePicker) {
+    window.location.href = url;
+    return;
+  }
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Download failed (${response.status})`);
+    }
+
+    const blob = await response.blob();
+    let suggestedName = "converted-file";
+    const contentDisposition = response.headers.get("Content-Disposition") || "";
+    const match = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+    if (match && match[1]) {
+      suggestedName = match[1];
+    }
+
+    const handle = await window.showSaveFilePicker({
+      suggestedName
+    });
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+  } catch (e) {
+    addNerdStat(`Save As failed=${e.message}`);
+  }
+}
+
+saveAsButton.addEventListener("click", () => {
+  void saveAsFromUrl(currentDownloadUrl);
+});
+
+nerdToggleButton.addEventListener("click", () => {
+  setNerdStatsVisible(!showNerdStats);
+});
+
+uploadButton.addEventListener("click", async () => {
+  const hasSingleFile = !!selectedFile;
+  const hasFolderFiles = selectedFolderFiles.length > 0;
+
+  if (!hasSingleFile && !hasFolderFiles) {
+    fileInfo.innerHTML = "<b>Status:</b> No file or folder selected.";
+    refreshActionState();
+    return;
+  }
+
+  if (!targetFormatSelect.value) {
+    fileInfo.innerHTML = "<b>Status:</b> Please choose a target format first.";
+    refreshActionState();
+    return;
+  }
+
+  setConversionInProgress(true);
+  try {
+    if (hasSingleFile) {
+      await uploadFile(selectedFile);
+      return;
+    }
+
+    if (hasFolderFiles) {
+      await convertFolderBatch();
+      return;
+    }
+  } finally {
+    setConversionInProgress(false);
+  }
+});
+
+void loadUiConfig();
+refreshActionState();
+  </script>
+  <script src="/html/template_609_crypto_vault/js/templatemo-crypto-script.js"></script>
+</body>
+</html>

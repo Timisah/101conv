@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Compression Dashboard</title>
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', savedTheme);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/html/template_609_crypto_vault/css/templatemo-crypto-style.css">
+  <link rel="stylesheet" href="/html/template_609_crypto_vault/css/templatemo-crypto-pages.css">
+  <link rel="stylesheet" href="/html/template_609_crypto_vault/css/templatemo-crypto-dashboard.css">
+  <link rel="stylesheet" href="/html/css/conv-crypto-overrides.css">
+</head>
+<body>
+  <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Toggle menu">
+    <div class="hamburger"><span></span><span></span><span></span></div>
+  </button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <div class="dashboard">
+    <aside class="sidebar" id="sidebar">
+      <div class="logo">
+        <div class="logo-icon">CV</div>
+        <span class="logo-text">101Conv</span>
+      </div>
+
+      <nav class="nav-section">
+        <div class="nav-label">Converter</div>
+        <a href="/html/index.html" class="nav-item">Convert</a>
+        <a href="/html/compress.html" class="nav-item active">Compress</a>
+        <a href="/html/history.html" class="nav-item">History</a>
+        <a href="/html/settings.html" class="nav-item">Settings</a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="theme-toggle">
+          <div class="theme-toggle-label">Theme</div>
+          <div class="theme-switch" id="themeSwitch"></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div class="header">
+        <div class="header-left">
+          <h1>File Compression</h1>
+          <p class="header-subtitle">Compression-first workflow without source format selection.</p>
+        </div>
+      </div>
+
+      <div class="app-grid-2">
+        <section class="card stack-16">
+          <h3 class="card-title">Input</h3>
+          <div id="dropZone">
+            Drag and drop file(s) here<br>
+            or
+            <div style="margin-top: 12px;">
+              <button class="btn" type="button" onclick="document.getElementById('fileInput').click()">Choose File</button>
+            </div>
+            <div style="margin-top: 8px;">or</div>
+            <div style="margin-top: 8px;">
+              <button class="btn" type="button" onclick="document.getElementById('folderInput').click()">Select Folder</button>
+            </div>
+          </div>
+
+          <input type="file" id="fileInput" multiple>
+          <input type="file" id="folderInput" webkitdirectory directory multiple>
+
+          <div class="stack-16">
+            <div>
+              <label for="targetFormat" class="form-label">Compress to</label>
+              <select id="targetFormat" disabled>
+                <option value="">Select format</option>
+              </select>
+            </div>
+            <div>
+              <label for="converterSelect" class="form-label">Converter</label>
+              <select id="converterSelect" disabled>
+                <option value="">Auto</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="optionPanel"></div>
+
+          <div class="app-controls">
+            <button id="uploadButton" class="action-btn primary" type="button">Compress</button>
+            <button id="downloadButton" class="action-btn" type="button" disabled>Download</button>
+            <button id="saveAsButton" class="action-btn" type="button" disabled>Save As...</button>
+          </div>
+
+          <div id="fileInfo" class="entry-meta">No file selected yet.</div>
+
+          <div class="app-controls">
+            <button id="nerdToggleButton" class="btn" type="button">Stats for nerds</button>
+          </div>
+
+          <div id="nerdStats" style="display:none;">
+            <pre id="nerdStatsContent"></pre>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3 class="card-title">Preview</h3>
+          <div id="previewPane">
+            <div class="preview-empty">No preview available yet.</div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="copyright">Converter UI based on TemplateMo 609 Crypto Vault</footer>
+    </main>
+  </div>
+
+  <script src="/html/js/user.js"></script>
+  <script>
+const dropZone = document.getElementById("dropZone");
+const fileInput = document.getElementById("fileInput");
+const folderInput = document.getElementById("folderInput");
+const targetFormatSelect = document.getElementById("targetFormat");
+const converterSelect = document.getElementById("converterSelect");
+const optionPanel = document.getElementById("optionPanel");
+const uploadButton = document.getElementById("uploadButton");
+const downloadButton = document.getElementById("downloadButton");
+const saveAsButton = document.getElementById("saveAsButton");
+const nerdToggleButton = document.getElementById("nerdToggleButton");
+const nerdStats = document.getElementById("nerdStats");
+const nerdStatsContent = document.getElementById("nerdStatsContent");
+const fileInfo = document.getElementById("fileInfo");
+const previewPane = document.getElementById("previewPane");
+
+let selectedFiles = [];
+let sessionId = null;
+let currentDownloadUrl = "";
+let showNerdStats = false;
+let conversionInProgress = false;
+let previewBlobUrl = "";
+let preserveOptionsOnTargetChange = true;
+let sourceTargetMap = new Map();
+const TARGET_SIZE_MIN_MB = 1;
+const TARGET_SIZE_MAX_MB = 10240;
+const TARGET_SIZE_DEFAULT_MB = 8;
+
+function clearPreview(message = "No preview available yet.") {
+  if (previewBlobUrl) {
+    URL.revokeObjectURL(previewBlobUrl);
+    previewBlobUrl = "";
+  }
+  previewPane.innerHTML = `<div class="preview-empty">${message}</div>`;
+}
+
+function isImageFormat(fmt) {
+  return ["jpeg", "jpg", "png", "webp", "gif", "bmp", "tiff", "jxl"].includes(String(fmt || "").toLowerCase());
+}
+
+function isVideoFormat(fmt) {
+  return ["mp4", "mkv", "mov", "webm", "avi"].includes(String(fmt || "").toLowerCase());
+}
+
+function isAudioFormat(fmt) {
+  return ["mp3", "wav", "flac", "ogg", "aac", "m4a"].includes(String(fmt || "").toLowerCase());
+}
+
+function detectExtension(fileName) {
+  return fileName && fileName.includes(".")
+    ? fileName.split(".").pop().toLowerCase()
+    : "none";
+}
+
+function probeVideoDimensions(file) {
+  return new Promise((resolve) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      const width = Number(video.videoWidth || 0);
+      const height = Number(video.videoHeight || 0);
+      URL.revokeObjectURL(url);
+      resolve(width > 0 && height > 0 ? { width, height } : null);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    video.src = url;
+  });
+}
+
+async function resolveSelectedVideoDimensions() {
+  const candidate = selectedFiles.find((file) => isVideoFormat(detectExtension(file.name)));
+  if (!candidate) {
+    return null;
+  }
+  return probeVideoDimensions(candidate);
+}
+
+function renderPreviewElement(src, format, fileName) {
+  const fmt = String(format || "").toLowerCase();
+  previewPane.innerHTML = "";
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "preview-box";
+
+  if (isImageFormat(fmt)) {
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = fileName || "preview";
+    wrapper.appendChild(img);
+    previewPane.appendChild(wrapper);
+    return;
+  }
+
+  if (isVideoFormat(fmt)) {
+    const video = document.createElement("video");
+    video.controls = true;
+    video.src = src;
+    wrapper.appendChild(video);
+    previewPane.appendChild(wrapper);
+    return;
+  }
+
+  if (isAudioFormat(fmt)) {
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.src = src;
+    wrapper.appendChild(audio);
+    previewPane.appendChild(wrapper);
+    return;
+  }
+
+  clearPreview(`No inline preview for .${fmt || "unknown"} files.`);
+}
+
+function previewFirstFile(files, label) {
+  if (!files.length) {
+    clearPreview();
+    return;
+  }
+  if (files.length > 1) {
+    const confirmPreview = window.confirm(`Enable preview for this ${label}?`);
+    if (!confirmPreview) {
+      clearPreview("Preview disabled for this selection.");
+      return;
+    }
+  }
+
+  const previewable = files.find((f) => {
+    const fmt = detectExtension(f.name);
+    return isImageFormat(fmt) || isVideoFormat(fmt) || isAudioFormat(fmt);
+  });
+  if (!previewable) {
+    clearPreview("No previewable file found in selection.");
+    return;
+  }
+
+  if (previewBlobUrl) {
+    URL.revokeObjectURL(previewBlobUrl);
+  }
+  previewBlobUrl = URL.createObjectURL(previewable);
+  renderPreviewElement(previewBlobUrl, detectExtension(previewable.name), previewable.name);
+}
+
+function renderConvertedPreview(url, format, fileName) {
+  const fmt = String(format || "").toLowerCase();
+  if (!(isImageFormat(fmt) || isVideoFormat(fmt) || isAudioFormat(fmt))) {
+    clearPreview("Converted file has no inline preview. Use Download.");
+    return;
+  }
+  if (previewBlobUrl) {
+    URL.revokeObjectURL(previewBlobUrl);
+    previewBlobUrl = "";
+  }
+  renderPreviewElement(url, fmt, fileName || "converted-file");
+}
+
+function setDownloadButton(url, label) {
+  currentDownloadUrl = url || "";
+  downloadButton.textContent = label || "Download";
+  const disabled = conversionInProgress || !currentDownloadUrl;
+  downloadButton.disabled = disabled;
+  saveAsButton.disabled = disabled;
+}
+
+function resetDownloadButton() {
+  setDownloadButton("", "Download");
+}
+
+function setConversionInProgress(inProgress) {
+  conversionInProgress = !!inProgress;
+  targetFormatSelect.disabled = conversionInProgress || targetFormatSelect.options.length <= 1;
+  converterSelect.disabled = conversionInProgress || converterSelect.options.length <= 1;
+  if (conversionInProgress) {
+    resetDownloadButton();
+  } else {
+    setDownloadButton(currentDownloadUrl, downloadButton.textContent || "Download");
+  }
+  refreshActionState();
+}
+
+function canConvertNow() {
+  return selectedFiles.length > 0 && !!targetFormatSelect.value;
+}
+
+function refreshActionState() {
+  uploadButton.disabled = conversionInProgress || !canConvertNow();
+}
+
+function addNerdStat(message) {
+  const timestamp = new Date().toISOString();
+  nerdStatsContent.textContent += `[${timestamp}] ${message}\n`;
+}
+
+function setNerdStatsVisible(visible) {
+  showNerdStats = visible;
+  nerdStats.style.display = visible ? "block" : "none";
+  nerdToggleButton.textContent = visible ? "Hide stats for nerds" : "Stats for nerds";
+}
+
+function collectOptions() {
+  const options = {};
+  const fields = optionPanel.querySelectorAll("[data-option-key]");
+  for (const field of fields) {
+    const key = field.getAttribute("data-option-key");
+    const value = field.value;
+    if (key && value !== "") {
+      options[key] = value;
+    }
+  }
+  return options;
+}
+
+async function loadOptionsForTargetFormat(targetFormat) {
+  const previousValues = preserveOptionsOnTargetChange ? collectOptions() : {};
+  optionPanel.innerHTML = "";
+  if (!targetFormat) {
+    return;
+  }
+  try {
+    let optionsUrl = `/api/options?targetFormat=${encodeURIComponent(targetFormat)}&mode=compress`;
+    if (isVideoFormat(targetFormat)) {
+      const dims = await resolveSelectedVideoDimensions();
+      if (dims) {
+        optionsUrl += `&sourceWidth=${encodeURIComponent(String(dims.width))}&sourceHeight=${encodeURIComponent(String(dims.height))}`;
+      }
+    }
+    const res = await fetch(optionsUrl);
+    const payload = await res.json();
+    if (!res.ok || !payload.ok || !Array.isArray(payload.options) || payload.options.length === 0) {
+      return;
+    }
+
+    const title = document.createElement("h4");
+    title.textContent = "Compression options";
+    optionPanel.appendChild(title);
+
+    for (const option of payload.options) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "stack-8";
+
+      const label = document.createElement("label");
+      label.className = "form-label";
+      label.textContent = option.label;
+      label.htmlFor = `option_${option.key}`;
+      wrapper.appendChild(label);
+
+      let input;
+      if (option.type === "select") {
+        input = document.createElement("select");
+        for (const choice of option.choices || []) {
+          const opt = document.createElement("option");
+          opt.value = choice;
+          opt.textContent = (choice === "original" && option.originalLabel) ? option.originalLabel : choice;
+          input.appendChild(opt);
+        }
+      } else if (option.type === "number" && option.key === "targetSizeMb") {
+        const currentValue = Object.prototype.hasOwnProperty.call(previousValues, option.key)
+          ? String(previousValues[option.key])
+          : String(option.value ?? TARGET_SIZE_DEFAULT_MB);
+        const min = option.min ?? TARGET_SIZE_MIN_MB;
+        const max = option.max ?? TARGET_SIZE_MAX_MB;
+        const step = option.step ?? 1;
+
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.min = String(min);
+        slider.max = String(max);
+        slider.step = String(step);
+        slider.value = currentValue;
+        wrapper.appendChild(slider);
+
+        const number = document.createElement("input");
+        number.type = "number";
+        number.min = String(min);
+        number.max = String(max);
+        number.step = String(step);
+        number.value = currentValue;
+        input = number;
+
+        const hint = document.createElement("div");
+        hint.className = "entry-meta";
+        hint.textContent = "Compression keeps full duration.";
+        wrapper.appendChild(hint);
+
+        slider.addEventListener("input", () => {
+          number.value = slider.value;
+        });
+        number.addEventListener("input", () => {
+          const parsed = Number(number.value);
+          if (!Number.isFinite(parsed)) {
+            return;
+          }
+          const clamped = Math.max(Number(min), Math.min(Number(max), Math.trunc(parsed)));
+          slider.value = String(clamped);
+        });
+      } else {
+        input = document.createElement("input");
+        input.type = option.type || "text";
+        if (option.min !== undefined) input.min = option.min;
+        if (option.max !== undefined) input.max = option.max;
+        if (option.step !== undefined) input.step = option.step;
+      }
+
+      input.id = `option_${option.key}`;
+      input.setAttribute("data-option-key", option.key);
+      if (option.value !== undefined && option.value !== null) {
+        input.value = option.value;
+      }
+      if (Object.prototype.hasOwnProperty.call(previousValues, option.key)) {
+        input.value = previousValues[option.key];
+      }
+
+      wrapper.appendChild(input);
+      optionPanel.appendChild(wrapper);
+    }
+  } catch (e) {
+    optionPanel.innerHTML = "";
+  }
+}
+
+async function ensureSession() {
+  if (sessionId) {
+    return sessionId;
+  }
+  const res = await fetch("/api/session/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+    body: `userId=${encodeURIComponent(convUser.getUserId())}`
+  });
+  const payload = await res.json();
+  if (!res.ok || !payload.ok || !payload.sessionId) {
+    throw new Error(payload.message || "Could not create session.");
+  }
+  sessionId = payload.sessionId;
+  return sessionId;
+}
+
+async function populateTargetFormatsForSelection() {
+  const previousTarget = targetFormatSelect.value;
+  const converterId = converterSelect.value;
+  const formats = Array.from(new Set(selectedFiles.map(f => detectExtension(f.name)).filter(fmt => fmt !== "none")));
+  const primarySourceFormat = selectedFiles.length > 0 ? detectExtension(selectedFiles[0].name) : "";
+  sourceTargetMap = new Map();
+  targetFormatSelect.innerHTML = '<option value="">Select format</option>';
+  optionPanel.innerHTML = "";
+
+  if (!formats.length) {
+    targetFormatSelect.disabled = true;
+    refreshActionState();
+    return;
+  }
+
+  const mergedTargets = new Set();
+  for (const sourceFormat of formats) {
+    try {
+      const converterParam = converterId ? `&converterId=${encodeURIComponent(converterId)}` : "";
+      const res = await fetch(`/api/formats?sourceFormat=${encodeURIComponent(sourceFormat)}${converterParam}`);
+      const payload = await res.json();
+      const targets = (res.ok && payload.ok && Array.isArray(payload.targetFormats)) ? payload.targetFormats : [];
+      sourceTargetMap.set(sourceFormat, new Set(targets));
+      for (const target of targets) {
+        mergedTargets.add(target);
+      }
+    } catch (e) {
+      sourceTargetMap.set(sourceFormat, new Set());
+    }
+  }
+
+  const sortedTargets = Array.from(mergedTargets).sort();
+  for (const format of sortedTargets) {
+    const option = document.createElement("option");
+    option.value = format;
+    option.textContent = format;
+    targetFormatSelect.appendChild(option);
+  }
+  targetFormatSelect.disabled = sortedTargets.length === 0;
+
+  if (sortedTargets.includes(previousTarget)) {
+    targetFormatSelect.value = previousTarget;
+    await loadOptionsForTargetFormat(previousTarget);
+  } else if (primarySourceFormat && sortedTargets.includes(primarySourceFormat)) {
+    // Compression page default: keep same format when possible (e.g. mp4 -> mp4).
+    targetFormatSelect.value = primarySourceFormat;
+    await loadOptionsForTargetFormat(primarySourceFormat);
+  } else {
+    targetFormatSelect.value = "";
+  }
+  refreshActionState();
+}
+
+function showSelection(files, sourceLabel) {
+  selectedFiles = files;
+  resetDownloadButton();
+  const formats = Array.from(new Set(files.map(f => detectExtension(f.name)).filter(f => f !== "none"))).sort();
+  const totalSizeBytes = files.reduce((sum, file) => sum + Number(file.size || 0), 0);
+  fileInfo.innerHTML = `
+    <b>${sourceLabel} selected:</b> ${files.length} file(s)<br>
+    <b>Total size:</b> ${(totalSizeBytes / (1024 * 1024)).toFixed(2)} MB<br>
+    <b>Detected source formats:</b> ${formats.length ? formats.join(", ") : "none"}<br>
+    <b>Status:</b> Choose compression format, then click Compress.
+  `;
+  previewFirstFile(files, sourceLabel.toLowerCase());
+  void populateTargetFormatsForSelection();
+}
+
+async function uploadOneFile(file, targetFormat, options, selectedConverter) {
+  const currentSessionId = await ensureSession();
+  const data = new FormData();
+  convUser.applyUserToFormData(data);
+  data.append("sessionId", currentSessionId);
+  data.append("targetFormat", targetFormat);
+  if (selectedConverter) {
+    data.append("converterId", selectedConverter);
+  }
+  for (const [key, value] of Object.entries(options)) {
+    data.append(`option_${key}`, value);
+  }
+  data.append("file", file);
+  const res = await fetch("/api/upload", { method: "POST", body: data });
+  const payload = await res.json();
+  return { res, payload };
+}
+
+async function runCompression() {
+  if (!selectedFiles.length) {
+    fileInfo.innerHTML = "<b>Status:</b> No file or folder selected.";
+    return;
+  }
+  const targetFormat = targetFormatSelect.value;
+  if (!targetFormat) {
+    fileInfo.innerHTML = "<b>Status:</b> Please choose a compression format first.";
+    return;
+  }
+
+  const options = collectOptions();
+  const selectedConverter = converterSelect.value;
+  const successful = [];
+  const failures = [];
+  const skipped = [];
+
+  for (let i = 0; i < selectedFiles.length; i += 1) {
+    const file = selectedFiles[i];
+    const sourceFormat = detectExtension(file.name);
+    const sourceTargets = sourceTargetMap.get(sourceFormat) || new Set();
+    if (!sourceTargets.has(targetFormat)) {
+      skipped.push(`${file.name}: unsupported ${sourceFormat} -> ${targetFormat}`);
+      continue;
+    }
+
+    fileInfo.innerHTML = `
+      <b>Status:</b> Compressing file ${i + 1}/${selectedFiles.length}...<br>
+      <b>Current file:</b> ${file.name}<br>
+      <b>Successful so far:</b> ${successful.length}<br>
+      <b>Failed so far:</b> ${failures.length}<br>
+      <b>Skipped so far:</b> ${skipped.length}
+    `;
+
+    try {
+      const { res, payload } = await uploadOneFile(file, targetFormat, options, selectedConverter);
+      if (res.ok && payload.ok) {
+        successful.push(payload);
+      } else {
+        failures.push(`${file.name}: ${payload.message || "Unknown error"}`);
+      }
+    } catch (e) {
+      failures.push(`${file.name}: ${e.message}`);
+    }
+  }
+
+  if (successful.length === 0) {
+    fileInfo.innerHTML = `
+      <b>Status:</b> Compression failed.<br>
+      <b>Reason:</b> No file compressed successfully.<br>
+      <b>Failed:</b> ${failures.length}<br>
+      <b>Skipped:</b> ${skipped.length}
+    `;
+    if (failures.length || skipped.length) {
+      fileInfo.innerHTML += `<br><br><b>Details:</b><br>${[...failures, ...skipped].join("<br>")}`;
+    }
+    return;
+  }
+
+  if (successful.length === 1 && selectedFiles.length === 1) {
+    const one = successful[0];
+    setDownloadButton(one.downloadUrl, "Download Compressed File");
+    renderConvertedPreview(one.downloadUrl, one.targetFormat, one.convertedFileName || one.fileName);
+    fileInfo.innerHTML = `
+      <b>Status:</b> Compression finished.<br>
+      <b>Session ID:</b> ${one.sessionId}<br>
+      <b>Upload ID:</b> ${one.uploadId}<br>
+      <b>Target:</b> .${one.targetFormat}<br>
+      <b>Converter:</b> ${one.converterName || one.converterId || "auto"}<br>
+      <b>Applied Options:</b> ${JSON.stringify(one.appliedOptions || {})}
+    `;
+    return;
+  }
+
+  const currentSessionId = successful[0].sessionId;
+  const sessionZipUrl = `/api/history/session/download?sessionId=${encodeURIComponent(currentSessionId)}&userId=${encodeURIComponent(convUser.getUserId())}`;
+  setDownloadButton(sessionZipUrl, "Download");
+  clearPreview("Compression batch complete. Download the session archive.");
+  fileInfo.innerHTML = `
+    <b>Status:</b> Compression batch finished.<br>
+    <b>Session ID:</b> ${currentSessionId}<br>
+    <b>Target:</b> .${targetFormat}<br>
+    <b>Successful:</b> ${successful.length}<br>
+    <b>Failed:</b> ${failures.length}<br>
+    <b>Skipped:</b> ${skipped.length}
+  `;
+  if (failures.length || skipped.length) {
+    fileInfo.innerHTML += `<br><br><b>Details:</b><br>${[...failures, ...skipped].join("<br>")}`;
+  }
+}
+
+async function loadUiConfig() {
+  try {
+    const res = await fetch("/api/ui-config");
+    const payload = await res.json();
+    if (res.ok && payload.ok) {
+      setNerdStatsVisible(!!payload.showNerdStatsDefault);
+      preserveOptionsOnTargetChange = payload.preserveOptionsOnTargetChange !== false;
+      const converters = Array.isArray(payload.converters) ? payload.converters : [];
+      converterSelect.innerHTML = '<option value="">Auto</option>';
+      for (const converter of converters) {
+        const option = document.createElement("option");
+        option.value = converter.id || "";
+        option.textContent = converter.friendlyName || converter.id || "Converter";
+        converterSelect.appendChild(option);
+      }
+      converterSelect.value = "";
+      converterSelect.disabled = converters.length === 0;
+      addNerdStat(
+        `UI config loaded: showNerdStatsDefault=${payload.showNerdStatsDefault}, preserveOptionsOnTargetChange=${preserveOptionsOnTargetChange}`
+      );
+      refreshActionState();
+      return;
+    }
+  } catch (e) {
+    addNerdStat(`UI config load failed: ${e.message}`);
+  }
+  setNerdStatsVisible(false);
+  refreshActionState();
+}
+
+dropZone.addEventListener("dragover", e => {
+  e.preventDefault();
+  dropZone.classList.add("dragover");
+});
+
+dropZone.addEventListener("dragleave", () => {
+  dropZone.classList.remove("dragover");
+});
+
+dropZone.addEventListener("drop", e => {
+  e.preventDefault();
+  dropZone.classList.remove("dragover");
+  const files = Array.from(e.dataTransfer.files || []);
+  if (files.length > 0) {
+    showSelection(files, files.length === 1 ? "File" : "Files");
+  }
+});
+
+fileInput.addEventListener("change", () => {
+  const files = Array.from(fileInput.files || []);
+  if (files.length > 0) {
+    showSelection(files, files.length === 1 ? "File" : "Files");
+  }
+});
+
+folderInput.addEventListener("change", () => {
+  const files = Array.from(folderInput.files || []);
+  if (files.length > 0) {
+    showSelection(files, "Folder");
+  } else {
+    refreshActionState();
+  }
+});
+
+targetFormatSelect.addEventListener("change", () => {
+  void loadOptionsForTargetFormat(targetFormatSelect.value);
+  refreshActionState();
+});
+
+converterSelect.addEventListener("change", () => {
+  void populateTargetFormatsForSelection();
+});
+
+downloadButton.addEventListener("click", () => {
+  if (currentDownloadUrl) {
+    window.location.href = currentDownloadUrl;
+  }
+});
+
+async function saveAsFromUrl(url) {
+  if (!url) {
+    return;
+  }
+  if (!window.showSaveFilePicker) {
+    window.location.href = url;
+    return;
+  }
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Download failed (${response.status})`);
+    }
+    const blob = await response.blob();
+    let suggestedName = "compressed-file";
+    const contentDisposition = response.headers.get("Content-Disposition") || "";
+    const match = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+    if (match && match[1]) {
+      suggestedName = match[1];
+    }
+    const handle = await window.showSaveFilePicker({ suggestedName });
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+  } catch (e) {
+    addNerdStat(`Save As failed=${e.message}`);
+  }
+}
+
+saveAsButton.addEventListener("click", () => {
+  void saveAsFromUrl(currentDownloadUrl);
+});
+
+nerdToggleButton.addEventListener("click", () => {
+  setNerdStatsVisible(!showNerdStats);
+});
+
+uploadButton.addEventListener("click", async () => {
+  setConversionInProgress(true);
+  try {
+    await runCompression();
+  } finally {
+    setConversionInProgress(false);
+  }
+});
+
+void loadUiConfig();
+refreshActionState();
+  </script>
+  <script src="/html/template_609_crypto_vault/js/templatemo-crypto-script.js"></script>
+</body>
+</html>

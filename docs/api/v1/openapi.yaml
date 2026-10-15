@@ -1,0 +1,116 @@
+openapi: 3.1.0
+info:
+  title: 101Conv Jobs API
+  version: 1.0.0
+  description: Authenticated, asynchronous conversion jobs.
+servers:
+  - url: /
+paths:
+  /api/v1/jobs:
+    post:
+      summary: Submit a conversion job
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, sourceFormat, targetFormat]
+              properties:
+                file: { type: string, format: binary }
+                sourceFormat: { type: string }
+                targetFormat: { type: string }
+                converterId: { type: string }
+                option_quality: { type: string, description: 'Option fields use the option_<key> prefix.' }
+      responses:
+        '202':
+          description: Job accepted (or the existing result of an identical idempotent request).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '400': { description: Invalid request }
+        '401': { description: Authentication required }
+        '409': { description: Idempotency key conflicts with a different request }
+        '413': { description: Upload exceeds the configured request limit }
+        '422': { description: Conversion is unsupported }
+  /api/v1/jobs/{id}:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      summary: Get job status
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Current job state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '401': { description: Authentication required }
+        '404': { description: Job not found }
+  /api/v1/jobs/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    post:
+      summary: Request job cancellation
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Updated job state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '401': { description: Authentication required }
+        '404': { description: Job not found }
+  /api/v1/jobs/{id}/result:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      summary: Download a completed result
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Converted output file
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+        '401': { description: Authentication required }
+        '404': { description: Job or result not found }
+        '409': { description: Job has not succeeded }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: conv_sid
+  parameters:
+    JobId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    Job:
+      type: object
+      required: [id, state, sourceName, sourceFormat, targetFormat, converterId, attempt, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        state: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELED] }
+        sourceName: { type: string }
+        sourceFormat: { type: string }
+        targetFormat: { type: string }
+        converterId: { type: string }
+        attempt: { type: integer, minimum: 0 }
+        progress: { type: [integer, 'null'], minimum: 0, maximum: 100 }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        finishedAt: { type: [string, 'null'], format: date-time }
+        errorCode: { type: [string, 'null'] }
+        errorMessage: { type: [string, 'null'] }
+        cancellationRequested: { type: boolean }
+        resultUrl: { type: [string, 'null'], format: uri-reference }

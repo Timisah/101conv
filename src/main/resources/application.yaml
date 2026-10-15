@@ -1,0 +1,65 @@
+spring:
+  config:
+    import: optional:file:src/main/resources/static/user-config.properties
+  application:
+    name: 101Conv
+  datasource:
+    url: jdbc:h2:file:${db.h2Path:./src/main/resources/data/convdb};MODE=MySQL;AUTO_SERVER=TRUE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  h2:
+    console:
+      enabled: false
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 500MB
+
+server:
+  port: ${SERVER_PORT:5656}
+  tomcat:
+    max-swallow-size: -1
+
+logging:
+  level:
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN
+    org.hibernate.type.descriptor.sql: WARN
+    org.springframework.web.servlet.DispatcherServlet: WARN
+
+app:
+  data-dir: ${APP_DATA_DIR:./data/101conv}
+  jobs:
+    poll-interval-ms: 500
+    lease-seconds: 360
+    maximum-output-bytes: 1073741824
+  converter:
+    timeout-seconds: 300
+    output-limit-bytes: 65536
+  upload-dir: uploads
+  conversion-defaults-file: conversion-defaults.properties
+  converter-config-dir: converter-configs
+  user-config-file: src/main/resources/static/user-config.properties
+  auth:
+    legacy-db-base-path: data/convdb
+  ui:
+    show-nerd-stats-default: false
+
+---
+spring:
+  config:
+    activate:
+      on-profile: mysql
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/convdb?useSSL=true&serverTimezone=UTC}
+    username: ${MYSQL_USERNAME:}
+    password: ${MYSQL_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect

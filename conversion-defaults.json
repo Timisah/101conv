@@ -1,0 +1,48 @@
+{
+  "description": "Edit defaults per target format. Values are used unless overridden in the UI.",
+  "formats": {
+    "jpeg": {
+      "quality": 85
+    },
+    "png": {
+      "quality": 90
+    },
+    "webp": {
+      "quality": 80
+    },
+    "mp4": {
+      "targetSizeMb": 8,
+      "resolution": "original"
+    },
+    "mkv": {
+      "targetSizeMb": 8,
+      "resolution": "original"
+    },
+    "mov": {
+      "targetSizeMb": 8,
+      "resolution": "original"
+    },
+    "webm": {
+      "targetSizeMb": 8,
+      "resolution": "original"
+    },
+    "mp3": {
+      "targetSizeMb": 8
+    },
+    "aac": {
+      "targetSizeMb": 8
+    },
+    "m4a": {
+      "targetSizeMb": 8
+    },
+    "ogg": {
+      "targetSizeMb": 8
+    },
+    "wav": {
+      "targetSizeMb": 8
+    },
+    "flac": {
+      "targetSizeMb": 8
+    }
+  }
+}

@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Conversion History</title>
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', savedTheme);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/html/template_609_crypto_vault/css/templatemo-crypto-style.css">
+  <link rel="stylesheet" href="/html/template_609_crypto_vault/css/templatemo-crypto-pages.css">
+  <link rel="stylesheet" href="/html/css/conv-crypto-overrides.css">
+</head>
+<body>
+  <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Toggle menu">
+    <div class="hamburger"><span></span><span></span><span></span></div>
+  </button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <div class="dashboard">
+    <aside class="sidebar" id="sidebar">
+      <div class="logo"><div class="logo-icon">CV</div><span class="logo-text">101Conv</span></div>
+      <nav class="nav-section">
+        <div class="nav-label">Converter</div>
+        <a href="/html/index.html" class="nav-item">Convert</a>
+        <a href="/html/compress.html" class="nav-item">Compress</a>
+        <a href="/html/history.html" class="nav-item active">History</a>
+        <a href="/html/settings.html" class="nav-item">Settings</a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="theme-toggle">
+          <div class="theme-toggle-label">Theme</div>
+          <div class="theme-switch" id="themeSwitch"></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div class="page-header">
+        <h1>Conversion Sessions</h1>
+        <p>Download complete sessions or open session details with previews.</p>
+      </div>
+
+      <section class="card stack-16">
+        <div class="app-controls">
+          <button id="reloadButton" class="action-btn primary" type="button">Reload</button>
+          <button id="deleteSelectedButton" class="action-btn" type="button" disabled>Delete Selected</button>
+        </div>
+
+        <div class="app-grid-2">
+          <div>
+            <label for="limit" class="form-label">Sessions</label>
+            <input id="limit" type="number" min="1" max="1000" step="1" value="200">
+          </div>
+        </div>
+        <div class="app-grid-2">
+          <div>
+            <label for="minSizeMb" class="form-label">Min converted size (MB)</label>
+            <input id="minSizeMb" type="number" min="0" step="0.1" placeholder="e.g. 10">
+          </div>
+          <div>
+            <label for="maxSizeMb" class="form-label">Max converted size (MB)</label>
+            <input id="maxSizeMb" type="number" min="0" step="0.1" placeholder="e.g. 500">
+          </div>
+        </div>
+
+        <p id="status" class="status-line"></p>
+        <p class="status-line">Tip: click table headers to sort.</p>
+        <div id="sessionsRoot"></div>
+      </section>
+
+      <footer class="copyright">Converter UI based on TemplateMo 609 Crypto Vault</footer>
+    </main>
+  </div>
+
+  <script src="/html/js/user.js"></script>
+  <script>
+    const reloadButton = document.getElementById("reloadButton");
+    const limitEl = document.getElementById("limit");
+    const minSizeMbEl = document.getElementById("minSizeMb");
+    const maxSizeMbEl = document.getElementById("maxSizeMb");
+    const statusEl = document.getElementById("status");
+    const sessionsRoot = document.getElementById("sessionsRoot");
+    const deleteSelectedButton = document.getElementById("deleteSelectedButton");
+    let lastPayload = null;
+    let currentSortBy = "latestConvertedAt";
+    let currentSortDir = "desc";
+    const selectedSessionIds = new Set();
+    const dateTimeFormatter = new Intl.DateTimeFormat("de-DE", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    });
+
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message;
+      statusEl.classList.toggle("error", isError);
+      statusEl.classList.toggle("ok", !isError);
+    }
+
+    function formatDateTime(raw) {
+      if (!raw) {
+        return "";
+      }
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) {
+        return raw;
+      }
+      return dateTimeFormatter.format(parsed);
+    }
+
+    function formatBytes(bytes) {
+      const value = Number(bytes || 0);
+      if (!Number.isFinite(value) || value <= 0) {
+        return "0 B";
+      }
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let n = value;
+      let idx = 0;
+      while (n >= 1024 && idx < units.length - 1) {
+        n /= 1024;
+        idx += 1;
+      }
+      return `${n.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+    }
+
+    function formatSignedBytes(bytes) {
+      const value = Number(bytes || 0);
+      if (!Number.isFinite(value) || value === 0) {
+        return "0 B";
+      }
+      const sign = value < 0 ? "-" : "";
+      const abs = Math.abs(value);
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let n = abs;
+      let idx = 0;
+      while (n >= 1024 && idx < units.length - 1) {
+        n /= 1024;
+        idx += 1;
+      }
+      return `${sign}${n.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+    }
+
+    function parseOptionalMb(rawValue) {
+      const text = String(rawValue ?? "").trim();
+      if (text === "") {
+        return null;
+      }
+      const parsed = Number(text);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        return null;
+      }
+      return parsed;
+    }
+
+    function passesSizeFilter(session) {
+      const totalConvertedBytes = Number(session.totalConvertedBytes || 0);
+      const minMb = parseOptionalMb(minSizeMbEl.value);
+      const maxMb = parseOptionalMb(maxSizeMbEl.value);
+      if (minMb !== null && totalConvertedBytes < (minMb * 1024 * 1024)) {
+        return false;
+      }
+      if (maxMb !== null && totalConvertedBytes > (maxMb * 1024 * 1024)) {
+        return false;
+      }
+      return true;
+    }
+
+    function sortSessions(sessions) {
+      const sortBy = currentSortBy;
+      const direction = currentSortDir === "asc" ? 1 : -1;
+      const sorted = [...sessions].filter(passesSizeFilter);
+      sorted.sort((a, b) => {
+        let av;
+        let bv;
+        if (sortBy === "latestConvertedAt") {
+          av = a.latestConvertedAt ? new Date(a.latestConvertedAt).getTime() : 0;
+          bv = b.latestConvertedAt ? new Date(b.latestConvertedAt).getTime() : 0;
+        } else if (sortBy === "convertedCount") {
+          av = Number(a.convertedCount || 0);
+          bv = Number(b.convertedCount || 0);
+        } else if (sortBy === "totalOriginalBytes" || sortBy === "totalConvertedBytes" || sortBy === "savedBytes") {
+          av = Number(a[sortBy] || 0);
+          bv = Number(b[sortBy] || 0);
+        } else if (sortBy === "targetFormats") {
+          av = (a.targetFormats || []).join(", ");
+          bv = (b.targetFormats || []).join(", ");
+        } else {
+          av = String(a.sessionId || "");
+          bv = String(b.sessionId || "");
+        }
+        if (av < bv) return -1 * direction;
+        if (av > bv) return 1 * direction;
+        return 0;
+      });
+      return sorted;
+    }
+
+    function updateDeleteSelectedState() {
+      deleteSelectedButton.disabled = selectedSessionIds.size === 0;
+      if (selectedSessionIds.size === 0) {
+        deleteSelectedButton.textContent = "Delete Selected";
+      } else {
+        deleteSelectedButton.textContent = `Delete Selected (${selectedSessionIds.size})`;
+      }
+    }
+
+    function sortLabel(label, key) {
+      if (currentSortBy !== key) {
+        return label;
+      }
+      return `${label}${currentSortDir === "asc" ? " ↑" : " ↓"}`;
+    }
+
+    function toggleSort(sortBy) {
+      if (currentSortBy === sortBy) {
+        currentSortDir = currentSortDir === "asc" ? "desc" : "asc";
+      } else {
+        currentSortBy = sortBy;
+        currentSortDir = "desc";
+      }
+      if (lastPayload) {
+        const shown = render(lastPayload);
+        setStatus(`Loaded ${lastPayload.count || 0} sessions. Showing ${shown}.`);
+      }
+    }
+
+    function render(payload) {
+      sessionsRoot.innerHTML = "";
+      const sessions = sortSessions(payload.sessions || []);
+      const visibleSessionIds = new Set(sessions.map(session => session.sessionId));
+      for (const id of Array.from(selectedSessionIds)) {
+        if (!visibleSessionIds.has(id)) {
+          selectedSessionIds.delete(id);
+        }
+      }
+      updateDeleteSelectedState();
+      if (sessions.length === 0) {
+        sessionsRoot.textContent = "No conversion sessions found.";
+        return 0;
+      }
+
+      const tableWrap = document.createElement("div");
+      tableWrap.className = "table-wrap";
+      const table = document.createElement("table");
+
+      const header = document.createElement("tr");
+      header.innerHTML = `
+        <th><input id="selectAllSessions" type="checkbox" aria-label="Select all sessions"></th>
+        <th><button class="sortable-th" type="button" data-sort="convertedCount">${sortLabel("Files", "convertedCount")}</button></th>
+        <th><button class="sortable-th" type="button" data-sort="totalOriginalBytes">${sortLabel("Total Original", "totalOriginalBytes")}</button></th>
+        <th><button class="sortable-th" type="button" data-sort="totalConvertedBytes">${sortLabel("Total Converted", "totalConvertedBytes")}</button></th>
+        <th><button class="sortable-th" type="button" data-sort="savedBytes">${sortLabel("Saved", "savedBytes")}</button></th>
+        <th><button class="sortable-th" type="button" data-sort="targetFormats">${sortLabel("Target Format(s)", "targetFormats")}</button></th>
+        <th><button class="sortable-th" type="button" data-sort="latestConvertedAt">${sortLabel("Latest Conversion", "latestConvertedAt")}</button></th>
+        <th>Actions</th>
+        <th>Details</th>`;
+      table.appendChild(header);
+
+      for (const session of sessions) {
+        const row = document.createElement("tr");
+        const formats = (session.targetFormats || []).map(f => `.${f}`).join(", ");
+        const totalOriginal = Number(session.totalOriginalBytes || 0);
+        const totalConverted = Number(session.totalConvertedBytes || 0);
+        const saved = Number(session.savedBytes || 0);
+        const checked = selectedSessionIds.has(session.sessionId) ? "checked" : "";
+        row.innerHTML = `
+          <td data-label="Select"><input type="checkbox" class="session-select" data-session-id="${session.sessionId}" ${checked}></td>
+          <td data-label="Files">${session.convertedCount || 0}</td>
+          <td data-label="Total Original">${formatBytes(totalOriginal)}</td>
+          <td data-label="Total Converted">${formatBytes(totalConverted)}</td>
+          <td data-label="Saved">${formatSignedBytes(saved)}</td>
+          <td data-label="Target Format(s)">${formats || "-"}</td>
+          <td data-label="Latest Conversion">${formatDateTime(session.latestConvertedAt)}</td>
+          <td data-label="Actions">
+            <a href="${session.sessionDownloadUrl}" class="icon-btn" title="Download">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 3v12"></path>
+                <path d="M7 10l5 5 5-5"></path>
+                <path d="M5 21h14"></path>
+              </svg>
+            </a>
+            <button class="icon-btn session-save" type="button" data-download-url="${session.sessionDownloadUrl}" data-file-name="session-${session.sessionId}-converted.zip" title="Save As">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <path d="M17 21v-8H7v8"></path>
+                <path d="M7 3v5h8"></path>
+              </svg>
+            </button>
+            <button class="icon-btn danger session-delete" type="button" data-session-id="${session.sessionId}" title="Delete Session">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M3 6h18"></path>
+                <path d="M8 6V4h8v2"></path>
+                <path d="M19 6l-1 14H6L5 6"></path>
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+              </svg>
+            </button>
+          </td>
+          <td data-label="Details"><a href="${session.sessionDetailsUrl}" class="icon-btn" title="Open Session">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M14 3h7v7"></path>
+              <path d="M10 14L21 3"></path>
+              <path d="M21 14v7h-7"></path>
+              <path d="M3 10V3h7"></path>
+              <path d="M3 3l8 8"></path>
+            </svg>
+          </a></td>
+        `;
+        table.appendChild(row);
+      }
+
+      table.querySelectorAll("[data-sort]").forEach((button) => {
+        button.addEventListener("click", () => {
+          toggleSort(button.getAttribute("data-sort"));
+        });
+      });
+
+      const selectAllCheckbox = table.querySelector("#selectAllSessions");
+      if (selectAllCheckbox) {
+        selectAllCheckbox.checked = sessions.length > 0 && sessions.every(session => selectedSessionIds.has(session.sessionId));
+        selectAllCheckbox.addEventListener("change", () => {
+          for (const session of sessions) {
+            if (selectAllCheckbox.checked) {
+              selectedSessionIds.add(session.sessionId);
+            } else {
+              selectedSessionIds.delete(session.sessionId);
+            }
+          }
+          render(payload);
+        });
+      }
+
+      table.querySelectorAll(".session-select").forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          const sessionId = checkbox.getAttribute("data-session-id");
+          if (!sessionId) {
+            return;
+          }
+          if (checkbox.checked) {
+            selectedSessionIds.add(sessionId);
+          } else {
+            selectedSessionIds.delete(sessionId);
+          }
+          updateDeleteSelectedState();
+          if (selectAllCheckbox) {
+            selectAllCheckbox.checked = sessions.length > 0 && sessions.every(session => selectedSessionIds.has(session.sessionId));
+          }
+        });
+      });
+
+      table.querySelectorAll(".session-save").forEach((button) => {
+        button.addEventListener("click", () => {
+          void saveAsFromUrl(
+            button.getAttribute("data-download-url"),
+            button.getAttribute("data-file-name") || "session-converted.zip"
+          );
+        });
+      });
+
+      table.querySelectorAll(".session-delete").forEach((button) => {
+        button.addEventListener("click", () => {
+          const sessionId = button.getAttribute("data-session-id");
+          if (!sessionId) {
+            return;
+          }
+          void deleteSession(sessionId);
+        });
+      });
+
+      tableWrap.appendChild(table);
+      sessionsRoot.appendChild(tableWrap);
+      return sessions.length;
+    }
+
+    async function saveAsFromUrl(url, fallbackName) {
+      if (!url) {
+        return;
+      }
+
+      if (!window.showSaveFilePicker) {
+        window.location.href = url;
+        return;
+      }
+
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Download failed (${response.status})`);
+        }
+        const blob = await response.blob();
+        let suggestedName = fallbackName || "session-converted.zip";
+        const contentDisposition = response.headers.get("Content-Disposition") || "";
+        const match = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+        if (match && match[1]) {
+          suggestedName = match[1];
+        }
+
+        const handle = await window.showSaveFilePicker({ suggestedName });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } catch (e) {
+        setStatus(`Save As failed: ${e.message}`, true);
+      }
+    }
+
+    async function deleteSession(sessionId) {
+      const confirmed = window.confirm("Delete this conversion session and all its files?");
+      if (!confirmed) {
+        return;
+      }
+      const data = new URLSearchParams();
+      data.append("userId", convUser.getUserId());
+      data.append("sessionId", sessionId);
+      try {
+        const res = await fetch("/api/history/session/delete", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+          },
+          body: data.toString()
+        });
+        if (!res.ok) {
+          setStatus("Could not delete session.", true);
+          return;
+        }
+        selectedSessionIds.delete(sessionId);
+        await loadSessions();
+        setStatus("Session deleted.");
+      } catch (e) {
+        setStatus(`Delete failed: ${e.message}`, true);
+      }
+    }
+
+    async function deleteSelectedSessions() {
+      if (selectedSessionIds.size === 0) {
+        return;
+      }
+      const confirmed = window.confirm(`Delete ${selectedSessionIds.size} selected session(s) and all their files?`);
+      if (!confirmed) {
+        return;
+      }
+
+      const data = new URLSearchParams();
+      data.append("userId", convUser.getUserId());
+      for (const sessionId of selectedSessionIds) {
+        data.append("sessionIds", sessionId);
+      }
+      try {
+        const res = await fetch("/api/history/sessions/delete", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+          },
+          body: data.toString()
+        });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          setStatus(payload.message || "Could not delete selected sessions.", true);
+          return;
+        }
+        selectedSessionIds.clear();
+        await loadSessions();
+        setStatus(`Deleted ${payload.deletedCount || 0} session(s).`);
+      } catch (e) {
+        setStatus(`Bulk delete failed: ${e.message}`, true);
+      }
+    }
+
+    async function loadSessions() {
+      const limit = Number(limitEl.value);
+      if (!Number.isFinite(limit) || limit < 1) {
+        setStatus("Limit must be at least 1.", true);
+        return;
+      }
+
+      setStatus("Loading sessions...");
+      try {
+        const res = await fetch(`/api/history/sessions?userId=${encodeURIComponent(convUser.getUserId())}&limit=${encodeURIComponent(String(Math.trunc(limit)))}`);
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          setStatus(payload.message || "Could not load sessions.", true);
+          return;
+        }
+        lastPayload = payload;
+        const shown = render(payload);
+        setStatus(`Loaded ${payload.count || 0} sessions. Showing ${shown}.`);
+      } catch (e) {
+        setStatus(`Could not load sessions: ${e.message}`, true);
+      }
+    }
+
+    reloadButton.addEventListener("click", () => {
+      void loadSessions();
+    });
+    deleteSelectedButton.addEventListener("click", () => {
+      void deleteSelectedSessions();
+    });
+
+    minSizeMbEl.addEventListener("input", () => {
+      if (lastPayload) {
+        const shown = render(lastPayload);
+        setStatus(`Loaded ${lastPayload.count || 0} sessions. Showing ${shown}.`);
+      }
+    });
+
+    maxSizeMbEl.addEventListener("input", () => {
+      if (lastPayload) {
+        const shown = render(lastPayload);
+        setStatus(`Loaded ${lastPayload.count || 0} sessions. Showing ${shown}.`);
+      }
+    });
+
+    void loadSessions();
+  </script>
+  <script src="/html/template_609_crypto_vault/js/templatemo-crypto-script.js"></script>
+</body>
+</html>

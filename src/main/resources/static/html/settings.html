@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings</title>
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', savedTheme);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/html/template_609_crypto_vault/css/templatemo-crypto-style.css">
+  <link rel="stylesheet" href="/html/template_609_crypto_vault/css/templatemo-crypto-pages.css">
+  <link rel="stylesheet" href="/html/css/conv-crypto-overrides.css">
+</head>
+<body>
+  <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Toggle menu">
+    <div class="hamburger"><span></span><span></span><span></span></div>
+  </button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <div class="dashboard">
+    <aside class="sidebar" id="sidebar">
+      <div class="logo"><div class="logo-icon">CV</div><span class="logo-text">101Conv</span></div>
+      <nav class="nav-section">
+        <div class="nav-label">Converter</div>
+        <a href="/html/index.html" class="nav-item">Convert</a>
+        <a href="/html/compress.html" class="nav-item">Compress</a>
+        <a href="/html/history.html" class="nav-item">History</a>
+        <a href="/html/settings.html" class="nav-item active">Settings</a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="theme-toggle">
+          <div class="theme-toggle-label">Theme</div>
+          <div class="theme-switch" id="themeSwitch"></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div class="page-header">
+        <h1>Settings</h1>
+        <p>Server-wide settings.</p>
+      </div>
+
+      <!-- No need anymore -->
+      <!-- <section class="card stack-16">
+        <div class="app-controls">
+          <button id="reloadAllButton" class="action-btn" type="button">Reload All</button>
+        </div>
+        <p id="globalStatus" class="status-line"></p>
+      </section> -->
+
+      <br>
+      <section class="card stack-16">
+        <h3 class="card-title">Cleanup</h3>
+        <div class="app-grid-2">
+          <div>
+            <label for="retentionDaysRange" class="form-label">Delete conversions older than (days)</label>
+            <input id="retentionDaysRange" type="range" min="1" max="365" step="1" value="14">
+          </div>
+          <div>
+            <label for="retentionDays" class="form-label">Retention days</label>
+            <input id="retentionDays" type="number" min="1" max="3650" step="1" value="14">
+          </div>
+        </div>
+        <p id="cleanupInfo" class="status-line"></p>
+        <div class="app-controls">
+          <button id="runCleanupButton" class="action-btn" type="button">Run Cleanup Now</button>
+          <button id="saveGeneralButton" class="action-btn primary" type="button">Save Cleanup Settings</button>
+        </div>
+        <pre id="cleanupResult"></pre>
+      </section>
+
+      <br>
+      <section class="card stack-16">
+        <h3 class="card-title">Change Password</h3>
+        <div class="app-grid-2">
+          <div>
+            <label for="currentPassword" class="form-label">Current password</label>
+            <input id="currentPassword" type="password" autocomplete="current-password">
+          </div>
+          <div>
+            <label for="newPassword" class="form-label">New password</label>
+            <input id="newPassword" type="password" autocomplete="new-password">
+          </div>
+        </div>
+        <div>
+          <label for="confirmPassword" class="form-label">Confirm new password</label>
+          <input id="confirmPassword" type="password" autocomplete="new-password">
+        </div>
+        <div class="app-controls">
+          <button id="changePasswordButton" class="action-btn" type="button">Change Password</button>
+        </div>
+      </section>
+
+      <br>
+      <section class="card stack-16">
+        <h3 class="card-title">Conversion Defaults</h3>
+        <div class="app-controls">
+          <button id="reloadDefaultsButton" class="action-btn" type="button">Reload Defaults</button>
+          <button id="saveDefaultsButton" class="action-btn primary" type="button">Save Defaults</button>
+        </div>
+        <p id="defaultsStatus" class="status-line"></p>
+        <p id="defaultsFilePath"></p>
+        <div id="defaultsRoot" class="stack-16"></div>
+      </section>
+
+
+
+      <footer class="copyright">Converter UI based on TemplateMo 609 Crypto Vault</footer>
+    </main>
+  </div>
+
+  <script src="/html/js/user.js"></script>
+  <script>
+    const reloadAllButton = document.getElementById("reloadAllButton");
+    const globalStatusEl = document.getElementById("globalStatus");
+
+    const retentionDaysRangeEl = document.getElementById("retentionDaysRange");
+    const retentionDaysEl = document.getElementById("retentionDays");
+    const cleanupInfoEl = document.getElementById("cleanupInfo");
+    const saveGeneralButton = document.getElementById("saveGeneralButton");
+    const runCleanupButton = document.getElementById("runCleanupButton");
+    const cleanupResultEl = document.getElementById("cleanupResult");
+
+    const reloadDefaultsButton = document.getElementById("reloadDefaultsButton");
+    const saveDefaultsButton = document.getElementById("saveDefaultsButton");
+    const defaultsStatusEl = document.getElementById("defaultsStatus");
+    const defaultsFilePathEl = document.getElementById("defaultsFilePath");
+    const defaultsRoot = document.getElementById("defaultsRoot");
+
+    const currentPasswordEl = document.getElementById("currentPassword");
+    const newPasswordEl = document.getElementById("newPassword");
+    const confirmPasswordEl = document.getElementById("confirmPassword");
+    const changePasswordButton = document.getElementById("changePasswordButton");
+
+    function setStatus(el, message, isError = false) {
+      el.textContent = message;
+      el.classList.toggle("error", isError);
+      el.classList.toggle("ok", !isError);
+    }
+
+    function syncRetentionFromRange() {
+      retentionDaysEl.value = retentionDaysRangeEl.value;
+    }
+
+    function syncRetentionFromNumber() {
+      const parsed = Number(retentionDaysEl.value);
+      if (!Number.isFinite(parsed)) {
+        return;
+      }
+      const clamped = Math.max(1, Math.min(3650, Math.trunc(parsed)));
+      retentionDaysRangeEl.value = String(clamped);
+      retentionDaysEl.value = String(clamped);
+    }
+
+    function renderGeneralSettings(payload) {
+      const settings = payload.settings || {};
+      const retention = Number(settings.retentionDays ?? 14);
+      const clamped = Math.max(1, Math.min(3650, Math.trunc(retention)));
+      retentionDaysEl.value = String(clamped);
+      retentionDaysRangeEl.value = String(clamped);
+      const userConfig = payload.userConfig || {};
+      const anonDays = userConfig.anonymousRetentionDays ?? 1;
+      const sessionDays = userConfig.sessionDays ?? 7;
+      const configFile = userConfig.configFile || "user-config.properties";
+      cleanupInfoEl.textContent = `Anonymous retention: ${anonDays} day(s) | Session: ${sessionDays} day(s) | Config: ${configFile}`;
+    }
+
+    async function loadGeneralSettings() {
+      try {
+        const res = await fetch(`/api/settings/general?userId=${encodeURIComponent(convUser.getUserId())}`);
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          setStatus(globalStatusEl, payload.message || "Could not load general settings.", true);
+          return;
+        }
+        renderGeneralSettings(payload);
+      } catch (e) {
+        setStatus(globalStatusEl, `Could not load general settings: ${e.message}`, true);
+      }
+    }
+
+    async function saveGeneralSettings() {
+      syncRetentionFromNumber();
+      setStatus(globalStatusEl, "Saving cleanup settings...");
+      const data = new URLSearchParams();
+      data.append("userId", convUser.getUserId());
+      data.append("retentionDays", retentionDaysEl.value);
+
+      try {
+        const res = await fetch("/api/settings/general", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: data.toString()
+        });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          setStatus(globalStatusEl, payload.message || "Could not save cleanup settings.", true);
+          return;
+        }
+        renderGeneralSettings(payload);
+        setStatus(globalStatusEl, "Cleanup settings saved.");
+      } catch (e) {
+        setStatus(globalStatusEl, `Could not save cleanup settings: ${e.message}`, true);
+      }
+    }
+
+    async function runCleanupNow() {
+      setStatus(globalStatusEl, "Running cleanup...");
+      cleanupResultEl.textContent = "";
+      try {
+        const res = await fetch("/api/settings/cleanup/run", { method: "POST" });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          setStatus(globalStatusEl, payload.message || "Cleanup failed.", true);
+          return;
+        }
+        cleanupResultEl.textContent = JSON.stringify(payload.cleanup || {}, null, 2);
+        setStatus(globalStatusEl, "Cleanup completed.");
+      } catch (e) {
+        setStatus(globalStatusEl, `Cleanup failed: ${e.message}`, true);
+      }
+    }
+
+    function renderDefaultOption(format, option) {
+      const row = document.createElement("div");
+      row.className = "detail-card";
+
+      const key = `${format}.${option.key}`;
+      const label = document.createElement("label");
+      label.className = "form-label";
+      label.textContent = `${format.toUpperCase()} - ${option.label}`;
+      label.htmlFor = `cfg_${format}_${option.key}`;
+      row.appendChild(label);
+
+      if (option.type === "select") {
+        const select = document.createElement("select");
+        select.id = `cfg_${format}_${option.key}`;
+        select.setAttribute("data-config-key", key);
+        for (const choice of option.choices || []) {
+          const opt = document.createElement("option");
+          opt.value = choice;
+          opt.textContent = choice;
+          select.appendChild(opt);
+        }
+        select.value = option.currentValue ?? option.defaultValue ?? "";
+        row.appendChild(select);
+      } else if (option.type === "number") {
+        const min = option.min ?? 1;
+        const max = option.max ?? 100;
+        const step = option.step ?? 1;
+        const currentValue = String(option.currentValue ?? option.defaultValue ?? "");
+
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.min = String(min);
+        slider.max = String(max);
+        slider.step = String(step);
+        slider.value = currentValue;
+        row.appendChild(slider);
+
+        const number = document.createElement("input");
+        number.id = `cfg_${format}_${option.key}`;
+        number.type = "number";
+        number.min = String(min);
+        number.max = String(max);
+        number.step = String(step);
+        number.value = currentValue;
+        number.setAttribute("data-config-key", key);
+        row.appendChild(number);
+
+        slider.addEventListener("input", () => {
+          number.value = slider.value;
+        });
+        number.addEventListener("input", () => {
+          const parsed = Number(number.value);
+          if (!Number.isFinite(parsed)) {
+            return;
+          }
+          const clamped = Math.max(Number(min), Math.min(Number(max), parsed));
+          slider.value = String(clamped);
+        });
+      } else {
+        const input = document.createElement("input");
+        input.id = `cfg_${format}_${option.key}`;
+        input.type = option.type || "text";
+        input.value = option.currentValue ?? option.defaultValue ?? "";
+        input.setAttribute("data-config-key", key);
+        row.appendChild(input);
+      }
+
+      const hint = document.createElement("div");
+      hint.className = "entry-meta";
+      hint.textContent = `Default: ${option.defaultValue ?? ""}`;
+      row.appendChild(hint);
+
+      return row;
+    }
+
+    function renderDefaults(payload) {
+      defaultsRoot.innerHTML = "";
+      defaultsFilePathEl.textContent = `Defaults file: ${payload.defaultsFilePath || ""}`;
+      for (const formatEntry of payload.formats || []) {
+        for (const option of formatEntry.options || []) {
+          defaultsRoot.appendChild(renderDefaultOption(formatEntry.format, option));
+        }
+      }
+    }
+
+    async function loadDefaults() {
+      setStatus(defaultsStatusEl, "Loading defaults...");
+      try {
+        const res = await fetch("/api/config/defaults");
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          setStatus(defaultsStatusEl, payload.message || "Could not load defaults.", true);
+          return;
+        }
+        renderDefaults(payload);
+        setStatus(defaultsStatusEl, "Defaults loaded.");
+      } catch (e) {
+        setStatus(defaultsStatusEl, `Could not load defaults: ${e.message}`, true);
+      }
+    }
+
+    async function saveDefaults() {
+      const data = new URLSearchParams();
+      defaultsRoot.querySelectorAll("[data-config-key]").forEach((input) => {
+        const key = input.getAttribute("data-config-key");
+        data.append(`cfg.${key}`, input.value);
+      });
+
+      setStatus(defaultsStatusEl, "Saving defaults...");
+      try {
+        const res = await fetch("/api/config/defaults", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: data.toString()
+        });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          setStatus(defaultsStatusEl, payload.message || "Could not save defaults.", true);
+          return;
+        }
+        setStatus(defaultsStatusEl, "Defaults saved.");
+        await loadDefaults();
+      } catch (e) {
+        setStatus(defaultsStatusEl, `Could not save defaults: ${e.message}`, true);
+      }
+    }
+
+    async function changePassword() {
+      if (!convUser.isAuthenticated()) {
+        setStatus(globalStatusEl, "Login required to change password.", true);
+        return;
+      }
+
+      const currentPassword = String(currentPasswordEl.value || "");
+      const newPassword = String(newPasswordEl.value || "");
+      const confirmPassword = String(confirmPasswordEl.value || "");
+
+      if (!currentPassword || !newPassword || !confirmPassword) {
+        setStatus(globalStatusEl, "Please fill all password fields.", true);
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setStatus(globalStatusEl, "New passwords do not match.", true);
+        return;
+      }
+
+      setStatus(globalStatusEl, "Changing password...");
+      const data = new URLSearchParams();
+      data.append("currentPassword", currentPassword);
+      data.append("newPassword", newPassword);
+
+      try {
+        const res = await fetch("/api/auth/change-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: data.toString()
+        });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          setStatus(globalStatusEl, payload.message || "Could not change password.", true);
+          return;
+        }
+        currentPasswordEl.value = "";
+        newPasswordEl.value = "";
+        confirmPasswordEl.value = "";
+        try {
+          localStorage.removeItem("conv_user_id");
+        } catch (e) {
+          // ignore
+        }
+        setStatus(globalStatusEl, "Password changed. Redirecting to login...");
+        setTimeout(() => {
+          window.location.href = "/html/login.html?next=/html/index.html";
+        }, 700);
+      } catch (e) {
+        setStatus(globalStatusEl, `Could not change password: ${e.message}`, true);
+      }
+    }
+
+    async function reloadAll() {
+      setStatus(globalStatusEl, "Reloading all settings...");
+      await Promise.all([loadGeneralSettings(), loadDefaults()]);
+      setStatus(globalStatusEl, "All settings loaded.");
+    }
+
+    retentionDaysRangeEl.addEventListener("input", syncRetentionFromRange);
+    retentionDaysEl.addEventListener("input", syncRetentionFromNumber);
+    reloadAllButton.addEventListener("click", () => { void reloadAll(); });
+    saveGeneralButton.addEventListener("click", () => { void saveGeneralSettings(); });
+    runCleanupButton.addEventListener("click", () => { void runCleanupNow(); });
+    reloadDefaultsButton.addEventListener("click", () => { void loadDefaults(); });
+    saveDefaultsButton.addEventListener("click", () => { void saveDefaults(); });
+    changePasswordButton.addEventListener("click", () => { void changePassword(); });
+
+    void reloadAll();
+  </script>
+  <script src="/html/template_609_crypto_vault/js/templatemo-crypto-script.js"></script>
+</body>
+</html>

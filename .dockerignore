@@ -1,0 +1,13 @@
+.git
+.github
+.idea
+.vscode
+target
+data
+uploads
+converter-configs
+.env
+.env.*
+*.log
+*.mv.db
+*.trace.db

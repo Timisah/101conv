@@ -1,0 +1,29 @@
+services:
+  101conv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-5656}:${PORT:-5656}"
+    environment:
+      SERVER_PORT: "${PORT:-5656}"
+      APP_DATA_DIR: /var/lib/101conv
+      APP_USER_CONFIG_FILE: /var/lib/101conv/user-config.properties
+      SPRING_DATASOURCE_URL: "jdbc:h2:file:/var/lib/101conv/convdb;MODE=MySQL"
+      SPRING_SERVLET_MULTIPART_LOCATION: /var/lib/101conv/tmp
+    volumes:
+      - 101conv-data:/var/lib/101conv
+    working_dir: /var/lib/101conv
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 2g
+    cpus: 2.0
+
+volumes:
+  101conv-data:
