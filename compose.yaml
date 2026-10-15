@@ -23,8 +23,6 @@ services:
       - /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777
     cap_drop:
       - ALL
-    security_opt:
-      - no-new-privileges:true
     pids_limit: 128
     mem_limit: 2g
     cpus: 2.0
