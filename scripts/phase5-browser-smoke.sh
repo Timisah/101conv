@@ -105,12 +105,12 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 [[ "$(docker inspect --format '{{.State.Health.Status}}' "$web_container")" == "healthy" ]]
-docker inspect "$web_container" | python3 -c 'import json,sys; c=json.load(sys.stdin)[0]; p=c["HostConfig"]["PortBindings"]["8080/tcp"]; assert p and p[0]["HostPort"] == sys.argv[1], p' "$port_num"
+docker inspect "$web_container" | python3 -c 'import json,sys; c=json.load(sys.stdin)[0]; p=c["HostConfig"]["PortBindings"]["5656/tcp"]; assert p and p[0]["HostPort"] == sys.argv[1], p' "$port_num"
 docker build -f "$repo_root/web/Dockerfile.e2e" -t "$BROWSER_IMAGE" "$repo_root/web"
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_web-core" "$BROWSER_IMAGE" node - <<'NODE'
 const assert = require('node:assert/strict');
 (async () => {
-  const base = 'http://101conv:8080';
+  const base = 'http://101conv:5656';
   const response = await fetch(base + '/');
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-cache, must-revalidate');
@@ -122,7 +122,7 @@ const assert = require('node:assert/strict');
   assert.equal(assetResponse.headers.get('cache-control'), 'public, max-age=31536000, immutable');
 })().catch(error => { console.error(error); process.exit(1); });
 NODE
-docker run --rm --shm-size=1g --network "${COMPOSE_PROJECT_NAME}_web-core" -e SMOKE_BASE=http://101conv:8080 -e ENGINE_ADMIN_TOKEN -e CHROMIUM_PATH=/usr/bin/chromium -e NO_PROXY=101conv,core,localhost,127.0.0.1 -e no_proxy=101conv,core,localhost,127.0.0.1 -v "$repo_root/web/node_modules:/app/node_modules:ro" -v "$repo_root/web/smoke.cjs:/app/smoke.cjs:ro" -w /app "$BROWSER_IMAGE" node smoke.cjs
+docker run --rm --shm-size=1g --network "${COMPOSE_PROJECT_NAME}_web-core" -e SMOKE_BASE=http://101conv:5656 -e ENGINE_ADMIN_TOKEN -e CHROMIUM_PATH=/usr/bin/chromium -e NO_PROXY=101conv,core,localhost,127.0.0.1 -e no_proxy=101conv,core,localhost,127.0.0.1 -v "$repo_root/web/node_modules:/app/node_modules:ro" -v "$repo_root/web/smoke.cjs:/app/smoke.cjs:ro" -w /app "$BROWSER_IMAGE" node smoke.cjs
 docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" restart postgres core worker
 for _ in $(seq 1 60); do
   health="$(docker inspect --format '{{.State.Health.Status}}' "$core_container" 2>/dev/null || true)"
@@ -133,7 +133,7 @@ done
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_web-core" -e ENGINE_ADMIN_TOKEN "$BROWSER_IMAGE" node - <<'NODE'
 const assert = require('node:assert/strict');
 (async () => {
-  const base = 'http://101conv:8080';
+  const base = 'http://101conv:5656';
   const headers = { Authorization: 'Bearer ' + process.env.ENGINE_ADMIN_TOKEN };
   const response = await fetch(base + '/api/v1/jobs?limit=100', { headers });
   assert.equal(response.status, 200);

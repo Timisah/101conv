@@ -158,4 +158,5 @@ networks:
   worker-db:
     internal: true
   web-core:
-    internal: true
+    # This is the web ingress bridge; it must allow Docker's published host
+    # port binding. The database and worker networks remain internal.
