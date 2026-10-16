@@ -1,5 +1,16 @@
 {
   "version": 1,
-  "minimumAppVersion": "0.1.0",
-  "profiles": []
+  "minimumAppVersion": "0.0.1",
+  "maximumAppVersionExclusive": "0.2.0",
+  "profiles": [
+    {
+      "id": "ffmpeg-linux-amd64",
+      "version": "9.0.2-28-g669f5ab083",
+      "name": "FFmpeg LGPL (Linux x86-64)",
+      "description": "Video and audio conversion using the upstream static LGPL build. x264 and x265 GPL encoders are not included.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/profiles/ffmpeg-linux-amd64.json",
+      "minimumAppVersion": "0.0.1",
+      "maximumAppVersionExclusive": "0.2.0"
+    }
+  ]
 }

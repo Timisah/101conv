@@ -65,9 +65,15 @@ The linked manifest must repeat the catalog ID and version, describe the license
 }
 ```
 
+Package formats currently accepted are `zip` and `tar.xz`. Archives are streamed to disk, checksum-verified before extraction, and unpacked with strict path, link, entry-count, and expanded-size checks. A profile is built for the server platform; the first official package targets Linux x86-64.
+
 The app accepts packages up to 512 MB, at most 10,000 ZIP entries, and expanded contents up to 2 GB. Paths that escape the package are rejected. The selected executable must exist in the extracted package and cannot be a `#!` script. Installer scripts are never run. The installed converter itself is still third-party software and runs when a conversion invokes it; only install profiles from sources you trust. Licenses remain the operator's responsibility.
 
-The built-in catalog is hosted at `https://raw.githubusercontent.com/Timisah/101conv/main/catalog/index.json` and can be overridden with the `APP_PROFILES_CATALOG_URL` environment variable (Spring property `app.profiles.catalog-url`). An administrator must review the manifest, source, license, and checksum in the UI and explicitly confirm installation. SHA-256 detects package mismatch; it does not establish who published a manifest. Signed catalog metadata and official profile packages are future work. Remove an added community catalog by deleting its entry from `profile-catalogs.json` under the persistent app data directory; installed profiles are stored separately under `profiles/` and their generated converter definitions in `converter-configs/`.
+The built-in catalog is hosted at `https://raw.githubusercontent.com/Timisah/101conv/main/catalog/index.json` and can be overridden with the `APP_PROFILES_CATALOG_URL` environment variable (Spring property `app.profiles.catalog-url`). The first official entry is a pinned BtbN FFmpeg LGPL build. 101conv distributes its catalog metadata and downloads the binary archive directly from the upstream GitHub release; it does not mirror or bundle the converter. The upstream checksum file supplies the expected SHA-256. An administrator reviews the manifest, source, license, and checksum in the UI and explicitly confirms installation. SHA-256 detects package mismatch; it does not establish who published a manifest. Signed catalog metadata remain future work. Remove an added community catalog by deleting its entry from `profile-catalogs.json` under the persistent app data directory; installed profiles are stored separately under `profiles/` and their generated converter definitions in `converter-configs/`.
+
+### First official profile: FFmpeg LGPL on Linux x86-64
+
+This profile uses BtbN's immutable `autobuild-2026-10-15-13-03` release asset rather than a floating `latest` URL. It is the static Linux x86-64 `lgpl` variant, not the `gpl` or `nonfree` build. Its included license file identifies LGPL version 3; the profile links to the upstream package, preserves `LICENSE.txt`, and discloses upstream dependency notices. The selected build excludes GPL-only x264 and x265 encoders. The profile supports common audio and video container conversions through FFmpeg's default codecs. Operators remain responsible for their local licensing and patent obligations.
 
 ## Admin API
 

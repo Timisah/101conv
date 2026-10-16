@@ -31,26 +31,30 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 	if service.Source().ID != "101conv-official" {
 		t.Fatalf("unexpected source: %+v", service.Source())
 	}
-	if _, err := service.Available(); err != nil {
+	entries, err := service.Available()
+	if err != nil {
 		t.Fatalf("catalog should support this app: %v", err)
 	}
-	old, err := New("0.0.9")
+	if len(entries) != 1 || entries[0].ID != "ffmpeg-linux-amd64" {
+		t.Fatalf("expected the official FFmpeg profile, got %+v", entries)
+	}
+	old, err := New("0.2.0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := old.Available(); err == nil {
-		t.Fatal("expected incompatible app version to be rejected")
+		t.Fatal("expected exclusive maximum app version to be rejected")
 	}
 }
 
 func TestAvailableFiltersIncompatibleProfiles(t *testing.T) {
-	service, err := New("1.2.0")
+	service, err := New("0.1.0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	service.index = Index{Version: 1, Profiles: []Entry{
-		{ID: "current", Version: "1.0.0", Name: "Current", ManifestURL: "https://example.org/current.json", MinimumAppVersion: "1.0.0", MaximumAppVersionExclusive: "2.0.0"},
-		{ID: "future", Version: "1.0.0", Name: "Future", ManifestURL: "https://example.org/future.json", MinimumAppVersion: "2.0.0"},
+		{ID: "current", Version: "1.0.0", Name: "Current", ManifestURL: "https://example.org/current.json", MinimumAppVersion: "0.0.1", MaximumAppVersionExclusive: "0.2.0"},
+		{ID: "future", Version: "1.0.0", Name: "Future", ManifestURL: "https://example.org/future.json", MinimumAppVersion: "0.2.0"},
 	}}
 	entries, err := service.Available()
 	if err != nil {

@@ -30,6 +30,9 @@ import java.util.zip.ZipInputStream;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.commons.compress.compressors.xz.XZCompressorInputStream;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.schroeter.conv.config.UserConfigService;
@@ -144,7 +147,7 @@ public class ProfileCatalogService {
                 throw new IllegalArgumentException("Package checksum does not match the profile manifest.");
             }
             Path unpacked = work.resolve("unpacked");
-            extractZip(archive, unpacked);
+            extractArchive(archive, unpacked, manifest.artifact().format());
             Path executable = unpacked.resolve(manifest.artifact().executable()).normalize();
             if (!executable.startsWith(unpacked) || !Files.isRegularFile(executable) || Files.isSymbolicLink(executable)) {
                 throw new IllegalArgumentException("The profile executable is missing or outside the package.");
@@ -203,7 +206,9 @@ public class ProfileCatalogService {
                 || m.converter().rules() == null || m.converter().rules().isEmpty()) {
             throw new IllegalArgumentException("Profile manifest is incomplete or does not match the catalog entry.");
         }
-        if (!"zip".equalsIgnoreCase(m.artifact().format())) throw new IllegalArgumentException("Only ZIP packages are supported in this release.");
+        if (m.artifact().format() == null || !Set.of("zip", "tar.xz").contains(m.artifact().format().toLowerCase(Locale.ROOT))) {
+            throw new IllegalArgumentException("Only ZIP and tar.xz packages are supported in this release.");
+        }
         if (!platform().equalsIgnoreCase(m.artifact().platform())) throw new IllegalArgumentException("This profile package is not compatible with the running server (" + platform() + ").");
         safeHttps(m.artifact().url());
         validateVersionRange(m.minimumAppVersion(), m.maximumAppVersionExclusive());
@@ -234,7 +239,21 @@ public class ProfileCatalogService {
         HttpResponse<InputStream> response = request(safeHttps(url));
         try (InputStream in = response.body()) {
             if (response.statusCode() != 200) throw new IllegalArgumentException("Package server returned HTTP " + response.statusCode() + ".");
-            Files.write(target, readBounded(in, limit));
+            long contentLength = response.headers().firstValueAsLong("content-length").orElse(-1);
+            if (contentLength > limit) throw new IllegalArgumentException("Package exceeds the allowed download size.");
+            try (var out = Files.newOutputStream(target)) {
+                byte[] buffer = new byte[64 * 1024];
+                long downloaded = 0;
+                int n;
+                while ((n = in.read(buffer)) >= 0) {
+                    downloaded += n;
+                    if (downloaded > limit) throw new IllegalArgumentException("Package exceeds the allowed download size.");
+                    out.write(buffer, 0, n);
+                }
+            } catch (RuntimeException | IOException e) {
+                Files.deleteIfExists(target);
+                throw e;
+            }
         }
     }
 
@@ -305,6 +324,14 @@ public class ProfileCatalogService {
         } catch (Exception e) { if (e instanceof IOException io) throw io; throw new IllegalStateException(e); }
     }
 
+    static void extractArchive(Path archive, Path destination, String format) throws IOException {
+        if ("tar.xz".equalsIgnoreCase(format)) {
+            extractTarXz(archive, destination);
+            return;
+        }
+        extractZip(archive, destination);
+    }
+
     private static void extractZip(Path archive, Path destination) throws IOException {
         Files.createDirectories(destination);
         int count = 0; long expanded = 0;
@@ -325,6 +352,44 @@ public class ProfileCatalogService {
                     }
                 }
                 zip.closeEntry();
+            }
+        }
+    }
+
+    private static void extractTarXz(Path archive, Path destination) throws IOException {
+        Files.createDirectories(destination);
+        int count = 0;
+        long expanded = 0;
+        try (var compressed = new XZCompressorInputStream(Files.newInputStream(archive));
+             var tar = new TarArchiveInputStream(compressed)) {
+            TarArchiveEntry entry;
+            while ((entry = tar.getNextEntry()) != null) {
+                if (++count > MAX_ZIP_ENTRIES) throw new IllegalArgumentException("Package contains too many files.");
+                if (!tar.canReadEntryData(entry) || entry.isSymbolicLink() || entry.isLink()) {
+                    throw new IllegalArgumentException("Package contains an unsupported link or entry type.");
+                }
+                String name = entry.getName();
+                if (name.startsWith("/") || name.contains("\\") || name.contains("..") || name.isBlank()) {
+                    throw new IllegalArgumentException("Package contains an unsafe path.");
+                }
+                Path target = destination.resolve(name).normalize();
+                if (!target.startsWith(destination)) throw new IllegalArgumentException("Package contains an unsafe path.");
+                if (entry.isDirectory()) {
+                    Files.createDirectories(target);
+                } else if (entry.isFile()) {
+                    Files.createDirectories(target.getParent());
+                    try (var out = Files.newOutputStream(target)) {
+                        byte[] buffer = new byte[8192];
+                        int n;
+                        while ((n = tar.read(buffer)) >= 0) {
+                            expanded += n;
+                            if (expanded > MAX_PACKAGE_BYTES * 4) throw new IllegalArgumentException("Expanded package exceeds the allowed size.");
+                            out.write(buffer, 0, n);
+                        }
+                    }
+                } else {
+                    throw new IllegalArgumentException("Package contains an unsupported entry type.");
+                }
             }
         }
     }

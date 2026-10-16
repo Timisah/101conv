@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "ffmpeg-linux-amd64",
+  "version": "9.0.2-28-g669f5ab083",
+  "name": "FFmpeg LGPL (Linux x86-64)",
+  "description": "A static Linux x86-64 FFmpeg build for common audio and video conversions. This LGPL variant excludes GPL-only x264 and x265 encoders.",
+  "author": "BtbN FFmpeg Builds",
+  "license": "LGPL-3.0-or-later; see the included LICENSE.txt and upstream dependency notices",
+  "homepage": "https://github.com/BtbN/FFmpeg-Builds",
+  "minimumAppVersion": "0.0.1",
+  "maximumAppVersionExclusive": "0.2.0",
+  "artifact": {
+    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-15-13-03/ffmpeg-n9.0.2-28-g669f5ab083-linux64-lgpl-9.0.tar.xz",
+    "sha256": "b70078970e033c7e728a0c42d83a39d57f28b471a60866a2c4b0a2f598aec666",
+    "format": "tar.xz",
+    "platform": "linux-amd64",
+    "executable": "ffmpeg-n9.0.2-28-g669f5ab083-linux64-lgpl-9.0/bin/ffmpeg"
+  },
+  "converter": {
+    "id": "ffmpeg",
+    "friendlyName": "FFmpeg",
+    "priority": 50,
+    "rules": [
+      {
+        "sources": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "mpg", "mpeg", "3gp", "flv"],
+        "targets": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "mpg", "mpeg", "3gp", "flv"],
+        "command": ["{var:executable}", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", "{source}", "{target}"]
+      },
+      {
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "command": ["{var:executable}", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", "{source}", "{target}"]
+      }
+    ]
+  }
+}
