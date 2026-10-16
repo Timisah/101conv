@@ -13,8 +13,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -677,12 +680,56 @@ func TestTUFRejectsBadSignature(t *testing.T) {
 
 func TestOfficialSourceTrustDependsOnProvisionedRoot(t *testing.T) {
 	withoutRoot := (&Manager{}).officialSource()
-	if withoutRoot.Trust != TrustUnavailable || withoutRoot.Enabled {
-		t.Fatalf("unprovisioned source must stay disabled: %#v", withoutRoot)
+	if withoutRoot.Trust != TrustUnavailable || !withoutRoot.Enabled || withoutRoot.Status != "browse_only" {
+		t.Fatalf("unprovisioned source should be enabled for browse-only use: %#v", withoutRoot)
 	}
 	f := newFixture(t)
 	withRoot := (&Manager{officialRoot: f.root}).officialSource()
 	if withRoot.Trust != TrustPinned || !withRoot.Enabled || withRoot.TrustedRoot == "" {
 		t.Fatalf("provisioned root should enable bundled source: %#v", withRoot)
+	}
+}
+
+func TestUnsignedOfficialCatalogCanBeBrowsedButNotInstalled(t *testing.T) {
+	targets := makeCatalog(t, nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/catalog/targets/") {
+			http.NotFound(w, r)
+			return
+		}
+		key := strings.TrimPrefix(r.URL.Path, "/catalog/targets/")
+		data, ok := targets[key]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	source := Source{ID: "101conv-official", Name: "101conv Official Catalog", Kind: KindOfficial, Trust: TrustUnavailable, Enabled: true}
+	catalog, err := loadUnsignedCatalog(context.Background(), source, server.URL+"/catalog", "0.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Engines) != 1 || len(catalog.Profiles) != 2 {
+		t.Fatalf("unexpected browse result: engines=%d profiles=%d", len(catalog.Engines), len(catalog.Profiles))
+	}
+
+	root := t.TempDir()
+	eng, err := management.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	m, err := Open(root, "0.1.0", eng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if _, err = m.CreateInstallPlan(context.Background(), "101conv-official", "video-one", false); err == nil || !strings.Contains(err.Error(), "browse-only") {
+		t.Fatalf("unsigned catalog unexpectedly allowed install preview: %v", err)
+	}
+	if _, err = m.CreateEngineInstallPlan(context.Background(), "101conv-official", "ffmpeg", "7.1.0"); err == nil || !strings.Contains(err.Error(), "browse-only") {
+		t.Fatalf("unsigned catalog unexpectedly allowed engine install preview: %v", err)
 	}
 }

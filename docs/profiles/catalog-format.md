@@ -4,7 +4,7 @@
 
 ## Official catalog status
 
-The official repository appears by default. It becomes enabled and trusted automatically when a real TUF root is embedded in `server/internal/repositorymanager/official-root.json`. That file is intentionally empty in this source tree until the project owner provisions the production root. The running service therefore reports `trust_unavailable` and will not install remote packages yet. It does not trust a checksum by itself.
+The official repository is hosted as static files on GitHub and appears by default in browse-only mode. The Go service fetches only the catalog index and engine/profile manifests; unsigned metadata is labeled unverified, and package preview, installation, and updates remain blocked. The service never downloads artifacts while browsing. The catalog becomes trusted and installable after the project owner provisions and embeds a real TUF root in `server/internal/repositorymanager/official-root.json` and publishes signed metadata. That file is intentionally empty in this source tree. A checksum by itself does not establish publisher identity.
 
 The Go catalog already defines two packages:
 
@@ -42,7 +42,7 @@ go run ./cmd/catalog-repo publish \
 
 The command writes `catalog/metadata/{targets,snapshot,timestamp}.json`. Commit metadata and targets in one Git commit so the static repository changes atomically. Timestamp metadata expires in seven days; publish again before expiry. Keep private keys out of CI logs, Git, the application image, and `DATA_PATH`.
 
-After owner review, the public `catalog/metadata/root.json`, embedded `official-root.json`, signed metadata, and target manifests can be published to the existing GitHub repository. The web app will browse the catalog automatically after the application is rebuilt with that embedded root. No additional Portainer repository entry or manual root pin will be needed.
+The target manifests are already browseable from the existing GitHub repository without provisioning a signing identity. After owner review, the public `catalog/metadata/root.json`, embedded `official-root.json`, and signed metadata can be committed and pushed there to enable installation. No separate catalog host, additional Portainer repository entry, or manual root pin will be needed.
 
 ## Repository and manifest format
 

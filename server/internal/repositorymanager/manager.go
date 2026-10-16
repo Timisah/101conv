@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -193,7 +194,9 @@ func (m *Manager) List() []Source {
 func (m *Manager) officialSource() Source {
 	var source Source
 	if len(m.officialRoot) == 0 {
-		source = Source{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustUnavailable, Enabled: false, Status: "trust_unavailable", LastError: "official TUF root has not been provisioned"}
+		// The public GitHub catalog can be browsed as unsigned metadata. This does
+		// not make it trusted: all install and update paths still require TUF.
+		source = Source{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustUnavailable, Enabled: true, Status: "browse_only", LastError: "Unsigned catalog: browsing only; installs require a verified trust root"}
 	} else {
 		source = Source{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustPinned, TrustedRoot: string(m.officialRoot), Enabled: true, Status: "configured"}
 	}
@@ -372,11 +375,25 @@ func (m *Manager) Browse(ctx context.Context, id string) (Catalog, error) {
 	if err != nil {
 		return Catalog{}, err
 	}
-	if s.Trust != TrustPinned {
-		return Catalog{}, fmt.Errorf("repository has no pinned TUF root; metadata inspection is disabled")
-	}
 	if !s.Enabled {
 		return Catalog{}, ErrRepositoryDisabled
+	}
+	if id == "101conv-official" && len(m.officialRoot) == 0 {
+		catalog, err := loadUnsignedCatalog(ctx, s, officialURL, m.appVersion)
+		m.mu.Lock()
+		if err != nil {
+			m.officialStatus = Source{Status: "error", LastRefresh: time.Now().UTC().Format(time.RFC3339), LastError: err.Error()}
+		} else {
+			m.officialStatus = Source{Status: "browse_only", LastRefresh: time.Now().UTC().Format(time.RFC3339), LastError: "Unsigned catalog: browsing only; installs require a verified trust root"}
+		}
+		m.mu.Unlock()
+		if err != nil {
+			return Catalog{}, err
+		}
+		return catalog, nil
+	}
+	if s.Trust != TrustPinned {
+		return Catalog{}, fmt.Errorf("repository has no pinned TUF root; metadata inspection is disabled")
 	}
 	m.tufMu.Lock()
 	view, err := m.loadViewLocked(ctx, s)
@@ -388,6 +405,112 @@ func (m *Manager) Browse(ctx context.Context, id string) (Catalog, error) {
 		return Catalog{}, fmt.Errorf("persist repository status: %w", err)
 	}
 	return view.catalog, nil
+}
+
+// loadUnsignedCatalog is deliberately read-only. It fetches only the catalog
+// index and engine/profile manifests; package artifacts are never fetched here.
+// Any repository operation that creates an installation plan continues to use
+// loadViewLocked and therefore requires a pinned TUF root.
+func loadUnsignedCatalog(ctx context.Context, source Source, base, appVersion string) (Catalog, error) {
+	baseURL, err := url.Parse(strings.TrimRight(base, "/") + "/")
+	if err != nil || (baseURL.Scheme != "https" && !(baseURL.Scheme == "http" && (baseURL.Hostname() == "127.0.0.1" || baseURL.Hostname() == "localhost"))) || baseURL.Host == "" {
+		return Catalog{}, fmt.Errorf("invalid official catalog URL")
+	}
+	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 || req.URL.Scheme != baseURL.Scheme || req.URL.Host != baseURL.Host {
+			return fmt.Errorf("catalog redirect left the configured GitHub host")
+		}
+		return nil
+	}}
+	read := func(target string) ([]byte, error) {
+		if !safeTarget(target) {
+			return nil, fmt.Errorf("unsafe catalog target %q", target)
+		}
+		u := *baseURL
+		u.Path = strings.TrimRight(baseURL.Path, "/") + "/targets/" + target
+		req, e := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if e != nil {
+			return nil, e
+		}
+		resp, e := client.Do(req)
+		if e != nil {
+			return nil, fmt.Errorf("fetch unsigned catalog metadata: %w", e)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("fetch catalog target %q: HTTP %d", target, resp.StatusCode)
+		}
+		data, e := io.ReadAll(io.LimitReader(resp.Body, maxIndexBytes+1))
+		if e != nil {
+			return nil, e
+		}
+		if int64(len(data)) > maxIndexBytes {
+			return nil, fmt.Errorf("catalog target %q exceeds size limit", target)
+		}
+		return data, nil
+	}
+	data, err := read(indexTarget)
+	if err != nil {
+		return Catalog{}, err
+	}
+	var index CatalogIndex
+	if err = json.Unmarshal(data, &index); err != nil {
+		return Catalog{}, fmt.Errorf("decode unsigned catalog index: %w", err)
+	}
+	if index.SchemaVersion != 1 || !compatible(appVersion, index.MinimumAppVersion, index.MaximumAppVersionExclusive) {
+		return Catalog{}, fmt.Errorf("unsupported or incompatible catalog")
+	}
+	if len(index.Engines)+len(index.Profiles) > 500 {
+		return Catalog{}, fmt.Errorf("catalog contains too many entries")
+	}
+	out := Catalog{Repository: source, Engines: []engine.Definition{}, Profiles: []profile.Definition{}, IncompatibleProfiles: []IncompatibleProfile{}}
+	for _, entry := range index.Engines {
+		if !safeTarget(entry.ManifestTarget) {
+			return Catalog{}, fmt.Errorf("unsafe engine manifest target %q", entry.ManifestTarget)
+		}
+		raw, e := read(entry.ManifestTarget)
+		if e != nil {
+			return Catalog{}, fmt.Errorf("read engine %q manifest: %w", entry.ID, e)
+		}
+		var manifest EngineManifest
+		if e = json.Unmarshal(raw, &manifest); e != nil {
+			return Catalog{}, fmt.Errorf("decode engine %q manifest: %w", entry.ID, e)
+		}
+		d := manifest.Engine
+		if d.ID != entry.ID || d.Version != entry.Version || d.Name != entry.Name {
+			return Catalog{}, fmt.Errorf("catalog entry and engine manifest disagree for %q", entry.ID)
+		}
+		if e = d.Validate(); e != nil {
+			return Catalog{}, e
+		}
+		out.Engines = append(out.Engines, d)
+	}
+	for _, entry := range index.Profiles {
+		if !safeTarget(entry.ManifestTarget) {
+			return Catalog{}, fmt.Errorf("unsafe profile manifest target %q", entry.ManifestTarget)
+		}
+		raw, e := read(entry.ManifestTarget)
+		if e != nil {
+			return Catalog{}, fmt.Errorf("read profile %q manifest: %w", entry.ID, e)
+		}
+		var manifest ProfileManifest
+		if e = json.Unmarshal(raw, &manifest); e != nil {
+			return Catalog{}, fmt.Errorf("decode profile %q manifest: %w", entry.ID, e)
+		}
+		d := manifest.Profile
+		if d.ID != entry.ID || d.Version != entry.Version || d.Name != entry.Name {
+			return Catalog{}, fmt.Errorf("catalog entry and profile manifest disagree for %q", entry.ID)
+		}
+		if e = d.Validate(); e != nil {
+			return Catalog{}, e
+		}
+		if compatible(appVersion, d.MinimumAppVersion, d.MaximumAppVersionExclusive) {
+			out.Profiles = append(out.Profiles, d)
+		} else {
+			out.IncompatibleProfiles = append(out.IncompatibleProfiles, IncompatibleProfile{ID: d.ID, Version: d.Version, Reason: "profile is incompatible with this application version"})
+		}
+	}
+	return out, nil
 }
 
 type verifiedView struct {
@@ -559,6 +682,9 @@ func (m *Manager) CreateInstallPlan(ctx context.Context, repoID, profileID strin
 	}
 	if !s.Enabled {
 		return InstallPreview{}, ErrRepositoryDisabled
+	}
+	if s.Trust != TrustPinned {
+		return InstallPreview{}, fmt.Errorf("repository is browse-only until its trust root is provisioned")
 	}
 	m.tufMu.Lock()
 	view, err := m.loadViewLocked(ctx, s)
@@ -826,6 +952,9 @@ func (m *Manager) CreateEngineInstallPlan(ctx context.Context, repoID, engineID,
 	}
 	if !source.Enabled {
 		return EngineInstallPreview{}, ErrRepositoryDisabled
+	}
+	if source.Trust != TrustPinned {
+		return EngineInstallPreview{}, fmt.Errorf("repository is browse-only until its trust root is provisioned")
 	}
 	m.tufMu.Lock()
 	view, err := m.loadViewLocked(ctx, source)
