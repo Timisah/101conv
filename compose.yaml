@@ -76,7 +76,7 @@ services:
       dockerfile: Dockerfile
       no_cache: true
     ports:
-      - "${PORT:-5656}:8080"
+      - "${PORT:-5656}:5656"
     networks:
       - web-core
     user: "101:101"
@@ -84,7 +84,7 @@ services:
       core:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -Y off -q --spider http://127.0.0.1:8080/ || exit 1"]
+      test: ["CMD-SHELL", "wget -Y off -q --spider http://127.0.0.1:5656/ || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5

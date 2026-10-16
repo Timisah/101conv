@@ -12,4 +12,4 @@ COPY --from=build /app/dist /usr/share/nginx/html
 RUN chmod 0755 /etc/nginx /etc/nginx/conf.d \
     && chmod 0644 /etc/nginx/nginx.conf /etc/nginx/conf.d/default.conf \
     && chmod -R a+rX /usr/share/nginx/html
-EXPOSE 8080
+EXPOSE 5656

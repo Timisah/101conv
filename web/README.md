@@ -1,6 +1,6 @@
 # 101conv web application
 
-The React application is served by the Nginx web role in the root `compose.yaml` (service ID `101conv` preserves in-place replacement of the old Java container). Portainer publishes this frontend on `PORT` (default `5656`); it proxies `/api/`, `/healthz`, and `/readyz` to the private Core service. Only the web role publishes a host port. Set `DATA_PATH`, `POSTGRES_PASSWORD`, and `ENGINE_ADMIN_TOKEN` as stack environment variables as described in the [Portainer migration and deployment guide](../docs/deployment/portainer.md). Existing Java data remains under `DATA_PATH`; new Go management state defaults to `DATA_PATH/go-data`.
+The React application is served by the Nginx web role in the root `compose.yaml` (service ID `101conv` preserves in-place replacement of the old Java container). Nginx listens on port `5656` inside the container, and Portainer publishes it on `PORT` (default `5656`). It proxies `/api/`, `/healthz`, and `/readyz` to the private Core service. Only the web role publishes a host port. Set `DATA_PATH`, `POSTGRES_PASSWORD`, and `ENGINE_ADMIN_TOKEN` as stack environment variables as described in the [Portainer migration and deployment guide](../docs/deployment/portainer.md). Existing Java data remains under `DATA_PATH`; new Go management state defaults to `DATA_PATH/go-data`.
 
 ## Local development
 
