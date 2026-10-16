@@ -11,6 +11,15 @@
       "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/profiles/ffmpeg-linux-amd64.json",
       "minimumAppVersion": "0.0.1",
       "maximumAppVersionExclusive": "0.2.0"
+    },
+    {
+      "id": "jpeg-xl-linux-amd64",
+      "version": "0.12.0",
+      "name": "JPEG XL (Linux x86-64)",
+      "description": "Official static JPEG XL tools for Linux x86-64 image encoding and decoding.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/profiles/jpeg-xl-linux-amd64.json",
+      "minimumAppVersion": "0.0.1",
+      "maximumAppVersionExclusive": "0.2.0"
     }
   ]
 }

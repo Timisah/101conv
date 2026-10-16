@@ -48,4 +48,4 @@ Set a custom port with `PORT=8080 DATA_PATH=./101conv-data docker compose up -d 
 
 This first stack runs the app and job worker in one container and uses file-backed H2. It is suitable for a single-node test deployment. It does not yet provide PostgreSQL, separate Core/Worker services, automated backups, volume quotas, or an OS-level converter sandbox. Back up the configured host data folder before upgrades or host maintenance.
 
-The image does not bundle converter executables or third-party converter manifests. The web app starts with an empty converter catalog; configure an approved converter in the persistent data volume before expecting conversions to run.
+The image does not bundle converter executables. Sign in as an administrator, open **Profiles**, choose **Browse Official**, review a profile's package, checksum, platform and license, then install it. The 101conv Official Catalog currently offers FFmpeg and JPEG XL for Linux x86-64. Their pinned upstream packages are downloaded only when you choose to install them. The container includes `xz-utils` to unpack the official JPEG XL release.

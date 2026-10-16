@@ -24,7 +24,8 @@ public final class ProfileCatalogModels {
             String maximumAppVersionExclusive, Artifact artifact, Converter converter) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Artifact(String url, String sha256, String format, String platform, String executable) {}
+    public record Artifact(String url, String sha256, String format, String platform, String executable,
+            Map<String, String> executables) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Converter(

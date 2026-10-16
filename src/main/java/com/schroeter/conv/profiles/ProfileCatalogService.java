@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
@@ -148,22 +149,26 @@ public class ProfileCatalogService {
             }
             Path unpacked = work.resolve("unpacked");
             extractArchive(archive, unpacked, manifest.artifact().format());
-            Path executable = unpacked.resolve(manifest.artifact().executable()).normalize();
-            if (!executable.startsWith(unpacked) || !Files.isRegularFile(executable) || Files.isSymbolicLink(executable)) {
-                throw new IllegalArgumentException("The profile executable is missing or outside the package.");
+            Map<String, String> executablePaths = executablePaths(manifest.artifact());
+            for (String executablePath : executablePaths.values()) {
+                Path executable = unpacked.resolve(executablePath).normalize();
+                if (!executable.startsWith(unpacked) || !Files.isRegularFile(executable) || Files.isSymbolicLink(executable)) {
+                    throw new IllegalArgumentException("A profile executable is missing or outside the package.");
+                }
+                rejectScript(executable);
             }
-            rejectScript(executable);
             Files.createDirectories(profileRoot);
             Files.move(unpacked, installedRoot, StandardCopyOption.ATOMIC_MOVE);
             Converter c = manifest.converter();
-            Map<String, String> variables = Map.of("executable", installedRoot.resolve(manifest.artifact().executable()).toString());
+            Map<String, String> variables = new java.util.HashMap<>();
+            executablePaths.forEach((name, path) -> variables.put(name, installedRoot.resolve(path).toString()));
             ConverterFileDefinition definition = new ConverterFileDefinition(
                     c.id(), c.friendlyName(), c.priority(), true, variables,
                     c.rules().stream().map(r -> new ConverterFileDefinition.RuleDefinition(r.sources(), r.targets(), r.command())).toList());
             for (var rule : definition.rules()) {
                 if (rule.command() == null || rule.command().isEmpty()
-                        || !rule.command().get(0).equals("{var:executable}")) {
-                    throw new IllegalArgumentException("Every conversion rule must launch {var:executable} as its first command argument.");
+                        || !executablePaths.containsKey(variableName(rule.command().get(0)))) {
+                    throw new IllegalArgumentException("Every conversion rule must launch one of its declared native executables as its first command argument.");
                 }
             }
             Files.createDirectories(converterConfigDir);
@@ -206,20 +211,19 @@ public class ProfileCatalogService {
                 || m.converter().rules() == null || m.converter().rules().isEmpty()) {
             throw new IllegalArgumentException("Profile manifest is incomplete or does not match the catalog entry.");
         }
-        if (m.artifact().format() == null || !Set.of("zip", "tar.xz").contains(m.artifact().format().toLowerCase(Locale.ROOT))) {
-            throw new IllegalArgumentException("Only ZIP and tar.xz packages are supported in this release.");
+        if (m.artifact().format() == null || !Set.of("zip", "tar.xz", "tar.lz").contains(m.artifact().format().toLowerCase(Locale.ROOT))) {
+            throw new IllegalArgumentException("Only ZIP, tar.xz and tar.lz packages are supported in this release.");
         }
         if (!platform().equalsIgnoreCase(m.artifact().platform())) throw new IllegalArgumentException("This profile package is not compatible with the running server (" + platform() + ").");
         safeHttps(m.artifact().url());
         validateVersionRange(m.minimumAppVersion(), m.maximumAppVersionExclusive());
         if (m.artifact().sha256() == null || !m.artifact().sha256().matches("(?i)[0-9a-f]{64}")) throw new IllegalArgumentException("Profile must provide a SHA-256 checksum.");
-        String executable = m.artifact().executable();
-        if (executable == null || executable.isBlank() || executable.startsWith("/") || executable.contains("\\") || executable.contains("..")) throw new IllegalArgumentException("Profile executable path is unsafe.");
+        Map<String, String> executables = executablePaths(m.artifact());
         if (!safeId(m.converter().id())) throw new IllegalArgumentException("Converter id is invalid.");
         for (Rule rule : m.converter().rules()) {
             if (rule == null || rule.sources() == null || rule.sources().isEmpty() || rule.targets() == null || rule.targets().isEmpty()
                     || rule.command() == null || rule.command().isEmpty()) throw new IllegalArgumentException("Profile contains an invalid conversion rule.");
-            if (!rule.command().get(0).equals("{var:executable}")) throw new IllegalArgumentException("Every conversion rule must launch {var:executable} as its first command argument.");
+            if (!executables.containsKey(variableName(rule.command().get(0)))) throw new IllegalArgumentException("Every conversion rule must launch one of its declared native executables as its first command argument.");
         }
     }
 
@@ -329,7 +333,58 @@ public class ProfileCatalogService {
             extractTarXz(archive, destination);
             return;
         }
+        if ("tar.lz".equalsIgnoreCase(format)) {
+            extractTarLzip(archive, destination);
+            return;
+        }
         extractZip(archive, destination);
+    }
+
+    private static void extractTarLzip(Path archive, Path destination) throws IOException {
+        Path tarFile = archive.resolveSibling("package.tar");
+        Path errorFile = archive.resolveSibling("lzip-errors.txt");
+        Process process;
+        try {
+            process = new ProcessBuilder("xz", "--memlimit-decompress=512MiB", "--format=lzip", "--decompress", "--stdout", archive.toString())
+                    .redirectError(errorFile.toFile()).start();
+        } catch (IOException e) {
+            throw new IllegalArgumentException("The xz-utils package is required to install this profile.", e);
+        }
+        try (InputStream in = process.getInputStream(); var out = Files.newOutputStream(tarFile)) {
+            byte[] buffer = new byte[64 * 1024];
+            long expanded = 0;
+            int n;
+            while ((n = in.read(buffer)) >= 0) {
+                expanded += n;
+                if (expanded > MAX_PACKAGE_BYTES * 4) {
+                    process.destroyForcibly();
+                    throw new IllegalArgumentException("Expanded package exceeds the allowed size.");
+                }
+                out.write(buffer, 0, n);
+            }
+            if (!process.waitFor(2, TimeUnit.MINUTES)) {
+                process.destroyForcibly();
+                throw new IllegalArgumentException("LZIP package decompression timed out.");
+            }
+            if (process.exitValue() != 0) {
+                String detail = "";
+                if (Files.exists(errorFile)) {
+                    try (InputStream errors = Files.newInputStream(errorFile)) {
+                        detail = new String(readBounded(errors, 4096), java.nio.charset.StandardCharsets.UTF_8);
+                    }
+                }
+                throw new IllegalArgumentException("Could not decompress the LZIP package." + (detail.isBlank() ? "" : " " + detail.strip()));
+            }
+            extractTar(tarFile, destination);
+        } catch (InterruptedException e) {
+            process.destroyForcibly();
+            Thread.currentThread().interrupt();
+            throw new IOException("LZIP package decompression was interrupted.", e);
+        } finally {
+            if (process.isAlive()) process.destroyForcibly();
+            Files.deleteIfExists(tarFile);
+            Files.deleteIfExists(errorFile);
+        }
     }
 
     private static void extractZip(Path archive, Path destination) throws IOException {
@@ -358,10 +413,23 @@ public class ProfileCatalogService {
 
     private static void extractTarXz(Path archive, Path destination) throws IOException {
         Files.createDirectories(destination);
+        try (var compressed = new XZCompressorInputStream(Files.newInputStream(archive))) {
+            extractTar(compressed, destination);
+        }
+    }
+
+    private static void extractTar(Path archive, Path destination) throws IOException {
+        Files.createDirectories(destination);
+        try (InputStream in = Files.newInputStream(archive)) {
+            extractTar(in, destination);
+        }
+    }
+
+    private static void extractTar(InputStream input, Path destination) throws IOException {
+        Files.createDirectories(destination);
         int count = 0;
         long expanded = 0;
-        try (var compressed = new XZCompressorInputStream(Files.newInputStream(archive));
-             var tar = new TarArchiveInputStream(compressed)) {
+        try (var tar = new TarArchiveInputStream(input)) {
             TarArchiveEntry entry;
             while ((entry = tar.getNextEntry()) != null) {
                 if (++count > MAX_ZIP_ENTRIES) throw new IllegalArgumentException("Package contains too many files.");
@@ -392,6 +460,31 @@ public class ProfileCatalogService {
                 }
             }
         }
+    }
+
+    private static Map<String, String> executablePaths(Artifact artifact) {
+        Map<String, String> paths = new java.util.LinkedHashMap<>();
+        validateExecutablePath(artifact.executable());
+        paths.put("executable", artifact.executable());
+        if (artifact.executables() != null) {
+            artifact.executables().forEach((name, path) -> {
+                if (!safeId(name) || name.equals("executable")) throw new IllegalArgumentException("Profile executable binding is invalid.");
+                validateExecutablePath(path);
+                paths.put(name, path);
+            });
+        }
+        return paths;
+    }
+
+    private static void validateExecutablePath(String path) {
+        if (path == null || path.isBlank() || path.startsWith("/") || path.contains("\\") || path.contains("..")) {
+            throw new IllegalArgumentException("Profile executable path is unsafe.");
+        }
+    }
+
+    private static String variableName(String command) {
+        if (command == null || !command.matches("\\{var:[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}}")) return "";
+        return command.substring(5, command.length() - 1);
     }
 
     private static void rejectScript(Path executable) throws IOException {

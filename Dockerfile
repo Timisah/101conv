@@ -31,7 +31,10 @@ RUN --mount=type=secret,id=proxy_ca,required=false \
 
 FROM eclipse-temurin:21-jre
 WORKDIR /var/lib/101conv
-RUN groupadd --system --gid 10001 app \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --home-dir /var/lib/101conv app \
     && mkdir -p /opt/101conv /var/lib/101conv/tmp \
     && chown -R 10001:10001 /opt/101conv /var/lib/101conv
