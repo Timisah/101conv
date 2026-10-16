@@ -8,6 +8,8 @@ Use the existing Portainer stack. Keep its repository, branch, and stack name; d
 
 The Nginx web service deliberately keeps the old Java Compose service ID, `101conv`. Compose therefore replaces that existing service container and releases its port during the stack update instead of leaving the Java container behind as an orphan. Before updating:
 
+If a separate parallel Go stack is still running and publishes the same `PORT`, stop that stack's web service before redeploying this stack. Preserve its volumes and data directory; do not remove them during the cutover.
+
 1. Back up the existing `DATA_PATH` directory and, if this stack has already run the Go deployment, back up its PostgreSQL, uploads, and results named volumes using your normal Docker backup procedure. Do not remove volumes or enable any “prune volumes” option.
 2. Keep the current `DATA_PATH` and `PORT` stack variables. The Java application used `DATA_PATH` for its H2 database and user files. The new stack leaves those files in place and stores Go management state under `DATA_PATH/go-data` by default. It does not import Java accounts, H2 history, or Java converter configuration.
 3. Create the new Go state directory on the Docker host and grant the Go runtime UID/GID `65532:65532` access. For example, if the existing value is `/mnt/truenas/101conv`:
