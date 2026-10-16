@@ -6,17 +6,43 @@ info:
 servers:
   - url: /
 paths:
+  /api/v1/auth/session:
+    get:
+      summary: Check whether this browser has an administrator session
+      responses:
+        '200': { description: Session state; no-store response }
+    post:
+      summary: Create an HttpOnly administrator session
+      description: Exchanges the configured administrator passphrase for an opaque server-side session. The passphrase is never returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties: { password: { type: string, writeOnly: true } }
+      responses:
+        '201': { description: Session cookie set with HttpOnly and SameSite Strict attributes }
+        '401': { description: Invalid passphrase }
+        '503': { description: Administrator management is not configured }
+    delete:
+      summary: End the current administrator session
+      security: [{ adminSession: [] }]
+      responses:
+        '204': { description: Session revoked and cookie cleared }
+        '401': { description: Administrator session required }
   /api/v1/repositories:
     get:
       summary: List configured repository sources and trust state
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       responses:
         '200': { description: Sources including the bundled official source's trust availability }
         '401': { description: Administrator bearer token required }
     post:
       summary: Add an explicitly approved local or community TUF repository
       description: The supplied root fingerprint must be independently verified by the administrator.
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       requestBody:
         required: true
         content:
@@ -39,7 +65,7 @@ paths:
   /api/v1/repositories/{id}:
     delete:
       summary: Remove a configured repository and its metadata cache
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
@@ -49,7 +75,7 @@ paths:
   /api/v1/repositories/{id}/enabled:
     patch:
       summary: Enable or disable a configured community or local repository
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       requestBody:
@@ -68,7 +94,7 @@ paths:
   /api/v1/repositories/{id}/refresh:
     post:
       summary: Refresh and verify signed metadata, update status and record errors
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
@@ -78,7 +104,7 @@ paths:
   /api/v1/repositories/{id}/catalog:
     get:
       summary: Browse a verified repository catalog without executing package contents
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
@@ -88,7 +114,7 @@ paths:
   /api/v1/repositories/{id}/profiles/{profileID}/preview:
     get:
       summary: Preview publisher, trust, license, dependencies, capabilities, and planned changes
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: profileID, required: true, schema: { type: string } }
@@ -99,7 +125,7 @@ paths:
   /api/v1/repositories/{id}/profiles/{profileID}/install:
     post:
       summary: Install a trusted repository profile and missing engines
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: profileID, required: true, schema: { type: string } }
@@ -119,7 +145,7 @@ paths:
   /api/v1/repositories/{id}/profiles/{profileID}:
     put:
       summary: Update an installed profile from its trusted repository
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: profileID, required: true, schema: { type: string } }
@@ -139,7 +165,7 @@ paths:
   /api/v1/repositories/{id}/engines/{engineID}/{version}/install:
     post:
       summary: Install a verified engine release; existing versions remain available for rollback
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: engineID, required: true, schema: { type: string } }
@@ -160,7 +186,7 @@ paths:
   /api/v1/repositories/{id}/engines/{engineID}/{version}/preview:
     get:
       summary: Create a short-lived immutable engine installation preview
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: engineID, required: true, schema: { type: string } }
@@ -171,7 +197,7 @@ paths:
   /api/v1/repositories/{id}/profiles/{profileID}/update-preview:
     get:
       summary: Create a short-lived immutable profile update preview
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: profileID, required: true, schema: { type: string } }
@@ -182,7 +208,7 @@ paths:
     get:
       summary: List profile catalogs and installed profiles
       description: Administrator session required.
-      security: [{ sessionCookie: [] }]
+      security: [{ adminSession: [] }]
       responses:
         '200': { description: Catalog sources and installed profile summaries }
         '403': { description: Administrator access required }
@@ -190,7 +216,7 @@ paths:
     post:
       summary: Add a community profile catalog
       description: The built-in 101conv catalog is always present and cannot be removed.
-      security: [{ sessionCookie: [] }]
+      security: [{ adminSession: [] }]
       requestBody:
         required: true
         content:
@@ -209,7 +235,7 @@ paths:
       - { in: path, name: sourceId, required: true, schema: { type: string } }
     get:
       summary: List profiles supported by the running 101conv version
-      security: [{ sessionCookie: [] }]
+      security: [{ adminSession: [] }]
       responses:
         '200':
           description: Compatible profiles and count filtered out by app-version bounds
@@ -231,7 +257,7 @@ paths:
       - { in: path, name: version, required: true, schema: { type: string } }
     get:
       summary: Fetch a compatible profile manifest for review
-      security: [{ sessionCookie: [] }]
+      security: [{ adminSession: [] }]
       responses:
         '200': { description: Profile metadata, compatibility range, package checksum, and converter rules }
         '400': { description: Profile is incompatible or its manifest is invalid }
@@ -243,7 +269,7 @@ paths:
       - { in: path, name: version, required: true, schema: { type: string } }
     post:
       summary: Verify and install a reviewed profile package
-      security: [{ sessionCookie: [] }]
+      security: [{ adminSession: [] }]
       responses:
         '201': { description: Installed profile summary }
         '400': { description: Package, checksum, or compatibility validation failed }
@@ -252,7 +278,7 @@ paths:
     post:
       summary: Upload one input file for asynchronous conversion
       description: The returned uploadId can be submitted once to create a job. Maximum input size is 100 MiB.
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       requestBody:
         required: true
         content:
@@ -272,10 +298,22 @@ paths:
         '401': { description: Administrator bearer token required }
         '413': { description: Input exceeds 100 MiB }
   /api/v1/jobs:
+    get:
+      summary: List durable jobs with optional status and text filters
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [queued, running, succeeded, failed, cancelled] } }
+        - { in: query, name: q, schema: { type: string, maxLength: 120 } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, maximum: 100000, default: 0 } }
+      responses:
+        '200': { description: Newest matching jobs and total count }
+        '400': { description: Invalid status or query parameters }
+        '401': { description: Administrator session required }
     post:
       summary: Submit an uploaded file for conversion by an installed profile
       description: Clients select a profile and target format; the Core resolves an enabled profile to an installed engine and a fixed argv template.
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       requestBody:
         required: true
         content:
@@ -305,7 +343,7 @@ paths:
       - $ref: '#/components/parameters/JobId'
     get:
       summary: Get job status
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       responses:
         '200':
           description: Current job state
@@ -319,7 +357,7 @@ paths:
       - $ref: '#/components/parameters/JobId'
     post:
       summary: Request job cancellation
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       responses:
         '200':
           description: Cancellation requested
@@ -333,7 +371,7 @@ paths:
       - $ref: '#/components/parameters/JobId'
     get:
       summary: Download a completed result
-      security: [{ engineAdmin: [] }]
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
       responses:
         '200':
           description: Converted output file
@@ -347,10 +385,10 @@ components:
     engineAdmin:
       type: http
       scheme: bearer
-    sessionCookie:
+    adminSession:
       type: apiKey
       in: cookie
-      name: conv_sid
+      name: 101conv_admin
   parameters:
     JobId:
       in: path

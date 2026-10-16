@@ -133,6 +133,87 @@ func TestManagementEndpointsRequireAdministratorToken(t *testing.T) {
 	}
 }
 
+func TestBrowserSessionIsOpaqueHttpOnlyAndSameOriginForMutations(t *testing.T) {
+	catalogService, err := catalog.New("0.1.0-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := management.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	server := httptest.NewServer(NewWithManagement("0.1.0-dev", catalogService, manager, "secret"))
+	defer server.Close()
+	client := server.Client()
+	login, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/session", strings.NewReader(`{"password":"secret"}`))
+	login.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("login status=%d", response.StatusCode)
+	}
+	cookie := response.Cookies()[0]
+	response.Body.Close()
+	if cookie.Name != adminCookie || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("unsafe session cookie: %+v", cookie)
+	}
+	if strings.Contains(response.Header.Get("Content-Type"), "secret") {
+		t.Fatal("password leaked in response")
+	}
+	check, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/auth/session", nil)
+	check.AddCookie(cookie)
+	response, err = client.Do(check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state Session
+	_ = json.NewDecoder(response.Body).Decode(&state)
+	response.Body.Close()
+	if !state.Authenticated {
+		t.Fatal("new session was not recognized")
+	}
+	list, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/engines", nil)
+	list.AddCookie(cookie)
+	response, err = client.Do(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("cookie-authenticated API status=%d", response.StatusCode)
+	}
+	mutation, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/profiles", strings.NewReader(`{}`))
+	mutation.AddCookie(cookie)
+	mutation.Header.Set("Content-Type", "application/json")
+	mutation.Header.Set("Origin", "https://attacker.example")
+	response, err = client.Do(mutation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin mutation status=%d", response.StatusCode)
+	}
+	logout, _ := http.NewRequest(http.MethodDelete, server.URL+"/api/v1/auth/session", nil)
+	logout.AddCookie(cookie)
+	logout.Header.Set("Origin", server.URL)
+	response, err = client.Do(logout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("logout status=%d", response.StatusCode)
+	}
+}
+
+type Session struct {
+	Authenticated bool `json:"authenticated"`
+}
+
 func TestRepositoryAPIRequiresAdminAndExposesOfficialTrustState(t *testing.T) {
 	root := t.TempDir()
 	catalogService, err := catalog.New("0.1.0-dev")

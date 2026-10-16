@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 
 	"github.com/timisah/101conv/server/internal/jobs"
 )
@@ -68,6 +69,39 @@ func (a *API) submitJob(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%s", job.ID))
 	writeJSON(w, status, map[string]any{"job": job, "duplicate": duplicate})
+}
+
+func (a *API) listJobs(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) || !a.jobsReady(w) {
+		return
+	}
+	limit, offset := 50, 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeAPIError(w, http.StatusBadRequest, "invalid_query", "limit must be between 1 and 100")
+			return
+		}
+		limit = parsed
+	}
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 || parsed > 100000 {
+			writeAPIError(w, http.StatusBadRequest, "invalid_query", "offset must be between 0 and 100000")
+			return
+		}
+		offset = parsed
+	}
+	items, total, err := a.jobs.List(r.Context(), jobs.ListFilter{Status: r.URL.Query().Get("status"), Query: r.URL.Query().Get("q"), Limit: limit, Offset: offset})
+	if err != nil {
+		if errors.Is(err, jobs.ErrInvalidInput) {
+			writeAPIError(w, http.StatusBadRequest, "invalid_query", "status must be queued, running, succeeded, failed, or cancelled")
+		} else {
+			writeJobError(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": items, "total": total, "limit": limit, "offset": offset})
 }
 
 func (a *API) getJob(w http.ResponseWriter, r *http.Request) {

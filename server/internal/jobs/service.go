@@ -330,6 +330,52 @@ func (s *Service) Get(ctx context.Context, id string) (Job, error) {
 	return job, err
 }
 
+type ListFilter struct {
+	Status string
+	Query  string
+	Limit  int
+	Offset int
+}
+
+func (s *Service) List(ctx context.Context, filter ListFilter) ([]Job, int, error) {
+	if filter.Limit < 1 || filter.Limit > 100 {
+		filter.Limit = 50
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+	status := strings.TrimSpace(filter.Status)
+	switch State(status) {
+	case "", Queued, Running, Succeeded, Failed, Cancelled:
+	default:
+		return nil, 0, fmt.Errorf("%w: unsupported job status", ErrInvalidInput)
+	}
+	query := strings.TrimSpace(filter.Query)
+	if len(query) > 120 {
+		query = query[:120]
+	}
+	pattern := "%" + strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(query, `\`, `\\`), `%`, `\%`), `_`, `\_`) + "%"
+	var total int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM conv_jobs WHERE ($1='' OR state=$1) AND ($2='' OR id ILIKE $3 ESCAPE E'\\' OR profile_id ILIKE $3 ESCAPE E'\\' OR source_format ILIKE $3 ESCAPE E'\\' OR target_format ILIKE $3 ESCAPE E'\\')`, status, query, pattern).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+jobColumns+` FROM conv_jobs WHERE ($1='' OR state=$1) AND ($2='' OR id ILIKE $3 ESCAPE E'\\' OR profile_id ILIKE $3 ESCAPE E'\\' OR source_format ILIKE $3 ESCAPE E'\\' OR target_format ILIKE $3 ESCAPE E'\\') ORDER BY created_at DESC LIMIT $4 OFFSET $5`, status, query, pattern, filter.Limit, filter.Offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	jobs := make([]Job, 0)
+	for rows.Next() {
+		var job Job
+		if err = scanJob(rows, &job); err != nil {
+			return nil, 0, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, total, rows.Err()
+}
+
 func (s *Service) Detail(ctx context.Context, id string) (JobDetail, error) {
 	job, err := s.Get(ctx, id)
 	if err != nil {

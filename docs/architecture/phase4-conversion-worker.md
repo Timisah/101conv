@@ -1,3 +1,5 @@
+> Phase 5 adds the web/Nginx service, browser session, and jobs list. The Phase 4 deployment/auth descriptions below are historical; current deployment details are in [phase5-web.md](phase5-web.md).
+
 # Phase 4: conversion jobs and restricted Worker
 
 Phase 4 adds a first real conversion path to the Go service while keeping the existing Java application and its deployment intact. The Go stack is defined in `compose.go.yaml`; it does not replace the root Java `compose.yaml`.

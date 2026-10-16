@@ -19,6 +19,7 @@ type API struct {
 	adminToken   string
 	repositories *repositorymanager.Manager
 	jobs         *jobs.Service
+	sessions     *sessionStore
 }
 
 func New(version string, catalogService *catalog.Service) http.Handler {
@@ -34,10 +35,13 @@ func NewWithServices(version string, catalogService *catalog.Service, management
 }
 
 func NewWithJobServices(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, adminToken string) http.Handler {
-	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, adminToken: adminToken}
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, adminToken: adminToken, sessions: newSessionStore()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.ready)
+	mux.HandleFunc("GET /api/v1/auth/session", a.getSession)
+	mux.HandleFunc("POST /api/v1/auth/session", a.createSession)
+	mux.HandleFunc("DELETE /api/v1/auth/session", a.deleteSession)
 	mux.HandleFunc("GET /api/v1/catalogs", a.catalogs)
 	mux.HandleFunc("GET /api/v1/catalogs/101conv-official", a.officialCatalog)
 	mux.HandleFunc("GET /api/v1/engines", a.listEngines)
@@ -67,6 +71,7 @@ func NewWithJobServices(version string, catalogService *catalog.Service, managem
 	mux.HandleFunc("POST /api/v1/repositories/{id}/engines/{engineID}/{version}/install", a.installRepositoryEngine)
 	mux.HandleFunc("POST /api/v1/uploads", a.uploadFile)
 	mux.HandleFunc("POST /api/v1/jobs", a.submitJob)
+	mux.HandleFunc("GET /api/v1/jobs", a.listJobs)
 	mux.HandleFunc("GET /api/v1/jobs/{id}", a.getJob)
 	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", a.cancelJob)
 	mux.HandleFunc("GET /api/v1/jobs/{id}/result", a.downloadJobResult)
@@ -79,16 +84,21 @@ func (a *API) authorized(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	header := r.Header.Get("Authorization")
-	if !strings.HasPrefix(header, "Bearer ") {
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "administrator bearer token required")
-		return false
+	if strings.HasPrefix(header, "Bearer ") {
+		got := strings.TrimPrefix(header, "Bearer ")
+		if len(got) == len(a.adminToken) && subtle.ConstantTimeCompare([]byte(got), []byte(a.adminToken)) == 1 {
+			return true
+		}
 	}
-	got := strings.TrimPrefix(header, "Bearer ")
-	if len(got) != len(a.adminToken) || subtle.ConstantTimeCompare([]byte(got), []byte(a.adminToken)) != 1 {
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "administrator bearer token required")
-		return false
+	if a.sessions != nil && a.sessions.valid(r) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOriginRequest(r) {
+			writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
+			return false
+		}
+		return true
 	}
-	return true
+	writeAPIError(w, http.StatusUnauthorized, "unauthorized", "administrator session required")
+	return false
 }
 
 func writeAPIError(w http.ResponseWriter, status int, code, message string) {
