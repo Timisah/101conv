@@ -5,7 +5,7 @@
   "name": "FFmpeg LGPL (Linux x86-64)",
   "description": "A static Linux x86-64 FFmpeg build for common audio and video conversions. This LGPL variant excludes GPL-only x264 and x265 encoders.",
   "author": "BtbN FFmpeg Builds",
-  "license": "LGPL-3.0-or-later; see the included LICENSE.txt and upstream dependency notices",
+  "license": "LGPL-2.1-or-later for FFmpeg; bundled dependencies may have separate terms. See the included LICENSE.txt and upstream dependency notices",
   "homepage": "https://github.com/BtbN/FFmpeg-Builds",
   "minimumAppVersion": "0.0.1",
   "maximumAppVersionExclusive": "0.2.0",
