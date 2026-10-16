@@ -36,7 +36,7 @@ func TestOfficialGoCatalogManifestsValidate(t *testing.T) {
 		if err = json.Unmarshal(b, &manifest); err != nil {
 			t.Fatal(err)
 		}
-		if manifest.Engine.ID != entry.ID || manifest.Engine.Version != entry.Version {
+		if manifest.Engine.ID != entry.ID || manifest.Engine.Version != entry.Version || manifest.Engine.Name != entry.Name {
 			t.Fatalf("engine index mismatch: %s", entry.ID)
 		}
 		if err = manifest.Engine.Validate(); err != nil {
@@ -52,7 +52,7 @@ func TestOfficialGoCatalogManifestsValidate(t *testing.T) {
 		if err = json.Unmarshal(b, &manifest); err != nil {
 			t.Fatal(err)
 		}
-		if manifest.Profile.ID != entry.ID || manifest.Profile.Version != entry.Version {
+		if manifest.Profile.ID != entry.ID || manifest.Profile.Version != entry.Version || manifest.Profile.Name != entry.Name {
 			t.Fatalf("profile index mismatch: %s", entry.ID)
 		}
 		if err = manifest.Profile.Validate(); err != nil {
