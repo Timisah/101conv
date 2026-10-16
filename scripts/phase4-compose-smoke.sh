@@ -7,23 +7,24 @@ export BUILDX_CONFIG="$tmp_root/buildx"
 export COMPOSE_PROJECT_NAME="101conv-phase4-smoke-$$"
 export SMOKE_IMAGE="101conv-phase4-smoke:$$"
 export DATA_PATH="$tmp_root/data"
+export GO_DATA_PATH="$DATA_PATH/go-data"
 export POSTGRES_PASSWORD="phase4-smoke-$(date +%s)-$RANDOM"
 export ENGINE_ADMIN_TOKEN="phase4-admin-$(date +%s)-$RANDOM"
 export PORT="${SMOKE_PORT:-15656}"
 export JOB_LEASE=3s
 export CONVERSION_TIMEOUT=8s
 export MAX_OUTPUT_BYTES=65536
-mkdir -p "$DATA_PATH/imports"
+mkdir -p "$GO_DATA_PATH/imports" "$GO_DATA_PATH/engines"
 mkdir -p "$BUILDX_CONFIG"
-chmod 755 "$tmp_root" "$DATA_PATH/imports"
-chmod 0777 "$DATA_PATH"
+chmod 755 "$tmp_root" "$GO_DATA_PATH" "$GO_DATA_PATH/imports" "$GO_DATA_PATH/engines"
+chmod 0777 "$GO_DATA_PATH"
 
 cleanup() {
   status=$?
   if [[ "$status" -ne 0 ]]; then
-    docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.go.yaml" -f "$tmp_root/compose.override.yaml" logs --no-color || true
+    docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" logs --no-color || true
   fi
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.go.yaml" -f "$tmp_root/compose.override.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
+  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
   if [[ -d "$DATA_PATH" ]]; then
     docker run --rm --user 0:0 --volume "$DATA_PATH:/cleanup" --entrypoint /bin/sh postgres:17-alpine -c 'find /cleanup -mindepth 1 -delete' >/dev/null 2>&1 || true
   fi
@@ -38,8 +39,8 @@ if [[ -z "$go_bin" ]]; then
   printf 'go toolchain not found; set GO_BIN to the Go 1.27 executable\n' >&2
   exit 1
 fi
-(cd "$repo_root/server" && GOTOOLCHAIN=local GOCACHE="${GOCACHE:-$tmp_root/go-cache}" GOPATH="${GOPATH:-$tmp_root/go-path}" "$go_bin" build -o "$DATA_PATH/imports/ppm-pgm" ./testdata/ppm-pgm)
-chmod 755 "$DATA_PATH/imports/ppm-pgm"
+(cd "$repo_root/server" && GOTOOLCHAIN=local GOCACHE="${GOCACHE:-$tmp_root/go-cache}" GOPATH="${GOPATH:-$tmp_root/go-path}" "$go_bin" build -o "$GO_DATA_PATH/imports/ppm-pgm" ./testdata/ppm-pgm)
+chmod 755 "$GO_DATA_PATH/imports/ppm-pgm"
 (cd "$repo_root/server" && GOTOOLCHAIN=local GOCACHE="${GOCACHE:-$tmp_root/go-cache}" GOPATH="${GOPATH:-$tmp_root/go-path}" CGO_ENABLED=0 GOOS=linux "$go_bin" build -trimpath -o "$tmp_root/101conv" ./cmd/101conv)
 chmod 0755 "$tmp_root/101conv"
 cat >"$tmp_root/Dockerfile" <<'DOCKER'
@@ -62,8 +63,8 @@ services:
     build: null
     image: ${SMOKE_IMAGE}
 YAML
-docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.go.yaml" -f "$tmp_root/compose.override.yaml" up -d
-worker_container="$(docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.go.yaml" -f "$tmp_root/compose.override.yaml" ps -q worker)"
+docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" up -d
+worker_container="$(docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" ps -q worker)"
 docker inspect "$worker_container" | python3 -c 'import json,sys; c=json.load(sys.stdin)[0]; h=c["HostConfig"]; n=c["NetworkSettings"]["Networks"]; m={x["Destination"]:x for x in c["Mounts"]}; assert h["ReadonlyRootfs"] is True; assert "ALL" in h["CapDrop"]; assert any("no-new-privileges" in x for x in h["SecurityOpt"]); assert h["PidsLimit"] <= 64; assert 0 < h["Memory"] <= 1073741824; assert 0 < h["NanoCpus"] <= 1000000000; assert len(n)==1 and next(iter(n)).endswith("_worker-db"); assert m["/var/lib/101conv/engines"]["RW"] is False; assert m["/var/lib/101conv/uploads"]["RW"] is False; assert m["/var/lib/101conv/results"]["RW"] is True'
 
 base="http://127.0.0.1:$PORT"
@@ -210,9 +211,9 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 [[ "$recovery_state" == running ]]
-worker_container="$(docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.go.yaml" -f "$tmp_root/compose.override.yaml" ps -q worker)"
+worker_container="$(docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" ps -q worker)"
 docker kill "$worker_container" >/dev/null
-docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.go.yaml" -f "$tmp_root/compose.override.yaml" up -d worker >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" up -d worker >/dev/null
 for _ in $(seq 1 30); do
   recovery_detail="$(curl -fsS "${auth[@]}" "$base/api/v1/jobs/$recovery_id")"
   recovery_state="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["job"]["state"])' <<<"$recovery_detail")"

@@ -1,6 +1,6 @@
 # Phase 5 — web application
 
-Phase 5 adds a standalone React + TypeScript application in `web/` and serves it with Nginx in the Go Compose deployment. It replaces the Go stack's API-only public port while leaving the Java Spring application and its `compose.yaml` deployment untouched. The browser and Core share only the private `web-core` network. Core retains its outbound network for repository metadata, and the Worker remains confined to the database network plus its existing read-only engine/upload and writable result mounts.
+Phase 5 adds a standalone React + TypeScript application in `web/` and serves it with Nginx in the Go Compose deployment. The deployment migration now makes this the default application in the root `compose.yaml`, replacing the Java runtime in the default stack while retaining Java source and the old bind-mounted data for rollback. The browser and Core share only the private `web-core` network. Core retains its outbound network for repository metadata, and the Worker remains confined to the database network plus its existing read-only engine/upload and writable result mounts.
 
 The public port remains configurable with `PORT`, default `5656`. It publishes Nginx on that port; Core listens on private port 5656 and is no longer published. Existing Go data path and named volumes are unchanged. For remote administration, terminate TLS at a trusted reverse proxy and have it overwrite `X-Forwarded-Proto: https`; the opaque cookie is marked Secure when TLS reaches Core or this trusted forwarded header is set.
 

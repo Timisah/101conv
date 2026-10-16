@@ -2,7 +2,7 @@
 
 # Phase 4: conversion jobs and restricted Worker
 
-Phase 4 adds a first real conversion path to the Go service while keeping the existing Java application and its deployment intact. The Go stack is defined in `compose.go.yaml`; it does not replace the root Java `compose.yaml`.
+Phase 4 adds a first real conversion path to the Go service while keeping the existing Java application and its deployment intact. This chapter describes that historical deployment. The current production deployment is the root `compose.yaml`, which replaces the Java runtime in the existing stack; see [`../deployment/portainer.md`](../deployment/portainer.md) for the migration procedure. `compose.go.yaml` is now a compatibility symlink to the root Compose file for existing stack configurations.
 
 ## Runtime boundary
 

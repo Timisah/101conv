@@ -1,28 +1,164 @@
+name: 101conv-go
+
 services:
-  101conv:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "${PORT:-5656}:${PORT:-5656}"
+  postgres:
+    image: postgres:17-alpine
     environment:
-      SERVER_PORT: "${PORT:-5656}"
-      APP_DATA_DIR: /var/lib/101conv
-      APP_USER_CONFIG_FILE: /var/lib/101conv/user-config.properties
-      SPRING_DATASOURCE_URL: "jdbc:h2:file:/var/lib/101conv/convdb;MODE=MySQL"
-      SPRING_SERVLET_MULTIPART_LOCATION: /var/lib/101conv/tmp
+      POSTGRES_DB: ${POSTGRES_DB:-101conv}
+      POSTGRES_USER: ${POSTGRES_USER:-101conv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a strong POSTGRES_PASSWORD in Portainer}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - core-db
+      - worker-db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  core:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-0.1.0}
+      no_cache: true
+    environment:
+      APP_VERSION: ${APP_VERSION:-0.1.0}
+      PORT: 5656
+      DATA_PATH: /var/lib/101conv
+      UPLOADS_PATH: /var/lib/101conv/uploads
+      RESULTS_PATH: /var/lib/101conv/results
+      DATABASE_URL: "host=postgres port=5432 user=${POSTGRES_USER:-101conv} password=${POSTGRES_PASSWORD:?Set a strong POSTGRES_PASSWORD in Portainer} dbname=${POSTGRES_DB:-101conv} sslmode=disable"
+      ENGINE_ADMIN_TOKEN: ${ENGINE_ADMIN_TOKEN:?Set a strong ENGINE_ADMIN_TOKEN in Portainer}
     volumes:
       - type: bind
-        source: ${DATA_PATH:?Set DATA_PATH to an existing directory on the Docker host}
+        source: ${GO_DATA_PATH:-${DATA_PATH:?Set DATA_PATH to the existing legacy data directory}/go-data}
         target: /var/lib/101conv
         bind:
           create_host_path: false
-    working_dir: /var/lib/101conv
+      - uploads:/var/lib/101conv/uploads
+      - results:/var/lib/101conv/results
+    networks:
+      - default
+      - core-db
+      - web-core
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/101conv", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
     read_only: true
     tmpfs:
-      - /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777
-    cap_drop:
-      - ALL
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     pids_limit: 128
-    mem_limit: 2g
-    cpus: 2.0
+    mem_limit: 768m
+    cpus: 1.5
+    restart: unless-stopped
+
+  # Keep the legacy Java service ID so Compose replaces that container in place.
+  101conv:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      no_cache: true
+    ports:
+      - "${PORT:-5656}:8080"
+    networks:
+      - web-core
+    user: "101:101"
+    depends_on:
+      core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -Y off -q --spider http://127.0.0.1:8080/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777
+      - /var/cache/nginx:rw,nosuid,nodev,noexec,size=16m,uid=101,gid=101,mode=0755
+      - /var/run:rw,nosuid,nodev,noexec,size=2m,uid=101,gid=101,mode=0755
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-0.1.0}
+      no_cache: true
+    command: ["worker"]
+    environment:
+      DATABASE_URL: "host=postgres port=5432 user=${POSTGRES_USER:-101conv} password=${POSTGRES_PASSWORD:?Set a strong POSTGRES_PASSWORD in Portainer} dbname=${POSTGRES_DB:-101conv} sslmode=disable"
+      ENGINE_ROOT: /var/lib/101conv/engines
+      UPLOADS_PATH: /var/lib/101conv/uploads
+      RESULTS_PATH: /var/lib/101conv/results
+      WORK_PATH: /work
+      CONVERSION_TIMEOUT: ${CONVERSION_TIMEOUT:-10m}
+      MAX_OUTPUT_BYTES: ${MAX_OUTPUT_BYTES:-209715200}
+      JOB_LEASE: ${JOB_LEASE:-45s}
+    volumes:
+      - type: bind
+        source: ${GO_DATA_PATH:-${DATA_PATH:?Set DATA_PATH to the existing legacy data directory}/go-data}/engines
+        target: /var/lib/101conv/engines
+        read_only: true
+        bind:
+          create_host_path: false
+      - uploads:/var/lib/101conv/uploads:ro
+      - results:/var/lib/101conv/results
+    networks:
+      - worker-db
+    depends_on:
+      postgres:
+        condition: service_healthy
+      core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/101conv", "worker-health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
+      - /work:rw,nosuid,nodev,noexec,size=1g,mode=0700,uid=65532,gid=65532
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 1g
+    cpus: 1.0
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  uploads:
+  results:
+
+networks:
+  core-db:
+    internal: true
+  worker-db:
+    internal: true
+  web-core:
+    internal: true
