@@ -71,7 +71,10 @@ func sign[T metadata.Roles](t *testing.T, m *metadata.Metadata[T], key ed25519.P
 func (f fixture) write(t *testing.T, targets map[string][]byte, version int64, expires time.Time) {
 	t.Helper()
 	md := filepath.Join(f.repo, "metadata")
-	td := filepath.Join(md, "targets")
+	td := filepath.Join(f.repo, "targets")
+	if err := os.MkdirAll(md, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(td, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +599,7 @@ func TestTUFSequentialRootRotationKeepsOriginalPinAndTrust(t *testing.T) {
 func TestCorruptPackageAndUnsafeArchivesRejected(t *testing.T) {
 	ctx := context.Background()
 	f, repos, eng := setup(t)
-	pkg := filepath.Join(f.repo, "metadata", "targets", "packages", "ffmpeg.tar.gz")
+	pkg := filepath.Join(f.repo, "targets", "packages", "ffmpeg.tar.gz")
 	if err := os.WriteFile(pkg, []byte("corrupt"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -669,5 +672,17 @@ func TestTUFRejectsBadSignature(t *testing.T) {
 	addLocal(t, m, f)
 	if _, err = m.Browse(context.Background(), "trusted-test"); err == nil {
 		t.Fatal("tampered targets metadata passed signature/hash validation")
+	}
+}
+
+func TestOfficialSourceTrustDependsOnProvisionedRoot(t *testing.T) {
+	withoutRoot := (&Manager{}).officialSource()
+	if withoutRoot.Trust != TrustUnavailable || withoutRoot.Enabled {
+		t.Fatalf("unprovisioned source must stay disabled: %#v", withoutRoot)
+	}
+	f := newFixture(t)
+	withRoot := (&Manager{officialRoot: f.root}).officialSource()
+	if withRoot.Trust != TrustPinned || !withRoot.Enabled || withRoot.TrustedRoot == "" {
+		t.Fatalf("provisioned root should enable bundled source: %#v", withRoot)
 	}
 }

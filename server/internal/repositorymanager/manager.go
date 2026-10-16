@@ -7,11 +7,14 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net/url"
 	"os"
@@ -22,11 +25,13 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/sorairolake/lzip-go"
 	"github.com/theupdateframework/go-tuf/v2/metadata/updater"
 	"github.com/timisah/101conv/server/internal/engine"
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/profile"
 	"github.com/timisah/101conv/server/internal/version"
+	"github.com/ulikunitz/xz"
 )
 
 const officialURL = "https://raw.githubusercontent.com/Timisah/101conv/main/catalog"
@@ -34,6 +39,7 @@ const maxIndexBytes int64 = 5 << 20
 const maxPackageBytes int64 = 1 << 30
 const maxPackageFiles = 10000
 const maxExpandedBytes int64 = 2 << 30
+const maxLzipDictionaryBytes uint64 = 128 << 20
 const indexTarget = "catalog/index.json"
 
 type Manager struct {
@@ -42,10 +48,19 @@ type Manager struct {
 	tufMu                       sync.Mutex
 	root, stateFile, appVersion string
 	lock                        *flock.Flock
+	officialRoot                []byte
+	officialStatus              Source
 	sources                     map[string]Source
 	engines                     *management.Service
 	plans                       map[string]installationPlan
 }
+
+// official-root.json is intentionally empty until the project owner provisions
+// and reviews the official TUF root. Releases with a real root embed the exact
+// public bytes pinned by the official repository.
+//
+//go:embed official-root.json
+var embeddedOfficialRoot []byte
 
 type installationPlan struct {
 	preview           InstallPreview
@@ -100,7 +115,14 @@ func Open(root, appVersion string, engineService *management.Service) (*Manager,
 	if !ok {
 		return nil, fmt.Errorf("repository storage is already open by another process")
 	}
-	m := &Manager{root: abs, stateFile: filepath.Join(abs, "repositories.json"), appVersion: appVersion, lock: lock, sources: map[string]Source{}, engines: engineService, plans: map[string]installationPlan{}}
+	m := &Manager{root: abs, stateFile: filepath.Join(abs, "repositories.json"), appVersion: appVersion, lock: lock, sources: map[string]Source{}, engines: engineService, plans: map[string]installationPlan{}, officialRoot: bytes.TrimSpace(embeddedOfficialRoot)}
+	if len(m.officialRoot) > 0 {
+		official := m.officialSource()
+		if _, e := newUpdater(context.Background(), official, m.officialRoot, filepath.Join(abs, "tuf", official.ID)); e != nil {
+			lock.Unlock()
+			return nil, fmt.Errorf("embedded official TUF root is invalid: %w", e)
+		}
+	}
 	data, err := os.ReadFile(m.stateFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return m, nil
@@ -156,18 +178,31 @@ func (m *Manager) Close() error {
 	return err
 }
 
-// List exposes the legacy official catalog as unavailable for trusted installs
-// until the upstream project publishes a TUF root that can be pinned in a release.
 func (m *Manager) List() []Source {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := []Source{{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustUnavailable, Enabled: false, Status: "trust_unavailable", LastError: "official TUF root has not been provisioned"}}
+	out := []Source{m.officialSource()}
 	for _, s := range m.sources {
 		s.TrustedRoot = ""
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+func (m *Manager) officialSource() Source {
+	var source Source
+	if len(m.officialRoot) == 0 {
+		source = Source{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustUnavailable, Enabled: false, Status: "trust_unavailable", LastError: "official TUF root has not been provisioned"}
+	} else {
+		source = Source{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustPinned, TrustedRoot: string(m.officialRoot), Enabled: true, Status: "configured"}
+	}
+	if m.officialStatus.LastRefresh != "" {
+		source.Status = m.officialStatus.Status
+		source.LastRefresh = m.officialStatus.LastRefresh
+		source.LastError = m.officialStatus.LastError
+	}
+	return source
 }
 
 func (m *Manager) Add(req AddRequest) (Source, error) {
@@ -320,6 +355,9 @@ func (m *Manager) Refresh(ctx context.Context, id string) (Source, error) {
 func (m *Manager) getSource(id string) (Source, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if id == "101conv-official" {
+		return m.officialSource(), nil
+	}
 	s, ok := m.sources[id]
 	if !ok {
 		return Source{}, management.ErrNotFound
@@ -440,6 +478,11 @@ func (m *Manager) loadViewLocked(ctx context.Context, s Source) (verifiedView, e
 		if d.Artifact != nil && !safeTarget(d.Artifact.URL) {
 			return verifiedView{}, fmt.Errorf("engine %q artifact target is unsafe", d.ID)
 		}
+		if d.Artifact != nil && d.Artifact.DownloadURL != "" {
+			if e := validateExternalArtifactURL(d.Artifact.DownloadURL); e != nil {
+				return verifiedView{}, fmt.Errorf("engine %q has invalid upstream artifact URL: %w", d.ID, e)
+			}
+		}
 		out.Engines = append(out.Engines, d)
 	}
 	for _, definition := range out.Engines {
@@ -453,9 +496,18 @@ func (m *Manager) loadViewLocked(ctx context.Context, s Source) (verifiedView, e
 		if info.Length < 0 || info.Length > maxPackageBytes {
 			return verifiedView{}, fmt.Errorf("engine %q artifact exceeds package size limit", definition.ID)
 		}
+		if definition.Artifact.SizeBytes > 0 && info.Length != definition.Artifact.SizeBytes {
+			return verifiedView{}, fmt.Errorf("engine %q artifact length differs from its signed manifest", definition.ID)
+		}
 		hash := info.Hashes["sha256"]
 		if len(hash) == 0 || !strings.EqualFold(hex.EncodeToString(hash), definition.Artifact.SHA256) {
 			return verifiedView{}, fmt.Errorf("engine %q artifact digest differs from its signed manifest", definition.ID)
+		}
+		if definition.Artifact.DownloadURL != "" {
+			urlFromMetadata, e := targetExternalURL(info)
+			if e != nil || urlFromMetadata != definition.Artifact.DownloadURL {
+				return verifiedView{}, fmt.Errorf("engine %q upstream artifact URL does not match its signed TUF target metadata", definition.ID)
+			}
 		}
 		view.targets["@artifact:"+definition.Artifact.URL] = []byte(fmt.Sprintf("%d:%s", info.Length, hex.EncodeToString(hash)))
 	}
@@ -701,7 +753,7 @@ func (m *Manager) InstallPlan(ctx context.Context, planID string) (management.Pr
 			err = fmt.Errorf("planned engine %q has no verified artifact definition", dep.EngineID)
 			break
 		}
-		archive, e := downloadVerified(view.updater, def.Artifact.URL, maxPackageBytes)
+		archive, e := downloadPackageVerified(ctx, view.updater, def.Artifact, maxPackageBytes)
 		if e != nil {
 			err = e
 			break
@@ -894,7 +946,7 @@ func (m *Manager) InstallEnginePlan(ctx context.Context, repoID, engineID, engin
 		m.tufMu.Unlock()
 		return management.EngineRecord{}, fmt.Errorf("repository engine manifest has no artifact")
 	}
-	archive, err := downloadVerified(view.updater, definition.Artifact.URL, maxPackageBytes)
+	archive, err := downloadPackageVerified(ctx, view.updater, definition.Artifact, maxPackageBytes)
 	m.tufMu.Unlock()
 	if err != nil {
 		return management.EngineRecord{}, errors.Join(err, m.recordRefresh(repoID, err))
@@ -1064,11 +1116,83 @@ func extractArchive(data []byte, format, root string) error {
 	switch format {
 	case "tar.gz":
 		return extractTarGzip(data, root)
+	case "tar.xz":
+		reader, err := (xz.ReaderConfig{DictCap: 128 << 20}).NewReader(bytes.NewReader(data))
+		if err != nil {
+			return err
+		}
+		return extractTar(reader, root)
+	case "tar.lz":
+		reader, err := newSafeLzipReader(data)
+		if err != nil {
+			return err
+		}
+		return extractTar(reader, root)
 	case "zip":
 		return extractZip(data, root)
 	default:
-		return fmt.Errorf("unsupported archive format %q (supported: tar.gz, zip)", format)
+		return fmt.Errorf("unsupported archive format %q (supported: tar.gz, tar.xz, tar.lz, zip)", format)
 	}
+}
+
+func newSafeLzipReader(data []byte) (io.Reader, error) {
+	// lzip-go currently buffers the compressed member while checking its
+	// trailer. Reject undersized input before parsing and cap the archive's
+	// attacker-controlled LZMA dictionary request before the decoder allocates.
+	if len(data) < 26 || string(data[:4]) != "LZIP" || data[4] != 1 {
+		return nil, fmt.Errorf("invalid or truncated lzip archive")
+	}
+	code := data[5]
+	dictionary := uint64(1) << (code & 0x1f)
+	dictionary -= (dictionary / 16) * uint64((code>>5)&0x07)
+	if dictionary > maxLzipDictionaryBytes {
+		return nil, fmt.Errorf("lzip dictionary exceeds %d-byte limit", maxLzipDictionaryBytes)
+	}
+	decoder, err := lzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	return &validatedLzipReader{decoder: decoder, archive: data}, nil
+}
+
+type validatedLzipReader struct {
+	decoder   io.Reader
+	archive   []byte
+	crc       uint32
+	size      uint64
+	validated bool
+}
+
+func (r *validatedLzipReader) Read(p []byte) (int, error) {
+	n, err := r.decoder.Read(p)
+	if n > 0 {
+		r.crc = crc32.Update(r.crc, crc32.IEEETable, p[:n])
+		r.size += uint64(n)
+	}
+	if errors.Is(err, io.EOF) && !r.validated {
+		if verifyErr := r.verifyFooter(); verifyErr != nil {
+			return n, verifyErr
+		}
+		r.validated = true
+	}
+	return n, err
+}
+
+func (r *validatedLzipReader) verifyFooter() error {
+	if len(r.archive) < 26 {
+		return fmt.Errorf("truncated lzip footer")
+	}
+	footer := r.archive[len(r.archive)-20:]
+	if got := binary.LittleEndian.Uint32(footer[:4]); got != r.crc {
+		return fmt.Errorf("lzip CRC mismatch")
+	}
+	if got := binary.LittleEndian.Uint64(footer[4:12]); got != r.size {
+		return fmt.Errorf("lzip uncompressed size mismatch")
+	}
+	if got := binary.LittleEndian.Uint64(footer[12:20]); got != uint64(len(r.archive)) {
+		return fmt.Errorf("lzip member size mismatch")
+	}
+	return nil
 }
 func safeArchivePath(root, name string) (string, error) {
 	if name == "" || strings.Contains(name, `\`) || filepath.IsAbs(name) {
@@ -1132,7 +1256,11 @@ func extractTarGzip(data []byte, root string) error {
 		return err
 	}
 	defer gz.Close()
-	tr := tar.NewReader(gz)
+	return extractTar(gz, root)
+}
+
+func extractTar(compressed io.Reader, root string) error {
+	tr := tar.NewReader(compressed)
 	var total int64
 	count := 0
 	for {
@@ -1163,6 +1291,17 @@ func extractTarGzip(data []byte, root string) error {
 		if e = writeArchiveFile(root, h.Name, os.FileMode(h.Mode), tr, h.Size, &total); e != nil {
 			return e
 		}
+	}
+	// tar.Reader may stop at the tar end markers before the compression
+	// decoder reaches EOF. Drain the bounded remainder so gzip/xz/lzip can
+	// validate checksums and footers; malicious trailing expansion stays capped.
+	remaining := maxExpandedBytes - total
+	n, err := io.Copy(io.Discard, io.LimitReader(compressed, remaining+1))
+	if err != nil {
+		return err
+	}
+	if n > remaining {
+		return fmt.Errorf("archive exceeds expansion limit")
 	}
 	return nil
 }

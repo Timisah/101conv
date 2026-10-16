@@ -92,6 +92,22 @@ func (m *Manager) prunePlansLocked(now time.Time) {
 func (m *Manager) recordRefresh(id string, refreshErr error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if id == "101conv-official" {
+		source := m.officialSource()
+		source.LastRefresh = time.Now().UTC().Format(time.RFC3339)
+		if refreshErr == nil {
+			source.Status = "ready"
+			source.LastError = ""
+		} else {
+			source.Status = statusForError(refreshErr)
+			source.LastError = refreshErr.Error()
+			if len(source.LastError) > 1024 {
+				source.LastError = source.LastError[:1024]
+			}
+		}
+		m.officialStatus = source
+		return nil
+	}
 	source, ok := m.sources[id]
 	if !ok {
 		return management.ErrNotFound

@@ -1,0 +1,20 @@
+{
+  "engine": {
+    "schemaVersion": 1,
+    "id": "jpeg-xl",
+    "version": "0.12.0",
+    "name": "JPEG XL tools (Linux x86-64)",
+    "description": "Static JPEG XL command-line tools from the libjxl project.",
+    "license": "BSD-3-Clause; bundled dependency notices are included in the upstream package.",
+    "platform": "linux-amd64",
+    "capabilities": ["image.decode", "image.encode", "image.jpeg-to-jxl"],
+    "executables": {"cjxl":"tools/cjxl", "djxl":"tools/djxl"},
+    "artifact": {
+      "url":"packages/jxl-linux-x86_64-static.tar.lz",
+      "downloadUrl":"https://github.com/libjxl/libjxl/releases/download/v0.12.0/jxl-linux-x86_64-static.tar.lz",
+      "sizeBytes":4034223,
+      "sha256":"5318a1ea40adad76d023e0c17a03d4627f8282f83cb2b575e69be8e74f1ff456",
+      "format":"tar.lz"
+    }
+  }
+}

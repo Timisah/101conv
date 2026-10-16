@@ -28,9 +28,15 @@ type Definition struct {
 }
 
 type Artifact struct {
-	URL    string `json:"url"`
-	SHA256 string `json:"sha256"`
-	Format string `json:"format"`
+	// URL is a TUF target path containing the signed length and digest.
+	URL string `json:"url"`
+	// DownloadURL optionally points at an upstream HTTPS release asset. The
+	// URL is repeated in TUF target custom metadata and bytes are checked
+	// against that target's signed length and SHA-256 before extraction.
+	DownloadURL string `json:"downloadUrl,omitempty"`
+	SizeBytes   int64  `json:"sizeBytes,omitempty"`
+	SHA256      string `json:"sha256"`
+	Format      string `json:"format"`
 }
 
 // Installation is local runtime state. ExecutablePaths are resolved paths for
@@ -94,6 +100,9 @@ func (d Definition) Validate() error {
 	if d.Artifact != nil {
 		if strings.TrimSpace(d.Artifact.URL) == "" || strings.TrimSpace(d.Artifact.Format) == "" || len(d.Artifact.SHA256) != 64 {
 			return fmt.Errorf("engine artifact metadata is incomplete")
+		}
+		if d.Artifact.DownloadURL != "" && d.Artifact.SizeBytes <= 0 {
+			return fmt.Errorf("external engine artifact must declare its signed size")
 		}
 		if _, err := hex.DecodeString(d.Artifact.SHA256); err != nil {
 			return fmt.Errorf("engine artifact SHA-256 must be hexadecimal")

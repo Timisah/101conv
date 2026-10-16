@@ -1,0 +1,18 @@
+{
+  "profile": {
+    "schemaVersion": 1,
+    "id": "ffmpeg-linux-amd64",
+    "version": "1.0.0",
+    "name": "FFmpeg Audio and Video",
+    "description": "Common audio and video transcoding using a shared FFmpeg engine installation.",
+    "license": "LGPL-2.1-or-later for FFmpeg; bundled dependencies have separate terms.",
+    "minimumAppVersion": "0.1.0",
+    "maximumAppVersionExclusive": "1.0.0",
+    "priority": 50,
+    "engines": [{"engineId":"ffmpeg","versions":{"minimum":"9.0.0","maximumExclusive":"10.0.0"},"capabilities":["audio.decode","audio.encode","video.decode","video.encode"]}],
+    "rules": [
+      {"engineId":"ffmpeg","executable":"ffmpeg","sources":["mp4","mkv","mov","avi","webm","m4v","mpg","mpeg","3gp","flv"],"targets":["mp4","mkv","mov","avi","webm","m4v","mpg","mpeg","3gp","flv"],"arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","{target}"]},
+      {"engineId":"ffmpeg","executable":"ffmpeg","sources":["mp3","aac","m4a","ogg","opus","wav","flac","wma","amr"],"targets":["mp3","aac","m4a","ogg","opus","wav","flac","wma","amr"],"arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","{target}"]}
+    ]
+  }
+}

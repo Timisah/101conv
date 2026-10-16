@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "minimumAppVersion": "0.1.0",
+  "maximumAppVersionExclusive": "1.0.0",
+  "engines": [
+    {"id":"ffmpeg","version":"9.0.2-28-g669f5ab083","name":"FFmpeg LGPL (Linux x86-64)","manifestTarget":"engines/ffmpeg-linux-amd64.json"},
+    {"id":"jpeg-xl","version":"0.12.0","name":"JPEG XL (Linux x86-64)","manifestTarget":"engines/jpeg-xl-linux-amd64.json"}
+  ],
+  "profiles": [
+    {"id":"ffmpeg-linux-amd64","version":"1.0.0","name":"FFmpeg Audio and Video","manifestTarget":"profiles/ffmpeg-linux-amd64.json"},
+    {"id":"jpeg-xl-linux-amd64","version":"1.0.0","name":"JPEG XL Images","manifestTarget":"profiles/jpeg-xl-linux-amd64.json"}
+  ]
+}

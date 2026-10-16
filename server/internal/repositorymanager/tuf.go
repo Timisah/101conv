@@ -2,7 +2,10 @@ package repositorymanager
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +19,7 @@ import (
 	"github.com/theupdateframework/go-tuf/v2/metadata/config"
 	"github.com/theupdateframework/go-tuf/v2/metadata/fetcher"
 	"github.com/theupdateframework/go-tuf/v2/metadata/updater"
+	"github.com/timisah/101conv/server/internal/engine"
 )
 
 type localFetcher struct{ root string }
@@ -32,6 +36,100 @@ var secureRepositoryHTTPClient = &http.Client{
 		}
 		return nil
 	},
+}
+
+var secureArtifactHTTPClient = &http.Client{
+	Timeout:   30 * time.Minute,
+	Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || len(via) == 0 || via[0].URL.Scheme != "https" || via[0].URL.Hostname() != "github.com" || req.URL.Scheme != "https" {
+			return fmt.Errorf("upstream release redirect is not allowed")
+		}
+		switch strings.ToLower(req.URL.Hostname()) {
+		case "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-cloud.s3.amazonaws.com":
+			return nil
+		default:
+			return fmt.Errorf("upstream release redirected to an unapproved host")
+		}
+	},
+}
+
+func validateExternalArtifactURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), "github.com") || u.Port() != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("external artifact URL must be a plain HTTPS GitHub release URL")
+	}
+	return nil
+}
+
+func targetExternalURL(info *metadata.TargetFiles) (string, error) {
+	if info.Custom == nil {
+		return "", fmt.Errorf("TUF artifact target is missing its signed upstream URL")
+	}
+	var custom struct {
+		DownloadURL string `json:"downloadUrl"`
+	}
+	if err := json.Unmarshal(*info.Custom, &custom); err != nil {
+		return "", err
+	}
+	if err := validateExternalArtifactURL(custom.DownloadURL); err != nil {
+		return "", err
+	}
+	return custom.DownloadURL, nil
+}
+
+func downloadPackageVerified(ctx context.Context, up *updater.Updater, artifact *engine.Artifact, max int64) ([]byte, error) {
+	if artifact == nil || !safeTarget(artifact.URL) {
+		return nil, fmt.Errorf("unsafe package target")
+	}
+	if artifact.DownloadURL == "" {
+		return downloadVerified(up, artifact.URL, max)
+	}
+	if err := validateExternalArtifactURL(artifact.DownloadURL); err != nil {
+		return nil, err
+	}
+	info, err := up.GetTargetInfo(artifact.URL)
+	if err != nil {
+		return nil, classifyTUFError(err)
+	}
+	if info.Length < 0 || info.Length > max {
+		return nil, fmt.Errorf("artifact exceeds package size limit")
+	}
+	urlFromMetadata, err := targetExternalURL(info)
+	if err != nil {
+		return nil, err
+	}
+	if urlFromMetadata != artifact.DownloadURL {
+		return nil, fmt.Errorf("artifact upstream URL differs from signed TUF target metadata")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, urlFromMetadata, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := secureArtifactHTTPClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("download upstream release: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream release returned HTTP %d", response.StatusCode)
+	}
+	if response.ContentLength > max || response.ContentLength >= 0 && response.ContentLength != info.Length {
+		return nil, fmt.Errorf("upstream release length differs from signed TUF target")
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, info.Length+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) != info.Length || int64(len(data)) > max {
+		return nil, fmt.Errorf("downloaded package length differs from signed TUF target")
+	}
+	actual := sha256.Sum256(data)
+	signed := info.Hashes["sha256"]
+	if len(signed) == 0 || !strings.EqualFold(hex.EncodeToString(actual[:]), hex.EncodeToString(signed)) {
+		return nil, coded("signature_failure", fmt.Errorf("downloaded package SHA-256 differs from signed TUF target"))
+	}
+	return data, nil
 }
 
 func (f localFetcher) DownloadFile(raw string, max int64, _ time.Duration) ([]byte, error) {
@@ -106,6 +204,7 @@ func newUpdater(ctx context.Context, source Source, root []byte, cache string) (
 	}
 	cfg.LocalMetadataDir = filepath.Join(cache, "metadata")
 	cfg.LocalTargetsDir = filepath.Join(cache, "targets")
+	cfg.RemoteTargetsURL = strings.TrimRight(source.URL, "/") + "/targets"
 	cfg.PrefixTargetsWithHash = true
 	if source.Kind == KindLocal {
 		base, err := filepath.Abs(filepath.Join(parsedSource.Host, parsedSource.Path))

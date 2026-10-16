@@ -6,7 +6,9 @@ require (
 	github.com/gofrs/flock v0.12.1
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/sigstore/sigstore v1.10.6
+	github.com/sorairolake/lzip-go v0.3.8
 	github.com/theupdateframework/go-tuf/v2 v2.4.2
+	github.com/ulikunitz/xz v0.5.17
 )
 
 require (

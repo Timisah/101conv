@@ -1,86 +1,57 @@
-# Converter profile catalogs
+# Converter catalogs
 
-Converter profiles let an administrator add a conversion engine without rebuilding the 101conv image. The **101conv Official Catalog** is pre-added on every install; its current index is intentionally empty until official packages are published. Administrators can add community catalogs too. Catalogs are fetched only when an administrator opens them in **Profiles**.
+101conv keeps the legacy Java catalog files for rollback compatibility. The Go marketplace uses a signed TUF repository at `catalog/metadata` and `catalog/targets`; do not replace the legacy `catalog/index.json`.
 
-## Catalog index
+## Official catalog status
 
-Serve a JSON document from a public HTTPS URL on port 443. Catalog URLs that resolve to loopback, link-local, private, or local-only addresses are rejected. Up to three HTTPS redirects are followed, with each redirect destination checked against the same URL rules.
+The official repository appears by default. It becomes enabled and trusted automatically when a real TUF root is embedded in `server/internal/repositorymanager/official-root.json`. That file is intentionally empty in this source tree until the project owner provisions the production root. The running service therefore reports `trust_unavailable` and will not install remote packages yet. It does not trust a checksum by itself.
 
-```json
-{
-  "version": 1,
-  "minimumAppVersion": "0.0.1",
-  "maximumAppVersionExclusive": "2.0.0",
-  "profiles": [
-    {
-      "id": "example-converter",
-      "version": "1.0.0",
-      "name": "Example Converter",
-      "description": "Example format support",
-      "manifestUrl": "https://downloads.example.org/profiles/example-converter-1.0.0.json",
-      "minimumAppVersion": "0.1.0",
-      "maximumAppVersionExclusive": "1.0.0"
-    }
-  ]
-}
+The Go catalog already defines two packages:
+
+- **FFmpeg Audio and Video** uses one shared FFmpeg engine for common audio/video formats.
+- **JPEG XL Images** uses the JPEG XL engine for JPEG/PNG/APNG/GIF → JXL and JXL → JPEG/PNG.
+
+Their engine/profile manifests live under `catalog/targets/`. The package SHA-256 values were checked against the upstream release bytes. FFmpeg is the LGPL BtbN build; JPEG XL is the upstream BSD-3-Clause build. Review the upstream notices and local legal obligations before publishing.
+
+## Provision the official signing identity
+
+This is an explicit maintainer action. The command creates four Ed25519 keys and the public root; it does not run during build or application startup. Use a new, empty directory outside the repository on a trusted machine, then move `root.key` to offline backup/custody. Keep the remaining role keys in a protected signing location. Never commit the key directory.
+
+```bash
+mkdir -p /secure/101conv-tuf
+chmod 700 /secure/101conv-tuf
+cd server
+go run ./cmd/catalog-repo init \
+  --keys-dir /secure/101conv-tuf \
+  --root-file ../catalog/metadata/root.json \
+  --embed-root internal/repositorymanager/official-root.json
 ```
 
-The catalog's application-version range applies to the entire index. Each entry can narrow the supported 101conv release range; incompatible entries are hidden and cannot be installed. The minimum is inclusive and the maximum is exclusive. Version comparison uses numeric major/minor/patch values; suffixes such as `-SNAPSHOT` do not change that release line. Omitted bounds mean unbounded compatibility. IDs and versions use letters, numbers, dots, underscores, and hyphens. The catalog document is limited to 1 MB.
+`init` refuses to replace a non-empty key directory or an existing public root. It prints the exact root fingerprint. Have the project owner verify and record that fingerprint before publishing the root. The initial root currently uses a single-maintainer threshold; use separate custody for the offline root key and online publishing keys. Do not run this command in CI.
 
-## Profile manifest
+## Publish catalog metadata
 
-The linked manifest must repeat the catalog ID and version, describe the license and package source, provide a ZIP URL and SHA-256, and define the converter's format rules. Its optional 101conv version range can further narrow the catalog entry's range. Every rule must use `{var:executable}` as its first argument. Arguments are passed directly to the process without shell expansion.
+Run this when manifests or metadata need publishing. The publisher checks the upstream package URL, size, and SHA-256 before signing. It uses the maintained `go-tuf` metadata/signature implementation, requires signing keys authorized by the root, and increments metadata versions from the existing files.
 
-```json
-{
-  "schemaVersion": 1,
-  "id": "example-converter",
-  "version": "1.0.0",
-  "name": "Example Converter",
-  "description": "Example format support",
-  "author": "Example Maintainers",
-  "license": "MIT",
-  "homepage": "https://example.org/converter",
-  "minimumAppVersion": "0.1.0",
-  "maximumAppVersionExclusive": "1.0.0",
-  "artifact": {
-    "url": "https://downloads.example.org/example-converter-1.0.0-linux-amd64.zip",
-    "sha256": "<64 hexadecimal characters>",
-    "format": "zip",
-    "platform": "linux-amd64",
-    "executable": "bin/example-converter"
-  },
-  "converter": {
-    "id": "example-converter",
-    "friendlyName": "Example Converter",
-    "priority": 100,
-    "rules": [
-      {
-        "sources": ["foo"],
-        "targets": ["bar"],
-        "command": ["{var:executable}", "--input", "{source}", "--output", "{target}"]
-      }
-    ]
-  }
-}
+```bash
+cd server
+go run ./cmd/catalog-repo publish \
+  --catalog-root ../catalog \
+  --keys-dir /secure/101conv-tuf
 ```
 
-Package formats currently accepted are `zip` and `tar.xz`. Archives are streamed to disk, checksum-verified before extraction, and unpacked with strict path, link, entry-count, and expanded-size checks. A profile is built for the server platform; the first official package targets Linux x86-64.
+The command writes `catalog/metadata/{targets,snapshot,timestamp}.json`. Commit metadata and targets in one Git commit so the static repository changes atomically. Timestamp metadata expires in seven days; publish again before expiry. Keep private keys out of CI logs, Git, the application image, and `DATA_PATH`.
 
-The app accepts packages up to 512 MB, at most 10,000 ZIP entries, and expanded contents up to 2 GB. Paths that escape the package are rejected. The selected executable must exist in the extracted package and cannot be a `#!` script. Installer scripts are never run. The installed converter itself is still third-party software and runs when a conversion invokes it; only install profiles from sources you trust. Licenses remain the operator's responsibility.
+After owner review, the public `catalog/metadata/root.json`, embedded `official-root.json`, signed metadata, and target manifests can be published to the existing GitHub repository. The web app will browse the catalog automatically after the application is rebuilt with that embedded root. No additional Portainer repository entry or manual root pin will be needed.
 
-The built-in catalog is hosted at `https://raw.githubusercontent.com/Timisah/101conv/main/catalog/index.json` and can be overridden with the `APP_PROFILES_CATALOG_URL` environment variable (Spring property `app.profiles.catalog-url`). The first official entry is a pinned BtbN FFmpeg LGPL build. 101conv distributes its catalog metadata and downloads the binary archive directly from the upstream GitHub release; it does not mirror or bundle the converter. The upstream checksum file supplies the expected SHA-256. An administrator reviews the manifest, source, license, and checksum in the UI and explicitly confirms installation. SHA-256 detects package mismatch; it does not establish who published a manifest. Signed catalog metadata remain future work. Remove an added community catalog by deleting its entry from `profile-catalogs.json` under the persistent app data directory; installed profiles are stored separately under `profiles/` and their generated converter definitions in `converter-configs/`.
+## Repository and manifest format
 
-### First official profile: FFmpeg LGPL on Linux x86-64
+The repository base URL is `https://raw.githubusercontent.com/Timisah/101conv/main/catalog`. TUF metadata is under `/metadata`; target paths are under `/targets`. The signed `catalog/index.json` target is `catalog/targets/catalog/index.json`, separate from the legacy Java index at `catalog/index.json`.
 
-This profile uses BtbN's immutable `autobuild-2026-10-15-13-03` release asset rather than a floating `latest` URL. It is the static Linux x86-64 `lgpl` variant, not the `gpl` or `nonfree` build. Its included license file identifies LGPL version 3; the profile links to the upstream package, preserves `LICENSE.txt`, and discloses upstream dependency notices. The selected build excludes GPL-only x264 and x265 encoders. The profile supports common audio and video container conversions through FFmpeg's default codecs. Operators remain responsible for their local licensing and patent obligations.
+The signed index has schema version 1 and lists engine/profile manifest target paths. Engine manifests contain `{"engine": <engine.Definition>}` and profile manifests contain `{"profile": <profile.Definition>}`. A profile names an engine, compatible version range, required capabilities, formats, and argv templates. An engine is installed once and can be shared by multiple profiles.
 
-## Admin API
+Packages remain hosted by upstream GitHub Releases; they are not committed to this repository. An artifact has a logical TUF target path, upstream HTTPS URL, size, format, and SHA-256. TUF targets metadata signs the exact length and digest and includes the upstream URL in signed custom metadata. The Go downloader only accepts GitHub release URLs and a fixed set of GitHub asset redirect hosts, then verifies bytes against signed TUF metadata before extraction. The manifest digest and TUF target digest must agree.
 
-All profile management endpoints require an authenticated administrator session:
+Supported archives are `tar.gz`, `tar.xz`, `tar.lz`, and `zip`. Extraction rejects traversal, links, device files, unsupported entries, excessive entry counts, and expanded size over 2 GiB. XZ and LZip dictionary requests are capped at 128 MiB. Package downloads are capped at 1 GiB. Converter execution is handled by the restricted Worker; signature verification does not sandbox a converter.
 
-- `GET /api/v1/profiles` lists catalog sources and installed profiles.
-- `POST /api/v1/profiles/catalogs` with `{"url":"https://…"}` saves a catalog source.
-- `GET /api/v1/profiles/catalogs/{sourceId}` fetches its profile list.
-- `GET /api/v1/profiles/catalogs/{sourceId}/{profileId}/{version}` retrieves details for review.
-- `POST /api/v1/profiles/catalogs/{sourceId}/{profileId}/{version}/install` verifies and installs the package, then refreshes the active converter registry.
+Community repositories still require an administrator to pin their TUF root by an independently checked fingerprint. The marketplace reads the API trust value `pinned`; the React client now uses that same value when deciding which repositories to browse.

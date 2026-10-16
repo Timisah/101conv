@@ -1,0 +1,20 @@
+{
+  "engine": {
+    "schemaVersion": 1,
+    "id": "ffmpeg",
+    "version": "9.0.2-28-g669f5ab083",
+    "name": "FFmpeg LGPL (Linux x86-64)",
+    "description": "Static BtbN Linux x86-64 build for common audio and video conversion; GPL-only x264 and x265 encoders are excluded.",
+    "license": "LGPL-2.1-or-later for FFmpeg; bundled dependencies have separate terms listed by the upstream project.",
+    "platform": "linux-amd64",
+    "capabilities": ["audio.decode", "audio.encode", "video.decode", "video.encode"],
+    "executables": {"ffmpeg":"ffmpeg-n9.0.2-28-g669f5ab083-linux64-lgpl-9.0/bin/ffmpeg"},
+    "artifact": {
+      "url":"packages/ffmpeg-n9.0.2-28-g669f5ab083-linux64-lgpl-9.0.tar.xz",
+      "downloadUrl":"https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-15-13-03/ffmpeg-n9.0.2-28-g669f5ab083-linux64-lgpl-9.0.tar.xz",
+      "sizeBytes":137920872,
+      "sha256":"b70078970e033c7e728a0c42d83a39d57f28b471a60866a2c4b0a2f598aec666",
+      "format":"tar.xz"
+    }
+  }
+}
