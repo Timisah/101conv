@@ -13,6 +13,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
@@ -135,8 +136,28 @@ public class ProfileCatalogService {
         requireApplicationCompatibility(manifest.minimumAppVersion(), manifest.maximumAppVersionExclusive());
         Path installedRoot = dataDir.resolve("profiles").resolve(manifest.id()).resolve(manifest.version()).normalize();
         Path profileRoot = dataDir.resolve("profiles").resolve(manifest.id()).normalize();
-        if (!installedRoot.startsWith(profileRoot) || Files.exists(profileRoot)) {
-            throw new IllegalArgumentException("This profile is already installed. Remove it before replacing it.");
+        if (!installedRoot.startsWith(profileRoot)) {
+            throw new IllegalArgumentException("Invalid profile installation path.");
+        }
+        if (Files.exists(profileRoot, LinkOption.NOFOLLOW_LINKS)) {
+            if (Files.isSymbolicLink(profileRoot) || !Files.isDirectory(profileRoot, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalArgumentException("The installed profile path is invalid.");
+            }
+            try {
+                Installed previous = mapper.readValue(profileRoot.resolve("profile.json").toFile(), Installed.class);
+                if (previous.id().equals(manifest.id()) && previous.version().equals(manifest.version())
+                        && previous.sha256().equalsIgnoreCase(manifest.artifact().sha256())
+                        && Files.isDirectory(installedRoot, LinkOption.NOFOLLOW_LINKS)) {
+                    Map<String, String> executablePaths = executablePaths(manifest.artifact());
+                    validateInstalledExecutables(installedRoot, executablePaths);
+                    writeConverterConfig(manifest, executablePaths, installedRoot);
+                    registry.refresh();
+                    return previous;
+                }
+            } catch (IOException e) {
+                throw new IllegalStateException("Could not refresh the installed profile configuration.", e);
+            }
+            throw new IllegalArgumentException("A different version of this profile is already installed. Remove it before replacing it.");
         }
         Path work = dataDir.resolve(".profile-install-" + UUID.randomUUID()).normalize();
         try {
@@ -150,30 +171,10 @@ public class ProfileCatalogService {
             Path unpacked = work.resolve("unpacked");
             extractArchive(archive, unpacked, manifest.artifact().format());
             Map<String, String> executablePaths = executablePaths(manifest.artifact());
-            for (String executablePath : executablePaths.values()) {
-                Path executable = unpacked.resolve(executablePath).normalize();
-                if (!executable.startsWith(unpacked) || !Files.isRegularFile(executable) || Files.isSymbolicLink(executable)) {
-                    throw new IllegalArgumentException("A profile executable is missing or outside the package.");
-                }
-                rejectScript(executable);
-            }
+            validateInstalledExecutables(unpacked, executablePaths);
             Files.createDirectories(profileRoot);
             Files.move(unpacked, installedRoot, StandardCopyOption.ATOMIC_MOVE);
-            Converter c = manifest.converter();
-            Map<String, String> variables = new java.util.HashMap<>();
-            executablePaths.forEach((name, path) -> variables.put(name, installedRoot.resolve(path).toString()));
-            ConverterFileDefinition definition = new ConverterFileDefinition(
-                    c.id(), c.friendlyName(), c.priority(), true, variables,
-                    c.rules().stream().map(r -> new ConverterFileDefinition.RuleDefinition(r.sources(), r.targets(), r.command())).toList());
-            for (var rule : definition.rules()) {
-                if (rule.command() == null || rule.command().isEmpty()
-                        || !executablePaths.containsKey(variableName(rule.command().get(0)))) {
-                    throw new IllegalArgumentException("Every conversion rule must launch one of its declared native executables as its first command argument.");
-                }
-            }
-            Files.createDirectories(converterConfigDir);
-            Path config = converterConfigDir.resolve("profile-" + manifest.id() + ".json");
-            writeAtomic(config, mapper.writeValueAsBytes(definition));
+            writeConverterConfig(manifest, executablePaths, installedRoot);
             Installed installed = new Installed(manifest.id(), manifest.version(), manifest.name(), manifest.license(), digest);
             writeAtomic(profileRoot.resolve("profile.json"), mapper.writeValueAsBytes(installed));
             registry.refresh();
@@ -188,6 +189,35 @@ public class ProfileCatalogService {
             throw e;
         } finally {
             deleteTree(work);
+        }
+    }
+
+    private void writeConverterConfig(Manifest manifest, Map<String, String> executablePaths, Path installedRoot) throws IOException {
+        Converter c = manifest.converter();
+        Map<String, String> variables = new java.util.HashMap<>();
+        executablePaths.forEach((name, path) -> variables.put(name, installedRoot.resolve(path).toString()));
+        ConverterFileDefinition definition = new ConverterFileDefinition(
+                c.id(), c.friendlyName(), c.priority(), true, variables,
+                c.rules().stream().map(r -> new ConverterFileDefinition.RuleDefinition(r.sources(), r.targets(), r.command())).toList());
+        for (var rule : definition.rules()) {
+            if (rule.command() == null || rule.command().isEmpty()
+                    || !executablePaths.containsKey(variableName(rule.command().get(0)))) {
+                throw new IllegalArgumentException("Every conversion rule must launch one of its declared native executables as its first command argument.");
+            }
+        }
+        Files.createDirectories(converterConfigDir);
+        Path config = converterConfigDir.resolve("profile-" + manifest.id() + ".json");
+        writeAtomic(config, mapper.writeValueAsBytes(definition));
+    }
+
+    private static void validateInstalledExecutables(Path root, Map<String, String> executablePaths) throws IOException {
+        for (String executablePath : executablePaths.values()) {
+            Path executable = root.resolve(executablePath).normalize();
+            if (!executable.startsWith(root) || !Files.isRegularFile(executable, LinkOption.NOFOLLOW_LINKS)
+                    || Files.isSymbolicLink(executable)) {
+                throw new IllegalArgumentException("A profile executable is missing or outside the package.");
+            }
+            rejectScript(executable);
         }
     }
 

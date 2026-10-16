@@ -24,8 +24,13 @@
     "friendlyName": "JPEG XL",
     "priority": 45,
     "rules": [
+        {
+          "sources": ["jpeg", "jpg"],
+          "targets": ["jxl"],
+          "command": ["{var:executable}", "{source}", "{target}", "-q", "85", "--lossless_jpeg=0"]
+        },
       {
-        "sources": ["jpeg", "jpg", "png", "apng", "gif"],
+          "sources": ["png", "apng", "gif"],
         "targets": ["jxl"],
         "command": ["{var:executable}", "{source}", "{target}", "-q", "85"]
       },

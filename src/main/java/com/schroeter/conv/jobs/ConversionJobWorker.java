@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.schroeter.conv.converters.ConverterRequest;
+import com.schroeter.conv.converters.BoundedProcessRunner.ConverterExecutionException;
 
 @Component
 public class ConversionJobWorker {
@@ -85,11 +86,26 @@ public class ConversionJobWorker {
             log.warn("Conversion job {} could not use its configured converter.", job.getId(), e);
             jobs.fail(job.getId(), "CONVERTER_UNAVAILABLE", "The selected converter is no longer available.");
             deleteTree(attemptDir);
+        } catch (ConverterExecutionException e) {
+            String details = "exitCode=" + e.exitCode() + "; timedOut=" + e.timedOut() + "\n" + e.processResult().output();
+            log.warn("Conversion job {} converter={} failed: exitCode={}, timedOut={}, output={}", job.getId(),
+                    job.getConverterId(), e.exitCode(), e.timedOut(), e.processResult().output());
+            jobs.fail(job.getId(), "CONVERTER_PROCESS_FAILED", "The selected converter could not process this file.",
+                    safeDetails(details));
+            deleteTree(attemptDir);
         } catch (Exception e) {
             log.warn("Conversion job {} failed.", job.getId(), e);
-            jobs.fail(job.getId(), "CONVERSION_FAILED", "Conversion failed. Check the installed converter and try again.");
+            jobs.fail(job.getId(), "CONVERSION_FAILED", "Conversion failed. Check the installed converter and try again.",
+                    safeDetails(e.getClass().getSimpleName() + ": " + e.getMessage()));
             deleteTree(attemptDir);
         }
+    }
+
+    private static String safeDetails(String value) {
+        if (value == null || value.isBlank()) return null;
+        String clean = value.replaceAll("\\u001B\\[[;\\d]*[ -/]*[@-~]", "")
+                .replaceAll("[^\\p{Print}\\n\\t]", " ").trim();
+        return clean.length() > 8000 ? clean.substring(0, 8000) + "\n[details truncated]" : clean;
     }
 
     private static void deleteTree(Path root) {

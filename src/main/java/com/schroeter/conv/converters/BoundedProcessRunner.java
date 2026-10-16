@@ -79,7 +79,8 @@ public class BoundedProcessRunner {
             if (!finished) {
                 terminate(process);
                 joinReader(reader);
-                throw new IOException("Converter exceeded its execution deadline.");
+                ProcessResult result = output.result();
+                throw new ConverterExecutionException(process.exitValue(), result, true);
             }
             joinReader(reader);
             if (jobId != null && cancellationRequests.contains(jobId)) {
@@ -87,7 +88,7 @@ public class BoundedProcessRunner {
             }
             ProcessResult result = output.result();
             if (process.exitValue() != 0) {
-                throw new IOException("Converter exited with code " + process.exitValue() + ".");
+                throw new ConverterExecutionException(process.exitValue(), result, false);
             }
             return result;
         } catch (InterruptedException e) {
@@ -149,6 +150,24 @@ public class BoundedProcessRunner {
     }
 
     public record ProcessResult(String output, boolean truncated) {
+    }
+
+    public static final class ConverterExecutionException extends IOException {
+        private final int exitCode;
+        private final ProcessResult processResult;
+        private final boolean timedOut;
+
+        private ConverterExecutionException(int exitCode, ProcessResult processResult, boolean timedOut) {
+            super(timedOut ? "Converter exceeded its execution deadline."
+                    : "Converter exited with code " + exitCode + ".");
+            this.exitCode = exitCode;
+            this.processResult = processResult;
+            this.timedOut = timedOut;
+        }
+
+        public int exitCode() { return exitCode; }
+        public ProcessResult processResult() { return processResult; }
+        public boolean timedOut() { return timedOut; }
     }
 
     private static final class BoundedOutput {

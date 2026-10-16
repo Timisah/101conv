@@ -92,6 +92,9 @@ public class ConversionJob {
     @Column(name = "error_message", length = 500)
     private String errorMessage;
 
+    @Column(name = "error_details", length = 8192)
+    private String errorDetails;
+
     @Version
     @Column(name = "entity_version", nullable = false)
     private long entityVersion;
@@ -146,9 +149,14 @@ public class ConversionJob {
     }
 
     public void fail(String code, String message, Instant now) {
+        fail(code, message, null, now);
+    }
+
+    public void fail(String code, String message, String details, Instant now) {
         state = cancelRequested ? ConversionJobState.CANCELED : ConversionJobState.FAILED;
         errorCode = cancelRequested ? "CANCELED" : code;
         errorMessage = cancelRequested ? "The job was canceled." : message;
+        errorDetails = cancelRequested ? null : details;
         finishedAt = now;
         leaseUntil = null;
     }
@@ -201,4 +209,5 @@ public class ConversionJob {
     public Long getResultSize() { return resultSize; }
     public String getErrorCode() { return errorCode; }
     public String getErrorMessage() { return errorMessage; }
+    public String getErrorDetails() { return errorDetails; }
 }

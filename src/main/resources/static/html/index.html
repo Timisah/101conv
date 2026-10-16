@@ -117,6 +117,8 @@
 
           <div class="app-controls">
             <button id="nerdToggleButton" class="btn" type="button">Stats for nerds</button>
+            <button id="copyNerdStatsButton" class="btn" type="button">Copy log</button>
+            <button id="downloadNerdStatsButton" class="btn" type="button">Download log</button>
           </div>
 
           <div id="nerdStats" style="display:none;">
@@ -153,6 +155,8 @@ const saveAsButton = document.getElementById("saveAsButton");
 const nerdToggleButton = document.getElementById("nerdToggleButton");
 const nerdStats = document.getElementById("nerdStats");
 const nerdStatsContent = document.getElementById("nerdStatsContent");
+const copyNerdStatsButton = document.getElementById("copyNerdStatsButton");
+const downloadNerdStatsButton = document.getElementById("downloadNerdStatsButton");
 const fileInfo = document.getElementById("fileInfo");
 const previewPane = document.getElementById("previewPane");
 const jobStatusPanel = document.getElementById("jobStatusPanel");
@@ -335,6 +339,7 @@ async function showFile(file) {
     : "none";
   sourceFormatSelect.innerHTML = `<option value="${ext}">${ext}</option>`;
   sourceFormatSelect.value = ext;
+  addNerdStat(`File selected: name=${JSON.stringify(file.name)}, extension=${ext}, sizeBytes=${file.size}, mime=${file.type || "unknown"}, lastModified=${file.lastModified || "unknown"}`);
   sourceFormatSelect.disabled = false;
   await populateTargetFormats(ext);
 
@@ -543,7 +548,20 @@ function refreshActionState() {
 function addNerdStat(message) {
   const timestamp = new Date().toISOString();
   nerdStatsContent.textContent += `[${timestamp}] ${message}\n`;
+  const lines = nerdStatsContent.textContent.split("\n");
+  if (lines.length > 1001) nerdStatsContent.textContent = lines.slice(-1001).join("\n");
 }
+
+copyNerdStatsButton.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(nerdStatsContent.textContent); addNerdStat("Troubleshooting log copied to clipboard"); }
+  catch (error) { addNerdStat(`Clipboard copy failed: ${error.name}: ${error.message}`); }
+});
+downloadNerdStatsButton.addEventListener("click", () => {
+  const blob = new Blob([nerdStatsContent.textContent], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a"); link.href = url; link.download = `101conv-troubleshooting-${new Date().toISOString().replaceAll(":", "-")}.log`;
+  link.click(); URL.revokeObjectURL(url); addNerdStat("Troubleshooting log downloaded");
+});
 
 function setNerdStatsVisible(visible) {
   showNerdStats = visible;
@@ -642,10 +660,13 @@ async function submitConversionJob(file) {
   for (const [key, value] of Object.entries(collectOptions())) {
     data.append(`option_${key}`, value);
   }
+  addNerdStat(`Submit request: source=${sourceFormatSelect.value}, target=${targetFormatSelect.value}, converter=${converterSelect.value || "auto"}, sizeBytes=${file.size}, mime=${file.type || "unknown"}, name=${JSON.stringify(file.name)}`);
 
   jobStatusPanel.hidden = false;
   showJobStatus({ state: "QUEUED" }, "Submitting your file to the background worker…");
+  const submitStartedAt = performance.now();
   const response = await fetch("/api/v1/jobs", { method: "POST", body: data });
+  addNerdStat(`Submit response: httpStatus=${response.status}, durationMs=${Math.round(performance.now() - submitStartedAt)}`);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload.id) {
     if (response.status === 401) {
@@ -665,22 +686,34 @@ async function submitConversionJob(file) {
 }
 
 async function pollConversionJob(jobId) {
+  let previousState = "";
+  const firstPollAt = performance.now();
   while (currentJobId === jobId) {
+    const pollStartedAt = performance.now();
     const response = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
     const job = await response.json().catch(() => ({}));
     if (!response.ok) {
+      addNerdStat(`Status response failed: httpStatus=${response.status}, durationMs=${Math.round(performance.now() - pollStartedAt)}`);
       throw new Error(job.message || `Could not read job status (${response.status}).`);
     }
     showJobStatus(job);
-    addNerdStat(`Job status id=${job.id} state=${job.state}`);
+    addNerdStat(`Job status id=${job.id} state=${job.state}, attempt=${job.attempt}, httpStatus=${response.status}, pollMs=${Math.round(performance.now() - pollStartedAt)}`);
+    if (job.state !== previousState) {
+      previousState = job.state;
+      addNerdStat(`Job transition: ${job.state}; converter=${job.converterId || "unknown"}; formats=${job.sourceFormat || "?"}->${job.targetFormat || "?"}; createdAt=${job.createdAt || "?"}; startedAt=${job.startedAt || "?"}; finishedAt=${job.finishedAt || "?"}`);
+    }
 
     if (["SUCCEEDED", "FAILED", "CANCELED"].includes(job.state)) {
+      addNerdStat(`Job terminal: state=${job.state}, errorCode=${job.errorCode || "none"}, totalWaitMs=${Math.round(performance.now() - firstPollAt)}`);
+      if (job.errorMessage) addNerdStat(`Job message: ${job.errorMessage}`);
+      if (job.errorDetails) addNerdStat(`Converter diagnostics:\n${job.errorDetails}`);
       if (job.state === "SUCCEEDED") {
         const resultUrl = job.resultUrl || `/api/v1/jobs/${encodeURIComponent(jobId)}/result`;
         setDownloadButton(resultUrl, "Download Converted File");
         const stem = fileNameWithoutExtension(job.sourceName);
         renderConvertedPreview(resultUrl, job.targetFormat, `${stem}.${job.targetFormat}`);
         jobMessage.textContent = "Your converted file is ready to download.";
+        addNerdStat(`Result ready: target=${job.targetFormat}, sizeBytes=${job.resultSize ?? "not reported"}, url=${resultUrl}`);
       }
       return;
     }
@@ -945,6 +978,7 @@ folderInput.addEventListener("change", () => {
 });
 
 targetFormatSelect.addEventListener("change", () => {
+  addNerdStat(`Target changed: source=${sourceFormatSelect.value || "unknown"}, target=${targetFormatSelect.value || "none"}, converter=${converterSelect.value || "auto"}`);
   void loadOptionsForTargetFormat(targetFormatSelect.value);
   refreshActionState();
 });

@@ -2,6 +2,8 @@ package com.schroeter.conv.converters;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -29,6 +31,16 @@ class BoundedProcessRunnerTests {
         var result = runner.run(java(List.of("flood")), null, temp);
         assertTrue(result.truncated());
         assertTrue(result.output().length() < 1100);
+    }
+
+    @Test
+    void preservesExitCodeAndOutputWhenConverterFails() {
+        BoundedProcessRunner runner = new BoundedProcessRunner(Duration.ofSeconds(10), 1024);
+        var failure = assertThrows(BoundedProcessRunner.ConverterExecutionException.class,
+                () -> runner.run(java(List.of("fail")), null, temp));
+        assertEquals(17, failure.exitCode());
+        assertTrue(failure.processResult().output().contains("fixture conversion diagnostic"));
+        assertFalse(failure.timedOut());
     }
 
     private static List<String> java(List<String> args) {

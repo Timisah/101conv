@@ -16,6 +16,8 @@ public record ConversionJobView(
         Instant finishedAt,
         String errorCode,
         String errorMessage,
+        String errorDetails,
+        Long resultSize,
         boolean cancellationRequested,
         String resultUrl) {
 
@@ -24,7 +26,7 @@ public record ConversionJobView(
                 job.getId(), job.getState(), job.getSourceName(), job.getSourceFormat(), job.getTargetFormat(),
                 job.getConverterId(), job.getAttempt(),
                 job.getState() == ConversionJobState.SUCCEEDED ? 100 : null,
-                job.getCreatedAt(), job.getStartedAt(), job.getFinishedAt(), job.getErrorCode(), job.getErrorMessage(),
+                job.getCreatedAt(), job.getStartedAt(), job.getFinishedAt(), job.getErrorCode(), job.getErrorMessage(), job.getErrorDetails(), job.getResultSize(),
                 job.isCancelRequested(), job.getState() == ConversionJobState.SUCCEEDED
                         ? "/api/v1/jobs/" + job.getId() + "/result" : null);
     }

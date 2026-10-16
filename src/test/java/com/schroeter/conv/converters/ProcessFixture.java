@@ -13,6 +13,9 @@ public final class ProcessFixture {
             }
         } else if ("copy".equals(args[0])) {
             java.nio.file.Files.copy(java.nio.file.Path.of(args[1]), java.nio.file.Path.of(args[2]));
+        } else if ("fail".equals(args[0])) {
+            System.err.println("fixture conversion diagnostic");
+            System.exit(17);
         }
     }
 }

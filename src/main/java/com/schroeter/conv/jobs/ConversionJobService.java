@@ -188,8 +188,13 @@ public class ConversionJobService {
 
     @Transactional
     public void fail(String id, String code, String message) {
+        fail(id, code, message, null);
+    }
+
+    @Transactional
+    public void fail(String id, String code, String message, String details) {
         ConversionJob job = repository.findById(id).orElseThrow(JobNotFoundException::new);
-        job.fail(code, message, Instant.now());
+        job.fail(code, message, details, Instant.now());
     }
 
     public Map<String, String> options(ConversionJob job) throws JsonProcessingException {
