@@ -21,6 +21,18 @@ const assert = require('node:assert/strict');
     await page.getByRole('heading', { name: 'What are we converting?' }).waitFor();
     assert.equal(await page.locator('body').innerText().then(t => t.includes(process.env.ENGINE_ADMIN_TOKEN)), false, 'admin token must not appear in UI');
 
+    const converterNav = page.getByRole('navigation', { name: 'Converter navigation' });
+    await converterNav.getByRole('link', { name: 'Profiles' }).click();
+    await page.getByRole('heading', { name: 'Manage converters' }).waitFor();
+    assert.equal(await page.locator('.tabbar a').nth(0).getAttribute('aria-current'), 'page');
+    await converterNav.getByRole('link', { name: 'Engines' }).click();
+    assert.match(page.url(), /tab=engines$/);
+    assert.equal(await page.locator('.tabbar a').nth(1).getAttribute('aria-current'), 'page');
+    await converterNav.getByRole('link', { name: 'Repository catalog' }).click();
+    await page.getByRole('heading', { name: 'Browse available converters' }).waitFor();
+    await page.goto(base + '/convert', { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { name: 'What are we converting?' }).waitFor();
+
     const ppm = Buffer.from('P3\n2 1\n255\n255 0 0 0 255 0\n');
     await page.locator('input[type=file]').setInputFiles({ name: 'sample.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm });
     await page.getByLabel('Convert to').selectOption('pgm');
