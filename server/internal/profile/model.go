@@ -15,6 +15,10 @@ import (
 
 type Definition struct {
 	SchemaVersion              int                 `json:"schemaVersion"`
+	// Type separates profiles intended for ordinary conversion from profiles
+	// intended for the compression workflow. An empty value is accepted only
+	// for pre-Type definitions loaded through the legacy compatibility path.
+	Type                       string              `json:"type,omitempty"`
 	ID                         string              `json:"id"`
 	Version                    string              `json:"version"`
 	Name                       string              `json:"name"`
@@ -26,6 +30,38 @@ type Definition struct {
 	Engines                    []EngineRequirement `json:"engines"`
 	Rules                      []ConversionRule    `json:"rules"`
 	Compression                *CompressionConfig  `json:"compression,omitempty"`
+}
+
+const (
+	TypeConversion = "conversion"
+	TypeCompression = "compression"
+)
+
+// SupportsMode reports whether this profile can be selected by a job mode.
+// Definitions without a type predate the split and retain their old behavior.
+func (d Definition) SupportsMode(mode string) bool {
+	switch d.Type {
+	case TypeConversion:
+		return mode == "convert"
+	case TypeCompression:
+		return mode == "compress"
+	default:
+		return mode == "convert" || mode == "compress"
+	}
+}
+
+// WithInferredType upgrades a pre-Type definition at an installation boundary.
+// Existing persisted definitions are left untouched until an administrator
+// explicitly installs or updates them.
+func (d Definition) WithInferredType() Definition {
+	if d.Type == "" {
+		if d.Compression != nil {
+			d.Type = TypeCompression
+		} else {
+			d.Type = TypeConversion
+		}
+	}
+	return d
 }
 
 // CompressionConfig describes controls that a profile deliberately exposes in
@@ -200,6 +236,31 @@ func (d Definition) Validate() error {
 	}
 	if err := d.ValidateCompression(); err != nil {
 		return err
+	}
+	switch d.Type {
+	case "": // Existing on-disk definitions are handled by the legacy adapter.
+	case TypeConversion:
+		if d.Compression != nil {
+			return fmt.Errorf("conversion profiles must not declare compression settings")
+		}
+		for _, rule := range d.Rules {
+			if len(rule.CompressionArguments) != 0 {
+				return fmt.Errorf("conversion profiles must not declare compression arguments")
+			}
+		}
+	case TypeCompression:
+		if d.Compression == nil {
+			return fmt.Errorf("compression profiles must declare compression settings")
+		}
+		hasCompressionRule := false
+		for _, rule := range d.Rules {
+			hasCompressionRule = hasCompressionRule || len(rule.CompressionArguments) != 0
+		}
+		if !hasCompressionRule {
+			return fmt.Errorf("compression profiles must declare at least one compression rule")
+		}
+	default:
+		return fmt.Errorf("profile type must be conversion or compression")
 	}
 	return nil
 }

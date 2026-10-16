@@ -377,6 +377,7 @@ func (s *Service) InstallVerifiedEnginePlan(d engine.Definition, sourceDir, arti
 // InstallVerifiedProfile atomically adds missing verified engines and installs
 // or updates a profile with exact version selections from an immutable plan.
 func (s *Service) InstallVerifiedProfile(d profile.Definition, repositoryID string, packages []VerifiedEnginePackage, selections map[string]string, expectedStateDigest string, update bool) (ProfileRecord, error) {
+	d = d.WithInferredType()
 	if err := d.Validate(); err != nil {
 		return ProfileRecord{}, err
 	}
@@ -855,6 +856,7 @@ func (s *Service) UpdateEngine(ctx context.Context, id string, d engine.Definiti
 }
 
 func (s *Service) InstallProfile(_ context.Context, d profile.Definition, repositoryID string) (ProfileRecord, error) {
+	d = d.WithInferredType()
 	if err := d.Validate(); err != nil {
 		return ProfileRecord{}, err
 	}
@@ -880,6 +882,7 @@ func (s *Service) InstallProfile(_ context.Context, d profile.Definition, reposi
 }
 
 func (s *Service) UpdateProfile(_ context.Context, d profile.Definition, repositoryID string) (ProfileRecord, error) {
+	d = d.WithInferredType()
 	if err := d.Validate(); err != nil {
 		return ProfileRecord{}, err
 	}

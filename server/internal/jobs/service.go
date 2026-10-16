@@ -277,6 +277,9 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		}
 		return Job{}, false, err
 	}
+	if !profileDef.SupportsMode(mode) {
+		return Job{}, false, fmt.Errorf("%w: %s profile %q cannot be used for %s jobs", ErrUnsupported, profileDef.Type, profileDef.ID, mode)
+	}
 	if installation.EngineID != rule.EngineID {
 		return Job{}, false, fmt.Errorf("resolved engine does not match the selected profile rule")
 	}

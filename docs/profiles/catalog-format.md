@@ -6,10 +6,10 @@
 
 The official repository is hosted as static files on GitHub and appears by default in browse-only mode. An administrator can explicitly approve unsigned official installs from Administration. That choice persists in Go data storage and enables package previews/install/update using HTTPS, declared sizes, SHA-256 checks, compatibility checks, and safe extraction. These checks detect corruption but do not authenticate the publisher; anyone able to alter the GitHub catalog can replace the manifests and hashes. Revoke the approval in Administration at any time. A verified TUF root remains the recommended way to enable installs. The service never downloads artifacts while browsing. The root slot is intentionally empty until production signing is provisioned.
 
-The Go catalog already defines two packages:
+The Go catalog exposes separate conversion and compression profiles:
 
-- **FFmpeg Audio and Video** uses one shared FFmpeg engine for common audio/video formats.
-- **JPEG XL Images** uses the JPEG XL engine for JPEG/PNG/APNG/GIF → JXL and JXL → JPEG/PNG.
+- **FFmpeg Audio/Video Conversion** and **FFmpeg Audio/Video Compression** share one FFmpeg engine installation.
+- **JPEG XL Image Conversion** and **JPEG XL Image Compression** share one JPEG XL engine installation.
 
 Their engine/profile manifests live under `catalog/targets/`. The package SHA-256 values were checked against the upstream release bytes. FFmpeg is the LGPL BtbN build; JPEG XL is the upstream BSD-3-Clause build. Review the upstream notices and local legal obligations before publishing.
 
@@ -48,7 +48,7 @@ The target manifests are already browseable from the existing GitHub repository 
 
 The repository base URL is `https://raw.githubusercontent.com/Timisah/101conv/main/catalog`. TUF metadata is under `/metadata`; target paths are under `/targets`. The signed `catalog/index.json` target is `catalog/targets/catalog/index.json`, separate from the legacy Java index at `catalog/index.json`.
 
-The signed index has schema version 1 and lists engine/profile manifest target paths. Engine manifests contain `{"engine": <engine.Definition>}` and profile manifests contain `{"profile": <profile.Definition>}`. A profile names an engine, compatible version range, required capabilities, formats, and argv templates. An engine is installed once and can be shared by multiple profiles.
+The signed index has schema version 1 and lists engine/profile manifest target paths. Engine manifests contain `{"engine": <engine.Definition>}` and profile manifests contain `{"profile": <profile.Definition>}`. A profile names its explicit `type` (`conversion` or `compression`), engine compatibility range, required capabilities, formats, and argv templates. Keep conversion and compression in separate profile manifests and catalog entries even when they use the same engine. The matching profile type is enforced at job submission, and an engine is installed once and shared by all profiles that depend on it. Older installed definitions without a type remain readable through the legacy compatibility path. Older repository manifests are classified as conversion-only when they have no compression block, or as compression-only when they do; new manifests should declare `type` explicitly.
 
 Packages remain hosted by upstream GitHub Releases; they are not committed to this repository. An artifact has a logical TUF target path, upstream HTTPS URL, size, format, and SHA-256. TUF targets metadata signs the exact length and digest and includes the upstream URL in signed custom metadata. The Go downloader only accepts GitHub release URLs and a fixed set of GitHub asset redirect hosts, then verifies bytes against signed TUF metadata before extraction. The manifest digest and TUF target digest must agree.
 
@@ -64,6 +64,7 @@ For a quick profile-only example:
 {
   "profile": {
     "schemaVersion": 1,
+    "type": "conversion",
     "id": "png-to-jxl",
     "version": "1.0.0",
     "name": "PNG to JPEG XL",
@@ -84,7 +85,7 @@ For a quick profile-only example:
 }
 ```
 
-The referenced engine manifest must declare `id: "jpeg-xl"`, provide capability `image.encode`, and map executable name `cjxl` to a safe package-relative path. The catalog index entry's ID and version must match the manifest. Version range and capabilities are checked while previewing dependencies; the repository author tool also checks included engine candidates and executable names.
+The referenced engine manifest must declare `id: "jpeg-xl"`, provide capability `image.encode`, and map executable name `cjxl` to a safe package-relative path. The catalog index entry's ID and version must match the manifest. Version range and capabilities are checked while previewing dependencies; the repository author tool also checks included engine candidates and executable names. If JPEG XL also publishes compression controls, create another profile entry with `type: "compression"` and the same engine requirement instead of mixing both workflows into one new profile.
 
 Use this repository layout:
 

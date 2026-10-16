@@ -42,9 +42,10 @@ func TestOfficialGoCatalogManifestsValidate(t *testing.T) {
 	if err = json.Unmarshal(indexBytes, &index); err != nil {
 		t.Fatal(err)
 	}
-	if index.SchemaVersion != 1 || len(index.Engines) != 2 || len(index.Profiles) != 2 {
+	if index.SchemaVersion != 1 || len(index.Engines) != 2 || len(index.Profiles) != 4 {
 		t.Fatalf("unexpected Go catalog index: %#v", index)
 	}
+	types := map[string]int{}
 	for _, entry := range index.Engines {
 		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(entry.ManifestTarget)))
 		if err != nil {
@@ -76,6 +77,10 @@ func TestOfficialGoCatalogManifestsValidate(t *testing.T) {
 		if err = manifest.Profile.Validate(); err != nil {
 			t.Fatalf("profile %s: %v", entry.ID, err)
 		}
+		types[manifest.Profile.Type]++
+	}
+	if types[profile.TypeConversion] != 2 || types[profile.TypeCompression] != 2 {
+		t.Fatalf("catalog must expose two profiles of each type, got %v", types)
 	}
 }
 

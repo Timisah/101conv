@@ -15,7 +15,7 @@ npm run dev
 
 - Administrator login through the server's HttpOnly, SameSite Strict session cookie. The configured `ENGINE_ADMIN_TOKEN` is accepted as a passphrase but is never placed in browser storage or returned to the browser.
 - Uploads up to the backend's 100 MiB input limit, compatible enabled-profile selection, asynchronous conversion, cancellation, status monitoring, job history search/filtering, and result download.
-- Engine/profile inventory, profile enable/disable/removal, engine removal with confirmation, and compatible installed engine-version selection.
+- Separate conversion-profile, compression-profile, and engine inventories and marketplace tabs. Profiles have an explicit type; the API prevents using a conversion profile for compression jobs or vice versa. Engines remain shared across profiles and install only once.
 - Trusted repository browsing, signed package previews and install confirmation, profile update previews, repository refresh/enable/disable/removal, and trust-root pinning.
 - Theme toggle with system-preference default and responsive desktop/mobile navigation.
 

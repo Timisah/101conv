@@ -85,6 +85,7 @@ func Adapt(data []byte) (Adapted, error) {
 	profileID := "legacy-config:" + legacy.ID
 	converted := profile.Definition{
 		SchemaVersion: 1,
+		Type:          profile.TypeConversion,
 		ID:            profileID,
 		Version:       "0.0.0+legacy",
 		Name:          name,

@@ -550,7 +550,7 @@ func loadUnsignedView(ctx context.Context, source Source, base, appVersion strin
 		if e = json.Unmarshal(raw, &manifest); e != nil {
 			return verifiedView{}, fmt.Errorf("decode profile %q manifest: %w", entry.ID, e)
 		}
-		d := manifest.Profile
+		d := manifest.Profile.WithInferredType()
 		if d.ID != entry.ID || d.Version != entry.Version {
 			return verifiedView{}, fmt.Errorf("catalog entry identity/version and profile manifest disagree for %q", entry.ID)
 		}
@@ -707,7 +707,7 @@ func (m *Manager) loadViewLocked(ctx context.Context, s Source) (verifiedView, e
 		if e = json.Unmarshal(raw, &manifest); e != nil {
 			return verifiedView{}, e
 		}
-		d := manifest.Profile
+		d := manifest.Profile.WithInferredType()
 		if d.ID != entry.ID || d.Version != entry.Version {
 			return verifiedView{}, fmt.Errorf("catalog entry identity/version and profile manifest disagree for %q", entry.ID)
 		}

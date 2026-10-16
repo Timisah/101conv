@@ -7,7 +7,9 @@
     {"id":"jpeg-xl","version":"0.12.0","name":"JPEG XL tools (Linux x86-64)","manifestTarget":"engines/jpeg-xl-linux-amd64.json"}
   ],
   "profiles": [
-    {"id":"ffmpeg-linux-amd64","version":"1.1.0","name":"FFmpeg Audio/Video + Compression","manifestTarget":"profiles/ffmpeg-linux-amd64.json"},
-    {"id":"jpeg-xl-linux-amd64","version":"1.1.0","name":"JPEG XL Images","manifestTarget":"profiles/jpeg-xl-linux-amd64.json"}
+    {"id":"ffmpeg-linux-amd64","version":"1.2.0","name":"FFmpeg Audio/Video Conversion","manifestTarget":"profiles/ffmpeg-linux-amd64.json"},
+    {"id":"jpeg-xl-linux-amd64","version":"1.2.0","name":"JPEG XL Image Conversion","manifestTarget":"profiles/jpeg-xl-linux-amd64.json"},
+    {"id":"ffmpeg-compression-linux-amd64","version":"1.0.0","name":"FFmpeg Audio/Video Compression","manifestTarget":"profiles/ffmpeg-compression-linux-amd64.json"},
+    {"id":"jpeg-xl-compression-linux-amd64","version":"1.0.0","name":"JPEG XL Image Compression","manifestTarget":"profiles/jpeg-xl-compression-linux-amd64.json"}
   ]
 }
