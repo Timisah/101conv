@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ChangeEvent, type FormEvent } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ChangeEvent, type FormEvent, type ErrorInfo, type ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Activity, ArrowDownToLine, ArrowLeft, ArrowRight, Boxes, Check, ChevronDown, Clock3, FileUp, Filter, HardDrive, LogOut, Moon, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sun, Upload, X, Zap, File, CircleAlert, LoaderCircle, Trash2, Power, ExternalLink, Copy, LockKeyhole, AudioLines } from 'lucide-react';
 
@@ -10,6 +10,12 @@ type Repo = {id:string;name:string;url:string;kind:string;trust:string;enabled:b
 type Package = {id:string;version:string;name:string;engines?:any[];rules?:any[];license?:string;description?:string};
 type Catalog = {repository:Repo;engines:Package[];profiles:Package[];incompatibleProfiles:{id:string;version:string;reason:string}[]};
 type Preview = {planId:string;publisher:string;trust:string;expiresAt?:string;license?:string;dependencies?:any[];plannedChanges?:string[];repository:Repo};
+const isCatalogResponse=(value:unknown):value is Catalog=>{
+  if(!value||typeof value!=='object')return false;
+  const catalog=value as Partial<Catalog>;
+  const validPackages=(packages:unknown):packages is Package[]=>Array.isArray(packages)&&packages.every(pkg=>pkg&&typeof pkg==='object'&&typeof pkg.id==='string'&&typeof pkg.name==='string'&&typeof pkg.version==='string');
+  return !!catalog.repository&&typeof catalog.repository==='object'&&validPackages(catalog.engines)&&validPackages(catalog.profiles)&&Array.isArray(catalog.incompatibleProfiles);
+};
 
 const api = async <T,>(path:string, init:RequestInit={}):Promise<T> => {
   const response = await fetch('/api/v1'+path,{...init,credentials:'include',headers:{...(init.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(init.headers||{})}});
@@ -77,7 +83,7 @@ function App(){
    </aside>
    <main className="main-area">
     <header className="topbar"><div className="mobile-brand"><span className="brand-mark">101</span> 101conv</div><div className="breadcrumbs"><span>Workspace</span><ChevronDown size={13}/><strong>{labelFor(location.pathname)}</strong></div><div className="top-actions"><span className="system-status"><i className={coreReady===true?'online':coreReady===false?'offline':'checking'}/>{coreReady===true?'Core ready':coreReady===false?'Core unavailable':'Checking Core…'}</span><button className="icon-btn theme-toggle" aria-label="Toggle color theme" onClick={()=>setTheme(theme==='dark'?'light':'dark')}>{theme==='dark'?<Sun size={18}/>:<Moon size={18}/>}</button><button className="mobile-logout icon-btn" aria-label="Sign out" onClick={logout}><LogOut size={18}/></button></div></header>
-    <section className="page-wrap"><Routes>
+    <section className="page-wrap"><PageErrorBoundary key={location.pathname}><Routes>
       <Route path="/" element={<Navigate to="/convert" replace/>}/>
       <Route path="/convert" element={<Convert notify={setToast}/>}/>
       <Route path="/jobs" element={<Jobs notify={setToast}/>}/>
@@ -85,11 +91,17 @@ function App(){
       <Route path="/marketplace" element={<Marketplace notify={setToast}/>}/>
       <Route path="/admin" element={<Admin notify={setToast}/>}/>
       <Route path="*" element={<Navigate to="/convert" replace/>}/>
-    </Routes></section>
+    </Routes></PageErrorBoundary></section>
    </main>
    <nav className="mobile-nav" aria-label="Mobile navigation"><NavLink to="/convert"><FileUp/><span>Convert</span></NavLink><NavLink to="/jobs"><Clock3/><span>Jobs</span></NavLink><NavLink to="/converters"><Boxes/><span>Converters</span></NavLink><NavLink to="/marketplace"><Search/><span>Browse</span></NavLink><NavLink to="/admin"><Settings2/><span>Admin</span></NavLink></nav>
    {toast&&<div className="toast" role="status"><CircleAlert size={17}/>{toast}<button onClick={()=>setToast('')} aria-label="Dismiss"><X size={16}/></button></div>}
  </div>;
+}
+class PageErrorBoundary extends Component<{children:ReactNode},{hasError:boolean}> {
+ state={hasError:false};
+ static getDerivedStateFromError(){return {hasError:true};}
+ componentDidCatch(error:Error,info:ErrorInfo){console.error('Page rendering failed:',error,info.componentStack);}
+ render(){return this.state.hasError?<div className="empty-state" role="alert"><span className="empty-icon"><CircleAlert size={22}/></span><h2>This page couldn’t load</h2><p>A page error interrupted rendering. Reload the page and try again.</p><button className="secondary" onClick={()=>window.location.reload()}>Reload page</button></div>:this.props.children;}
 }
 function labelFor(path:string){return ({'/convert':'Convert files','/jobs':'Jobs & history','/converters':'Installed converters','/marketplace':'Marketplace','/admin':'Administration'} as Record<string,string>)[path]||'Convert files';}
 function Login({onLogin,notify}:{onLogin:(s:Session)=>void;notify:(m:string)=>void}){
@@ -179,7 +191,7 @@ function EnginePicker({profile,notify,refresh}:{profile:Profile;notify:(s:string
 
 function Marketplace({notify}:{notify:(s:string)=>void}){
  const {data:installedProfiles,refresh:refreshInstalledProfiles}=useData<{profiles:Profile[]}>('/profiles',{profiles:[]});const {data:installedEngines}=useData<{engines:Engine[]}>('/engines',{engines:[]});const {data:reposResp,loading,error,refresh}=useData<{repositories:Repo[]}>('/repositories',{repositories:[]});const repos=reposResp.repositories||[];const [catalogs,setCatalogs]=useState<Record<string,Catalog>>({});const [catalogLoading,setCatalogLoading]=useState(false);const [catalogError,setCatalogError]=useState('');const [busy,setBusy]=useState('');const [search,setSearch]=useState('');const [previews,setPreviews]=useState<Record<string,Preview>>({});
- useEffect(()=>{let dead=false;const sources=repos.filter(r=>r.enabled&&(r.trust==='pinned'||r.id==='101conv-official'));if(!sources.length){setCatalogLoading(false);return()=>{dead=true};}setCatalogLoading(true);setCatalogError('');Promise.all(sources.map(async r=>{try{const c=await api<Catalog>('/repositories/'+r.id+'/catalog');if(!dead)setCatalogs(prev=>({...prev,[r.id]:c}));}catch(e){if(!dead)setCatalogError((e as Error).message||'Could not load repository catalog.');}})).finally(()=>{if(!dead)setCatalogLoading(false);});return()=>{dead=true};},[repos]);
+ useEffect(()=>{let dead=false;const sources=repos.filter(r=>r.enabled&&(r.trust==='pinned'||r.id==='101conv-official'));if(!sources.length){setCatalogLoading(false);return()=>{dead=true};}setCatalogLoading(true);setCatalogError('');Promise.all(sources.map(async r=>{try{const value=await api<unknown>('/repositories/'+r.id+'/catalog');if(!isCatalogResponse(value))throw new Error('The repository returned an invalid catalog response. Refresh the catalog or update Core.');if(!dead)setCatalogs(prev=>({...prev,[r.id]:value}));}catch(e){if(!dead){setCatalogs(prev=>{const next={...prev};delete next[r.id];return next;});setCatalogError((e as Error).message||'Could not load repository catalog.');}}})).finally(()=>{if(!dead)setCatalogLoading(false);});return()=>{dead=true};},[repos]);
  const entries=useMemo(()=>{const allowed=new Set(repos.filter(r=>r.enabled&&(r.trust==='pinned'||r.id==='101conv-official')).map(r=>r.id));return Object.entries(catalogs).filter(([rid])=>allowed.has(rid)).flatMap(([rid,c])=>c.profiles.map(p=>({repoId:rid,pkg:p,repo:c.repository,kind:'profile'})).concat(c.engines.map(p=>({repoId:rid,pkg:p,repo:c.repository,kind:'engine'}))));},[catalogs,repos]);
  const installedProfile=(item:typeof entries[number])=>item.kind==='profile'?installedProfiles.profiles?.find(x=>x.definition.id===item.pkg.id):undefined;
  const installedEngine=(item:typeof entries[number])=>item.kind==='engine'?installedEngines.engines?.find(x=>x.definition.id===item.pkg.id&&x.definition.version===item.pkg.version):undefined;
