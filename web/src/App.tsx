@@ -18,6 +18,23 @@ const api = async <T,>(path:string, init:RequestInit={}):Promise<T> => {
   if(!response.ok) throw new Error(data?.error?.message||data?.message||'The request could not be completed. Try again.');
   return data as T;
 };
+const uploadWithProgress = <T,>(file:File,onProgress:(percent:number)=>void):Promise<T> => new Promise((resolve,reject)=>{
+  const form=new FormData();
+  form.append('file',file);
+  const request=new XMLHttpRequest();
+  request.open('POST','/api/v1/uploads');
+  request.withCredentials=true;
+  request.upload.onprogress=event=>{if(event.lengthComputable)onProgress(Math.round(event.loaded/event.total*100));};
+  request.onerror=()=>reject(new Error('Upload connection failed. Check your connection and try again.'));
+  request.onabort=()=>reject(new Error('Upload was interrupted.'));
+  request.onload=()=>{
+    let data:any={};
+    try{data=JSON.parse(request.responseText||'{}');}catch{reject(new Error('The server returned an invalid upload response.'));return;}
+    if(request.status<200||request.status>=300){reject(new Error(data?.error?.message||data?.message||'The upload could not be completed.'));return;}
+    resolve(data as T);
+  };
+  request.send(form);
+});
 const json=(value:unknown)=>JSON.stringify(value);
 const ext=(name:string)=>name.includes('.')?name.split('.').pop()!.toLowerCase():'';
 const bytes=(size:number)=>size<1024*1024?(size/1024).toFixed(0)+' KB':(size/1024/1024).toFixed(1)+' MB';
@@ -87,7 +104,7 @@ function useData<T>(path:string, initial:T, auth=true){const [data,setData]=useS
 function Convert({notify}:{notify:(s:string)=>void}){
  const {data:profilesResp,loading,error,refresh}=useData<{profiles:Profile[]}>('/profiles',{profiles:[]});
  const profiles=profilesResp.profiles||[];
- const [files,setFiles]=useState<File[]>([]);const [target,setTarget]=useState('');const [selected,setSelected]=useState('');const [drag,setDrag]=useState(false);const [busy,setBusy]=useState(false);const [active,setActive]=useState<Job[]>([]);const [progress,setProgress]=useState<Record<string,number>>({});const input=useRef<HTMLInputElement>(null);
+ const [files,setFiles]=useState<File[]>([]);const [target,setTarget]=useState('');const [selected,setSelected]=useState('');const [drag,setDrag]=useState(false);const [busy,setBusy]=useState(false);const [active,setActive]=useState<Job[]>([]);const [uploadProgress,setUploadProgress]=useState<{index:number;total:number;name:string;percent:number}|null>(null);const input=useRef<HTMLInputElement>(null);
  const addFiles=(incoming:FileList|File[])=>{const next=Array.from(incoming);setFiles(prev=>[...prev,...next].slice(0,20));};
  const sources=useMemo(()=>files.map(f=>ext(f.name)),[files]);
  const compatible=useMemo(()=>profiles.filter(p=>p.state.enabled&&sources.length&&sources.every(s=>p.definition.rules.some(r=>r.sources.map(x=>x.toLowerCase().replace(/^\./,'')).includes(s)))),[profiles,sources]);
@@ -95,9 +112,9 @@ function Convert({notify}:{notify:(s:string)=>void}){
  const profile=compatible.find(p=>p.definition.id===selected);
  const targets=profile?Array.from(new Set(profile.definition.rules.filter(r=>sources.every(s=>r.sources.map(x=>x.toLowerCase().replace(/^\./,'')).includes(s))).flatMap(r=>r.targets.map(t=>t.toLowerCase().replace(/^\./,''))))).sort():[];
  useEffect(()=>{if(target&&!targets.includes(target))setTarget('');},[target,targets.join(',')]);
- const track=useCallback(async()=>{const old=JSON.parse(localStorage.getItem('101conv-job-ids')||'[]') as string[];if(!old.length)return;const rows=await Promise.all(old.slice(-50).map(async(id:string)=>{try{return (await api<{job:Job}>('/jobs/'+id)).job;}catch{return null;}}));const fresh=rows.filter(Boolean) as Job[];setActive(fresh.filter(j=>j.state==='queued'||j.state==='running'));setProgress(Object.fromEntries(fresh.map(j=>[j.id,j.progress])));},[]);
+ const track=useCallback(async()=>{const old=JSON.parse(localStorage.getItem('101conv-job-ids')||'[]') as string[];if(!old.length)return;const rows=await Promise.all(old.slice(-50).map(async(id:string)=>{try{return (await api<{job:Job}>('/jobs/'+id)).job;}catch{return null;}}));const fresh=rows.filter(Boolean) as Job[];setActive(fresh.filter(j=>j.state==='queued'||j.state==='running'));},[]);
  useEffect(()=>{void track();const t=setInterval(()=>void track(),2500);return()=>clearInterval(t);},[track]);
- async function submit(){if(!profile||!target||!files.length)return;setBusy(true);let created=0;for(const f of files){try{const form=new FormData();form.append('file',f);const upload=await api<{id:string}>('/uploads',{method:'POST',body:form});const res=await api<{job:Job}>('/jobs',{method:'POST',body:json({uploadId:upload.id,profileId:profile.definition.id,targetFormat:target,idempotencyKey:idempotencyKey()})});created++;const ids=JSON.parse(localStorage.getItem('101conv-job-ids')||'[]') as string[];ids.push(res.job.id);localStorage.setItem('101conv-job-ids',JSON.stringify(ids.slice(-100)));}catch(e){notify(f.name+': '+explain((e as Error).message));}}setBusy(false);if(created){notify(created===1?'Conversion queued. Your job is available in history.':created+' conversions queued.');setFiles([]);setTarget('');await track();}}
+ async function submit(){if(!profile||!target||!files.length)return;setBusy(true);let created=0;const failures:string[]=[];const batch=[...files];for(let index=0;index<batch.length;index++){const f=batch[index];setUploadProgress({index:index+1,total:batch.length,name:f.name,percent:0});try{const upload=await uploadWithProgress<{id:string}>(f,percent=>setUploadProgress({index:index+1,total:batch.length,name:f.name,percent}));const res=await api<{job:Job}>('/jobs',{method:'POST',body:json({uploadId:upload.id,profileId:profile.definition.id,targetFormat:target,idempotencyKey:idempotencyKey()})});created++;const ids=JSON.parse(localStorage.getItem('101conv-job-ids')||'[]') as string[];ids.push(res.job.id);localStorage.setItem('101conv-job-ids',JSON.stringify(ids.slice(-100)));}catch(e){failures.push(f.name+': '+explain((e as Error).message));}}setBusy(false);setUploadProgress(null);if(created){setFiles([]);setTarget('');await track();}if(failures.length){const detail=failures.length===1?failures[0]:failures.length+' files failed: '+failures.slice(0,2).join('; ')+(failures.length>2?'…':'');notify(created?created+' conversions queued. '+detail:detail);}else if(created){notify(created===1?'Conversion queued. Your job is available in history.':created+' conversions queued.');}}
  const drop=(e:DragEvent)=>{e.preventDefault();setDrag(false);if(e.dataTransfer.files.length)addFiles(e.dataTransfer.files);};
  return <><PageHeading eyebrow="WORKSPACE / CONVERT" title="What are we converting?" description="Drop a file, choose a format, and let your converters do the work." action={<div className="privacy-tag"><ShieldCheck size={16}/> Files stay on your server</div>}/>
  {error&&<div className="banner error"><CircleAlert size={18}/><div><b>Couldn’t load conversion profiles</b><span>{error}</span></div><button className="text-btn" onClick={refresh}>Retry</button></div>}
@@ -107,6 +124,7 @@ function Convert({notify}:{notify:(s:string)=>void}){
     <input ref={input} type="file" multiple hidden onChange={(e:ChangeEvent<HTMLInputElement>)=>{if(e.target.files)addFiles(e.target.files);e.target.value='';}}/>
     <div className="upload-icon"><Upload size={22}/></div><h2>Drop your files here</h2><p>or <button className="link-button" onClick={()=>input.current?.click()}>browse files</button> from your device</p><span className="upload-hint">Up to 100 MB per file <span>·</span> 20 files at a time</span>
    </section>
+   {uploadProgress&&<div className="upload-progress" role="status" aria-live="polite"><div><span>Uploading {uploadProgress.index} of {uploadProgress.total}</span><b>{uploadProgress.percent}%</b></div><div className="upload-progress-track" role="progressbar" aria-label={'Uploading '+uploadProgress.name} aria-valuemin={0} aria-valuemax={100} aria-valuenow={uploadProgress.percent}><i style={{width:uploadProgress.percent+'%'}}/></div><small title={uploadProgress.name}>{uploadProgress.name}</small></div>}
    {files.length>0&&<section className="file-list-panel"><div className="section-row"><div><h3>Ready to convert <span className="count-badge">{files.length}</span></h3><p>All files will use the same output format.</p></div><button className="text-btn" onClick={()=>setFiles([])}>Clear all</button></div>
     {files.map((f,i)=><div className="file-row" key={i}><div className="filetype-icon">{ext(f.name).slice(0,4)||'FILE'}</div><div className="file-info"><b title={f.name}>{f.name}</b><small>{bytes(f.size)} · .{ext(f.name)}</small></div><button className="icon-btn quiet" onClick={()=>setFiles(prev=>prev.filter((_,j)=>i!==j))} aria-label={'Remove '+f.name}><X size={16}/></button></div>)}
    </section>}
