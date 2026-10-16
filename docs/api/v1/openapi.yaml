@@ -46,6 +46,35 @@ paths:
         '204': { description: Repository removed }
         '401': { description: Administrator bearer token required }
         '404': { description: Repository not found }
+  /api/v1/repositories/{id}/enabled:
+    patch:
+      summary: Enable or disable a configured community or local repository
+      security: [{ engineAdmin: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200': { description: Updated source state; disablement invalidates outstanding plans }
+        '401': { description: Administrator bearer token required }
+        '409': { description: Bundled official source has no provisioned root }
+  /api/v1/repositories/{id}/refresh:
+    post:
+      summary: Refresh and verify signed metadata, update status and record errors
+      security: [{ engineAdmin: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Verified repository status and refresh time }
+        '502': { description: Signature, expiration, or rollback verification failed }
+        '401': { description: Administrator bearer token required }
   /api/v1/repositories/{id}/catalog:
     get:
       summary: Browse a verified repository catalog without executing package contents
@@ -74,6 +103,15 @@ paths:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: profileID, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId]
+              properties:
+                planId: { type: string, description: Short-lived immutable preview plan ID }
       responses:
         '201': { description: Installed profile and resolved dependencies }
         '400': { description: Verification, extraction, compatibility, or dependency failure }
@@ -85,6 +123,15 @@ paths:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: profileID, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId]
+              properties:
+                planId: { type: string, description: Short-lived immutable update preview plan ID }
       responses:
         '200': { description: Updated profile }
         '400': { description: Verification or dependency failure }
@@ -97,9 +144,39 @@ paths:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: engineID, required: true, schema: { type: string } }
         - { in: path, name: version, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId]
+              properties:
+                planId: { type: string }
       responses:
         '201': { description: Installed engine version }
         '400': { description: Verification or package installation failed }
+        '401': { description: Administrator bearer token required }
+  /api/v1/repositories/{id}/engines/{engineID}/{version}/preview:
+    get:
+      summary: Create a short-lived immutable engine installation preview
+      security: [{ engineAdmin: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: engineID, required: true, schema: { type: string } }
+        - { in: path, name: version, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Engine package digest, publisher, trust state, exact version and plan ID }
+        '401': { description: Administrator bearer token required }
+  /api/v1/repositories/{id}/profiles/{profileID}/update-preview:
+    get:
+      summary: Create a short-lived immutable profile update preview
+      security: [{ engineAdmin: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: profileID, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Dependency preview and exact repository snapshot digest }
         '401': { description: Administrator bearer token required }
   /api/v1/profiles:
     get:

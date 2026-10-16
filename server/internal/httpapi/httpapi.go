@@ -50,30 +50,38 @@ func NewWithServices(version string, catalogService *catalog.Service, management
 	mux.HandleFunc("GET /api/v1/repositories", a.listRepositories)
 	mux.HandleFunc("POST /api/v1/repositories", a.addRepository)
 	mux.HandleFunc("DELETE /api/v1/repositories/{id}", a.removeRepository)
+	mux.HandleFunc("PATCH /api/v1/repositories/{id}/enabled", a.setRepositoryEnabled)
+	mux.HandleFunc("POST /api/v1/repositories/{id}/refresh", a.refreshRepository)
 	mux.HandleFunc("GET /api/v1/repositories/{id}/catalog", a.browseRepository)
 	mux.HandleFunc("GET /api/v1/repositories/{id}/profiles/{profileID}/preview", a.previewRepositoryProfile)
+	mux.HandleFunc("GET /api/v1/repositories/{id}/profiles/{profileID}/update-preview", a.previewRepositoryProfileUpdate)
 	mux.HandleFunc("POST /api/v1/repositories/{id}/profiles/{profileID}/install", a.installRepositoryProfile)
 	mux.HandleFunc("PUT /api/v1/repositories/{id}/profiles/{profileID}", a.updateRepositoryProfile)
+	mux.HandleFunc("GET /api/v1/repositories/{id}/engines/{engineID}/{version}/preview", a.previewRepositoryEngine)
 	mux.HandleFunc("POST /api/v1/repositories/{id}/engines/{engineID}/{version}/install", a.installRepositoryEngine)
 	return mux
 }
 
 func (a *API) authorized(w http.ResponseWriter, r *http.Request) bool {
 	if a.management == nil || a.adminToken == "" {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "management_disabled", "message": "management requires configured persistent storage and ENGINE_ADMIN_TOKEN"})
+		writeAPIError(w, http.StatusServiceUnavailable, "management_disabled", "management requires configured persistent storage and ENGINE_ADMIN_TOKEN")
 		return false
 	}
 	header := r.Header.Get("Authorization")
 	if !strings.HasPrefix(header, "Bearer ") {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "unauthorized", "message": "administrator bearer token required"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "administrator bearer token required")
 		return false
 	}
 	got := strings.TrimPrefix(header, "Bearer ")
 	if len(got) != len(a.adminToken) || subtle.ConstantTimeCompare([]byte(got), []byte(a.adminToken)) != 1 {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "unauthorized", "message": "administrator bearer token required"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "administrator bearer token required")
 		return false
 	}
 	return true
+}
+
+func writeAPIError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
 }
 
 func (a *API) health(w http.ResponseWriter, _ *http.Request) {

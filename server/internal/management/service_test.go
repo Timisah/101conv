@@ -165,6 +165,215 @@ func TestFailedEngineInstallRollsBackFilesAndState(t *testing.T) {
 	}
 }
 
+func TestEngineInstallReportsStagingRollbackFailureAndRecoversOnRestart(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "imports")
+	writeEngineFile(t, src, "ffmpeg")
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := testEngine("1.0.0")
+	d.Executables["missing"] = "missing"
+	removeAll := s.removeAll
+	s.removeAll = func(path string) error {
+		if strings.Contains(path, ".staging-") {
+			return errors.New("simulated staging cleanup failure")
+		}
+		return removeAll(path)
+	}
+	_, err = s.InstallEngine(context.Background(), d, src)
+	var transaction *FileTransactionError
+	if !errors.As(err, &transaction) || !strings.Contains(err.Error(), "simulated staging cleanup failure") {
+		t.Fatalf("staging rollback failure hidden: %v", err)
+	}
+	s.removeAll = removeAll
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	engines, _ := restarted.ListEngines(context.Background())
+	entries, err := os.ReadDir(filepath.Join(root, "engines", "ffmpeg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(engines) != 0 || len(entries) != 0 {
+		t.Fatalf("restart did not clean failed installation: engines=%d entries=%v", len(engines), entries)
+	}
+}
+
+func TestInterruptedEngineRemovalRestoresCommittedInstallationOnRestart(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "imports")
+	writeEngineFile(t, src, "ffmpeg")
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed, err := s.InstallEngine(context.Background(), testEngine("1.0.0", "video.encode"), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	final := installed.Installation.Root
+	tombstone := filepath.Join(filepath.Dir(final), ".removing-1.0.0")
+	if err = os.Rename(final, tombstone); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if _, err = os.Stat(final); err != nil {
+		t.Fatalf("pending removal was not rolled back on restart: %v", err)
+	}
+	if _, err = os.Stat(tombstone); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("tombstone remained after recovery: %v", err)
+	}
+}
+
+func TestEngineRemovalCleanupFailureIsReportedAndRecovered(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "imports")
+	writeEngineFile(t, src, "ffmpeg")
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.InstallEngine(context.Background(), testEngine("1.0.0"), src); err != nil {
+		t.Fatal(err)
+	}
+	removeAll := s.removeAll
+	s.removeAll = func(path string) error {
+		if strings.Contains(path, ".removing-") {
+			return errors.New("simulated removal cleanup failure")
+		}
+		return removeAll(path)
+	}
+	err = s.RemoveEngine(context.Background(), "ffmpeg", "1.0.0", false)
+	var transaction *FileTransactionError
+	if !errors.As(err, &transaction) || !strings.Contains(err.Error(), "simulated removal cleanup failure") {
+		t.Fatalf("removal cleanup failure hidden: %v", err)
+	}
+	engines, _ := s.ListEngines(context.Background())
+	if len(engines) != 0 {
+		t.Fatalf("committed engine removal retained state: %d", len(engines))
+	}
+	s.removeAll = removeAll
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	entries, err := os.ReadDir(filepath.Join(root, "engines", "ffmpeg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("restart did not remove committed tombstone: %v", entries)
+	}
+}
+
+func TestVerifiedProfileBundleRollsBackStagedEngineOnCopyFailure(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	stage, cleanup, err := s.CreateVerifiedStaging()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err = os.WriteFile(filepath.Join(stage, "ffmpeg"), []byte("verified"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	d := testEngine("7.1.0", "video.encode")
+	d.Executables["missing"] = "missing"
+	d.Artifact = &engine.Artifact{URL: "packages/ffmpeg.tar.gz", SHA256: strings.Repeat("a", 64), Format: "tar.gz"}
+	p := testProfile("bundle-fails", engine.VersionRange{Minimum: "7.0.0", MaximumExclusive: "8.0.0"}, "video.encode")
+	digest, err := s.SnapshotDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InstallVerifiedProfile(p, "trusted", []VerifiedEnginePackage{{Definition: d, SourceDir: stage, ArtifactHash: d.Artifact.SHA256, RepositoryID: "trusted"}}, map[string]string{"ffmpeg": "7.1.0"}, digest, false)
+	if err == nil {
+		t.Fatal("expected package copy failure")
+	}
+	engines, _ := s.ListEngines(ctx)
+	profiles, _ := s.ListProfiles(ctx)
+	if len(engines) != 0 || len(profiles) != 0 {
+		t.Fatalf("failed transaction committed state: engines=%d profiles=%d", len(engines), len(profiles))
+	}
+	versionPath := filepath.Join(root, "engines", "ffmpeg", "7.1.0")
+	if _, err = os.Stat(versionPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed transaction left installed files: %v", err)
+	}
+}
+
+func TestVerifiedProfileReportsRollbackFailure(t *testing.T) {
+	root := t.TempDir()
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	stage, cleanup, err := s.CreateVerifiedStaging()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err = os.WriteFile(filepath.Join(stage, "ffmpeg"), []byte("verified"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	d := testEngine("7.1.0", "video.encode")
+	d.Executables["missing"] = "missing"
+	d.Artifact = &engine.Artifact{URL: "packages/ffmpeg.tar.gz", SHA256: strings.Repeat("b", 64), Format: "tar.gz"}
+	p := testProfile("rollback-report", engine.VersionRange{Minimum: "7.0.0", MaximumExclusive: "8.0.0"}, "video.encode")
+	digest, err := s.SnapshotDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	removeAll := s.removeAll
+	s.removeAll = func(path string) error {
+		if strings.Contains(path, ".staging-") {
+			return errors.New("simulated remove failure")
+		}
+		return removeAll(path)
+	}
+	_, err = s.InstallVerifiedProfile(p, "trusted", []VerifiedEnginePackage{{Definition: d, SourceDir: stage, ArtifactHash: d.Artifact.SHA256, RepositoryID: "trusted"}}, map[string]string{"ffmpeg": "7.1.0"}, digest, false)
+	var transaction *FileTransactionError
+	if !errors.As(err, &transaction) || !strings.Contains(err.Error(), "rollback incomplete") || !strings.Contains(err.Error(), "simulated remove failure") {
+		t.Fatalf("rollback failure was hidden: %v", err)
+	}
+	engines, _ := s.ListEngines(context.Background())
+	profiles, _ := s.ListProfiles(context.Background())
+	if len(engines) != 0 || len(profiles) != 0 {
+		t.Fatalf("failed transaction committed state: engines=%d profiles=%d", len(engines), len(profiles))
+	}
+	s.removeAll = removeAll
+	entries, err := os.ReadDir(filepath.Join(root, "engines", "ffmpeg"))
+	if err == nil && len(entries) > 0 {
+		for _, entry := range entries {
+			if err = os.RemoveAll(filepath.Join(root, "engines", "ffmpeg", entry.Name())); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
 func TestStartupRemovesIncompleteAndUnrecordedEngineDirectories(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".repository-staging", "interrupted"), 0700); err != nil {

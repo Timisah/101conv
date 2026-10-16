@@ -30,6 +30,9 @@ type enableRequest struct {
 type engineVersionRequest struct {
 	Version string `json:"version"`
 }
+type repositoryEnabledRequest struct {
+	Enabled bool `json:"enabled"`
+}
 
 func (a *API) listEngines(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) {
@@ -134,7 +137,7 @@ func (a *API) updateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Definition.ID != r.PathValue("id") {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "id_mismatch", "message": "profile id must match the URL"})
+		writeAPIError(w, http.StatusBadRequest, "id_mismatch", "profile id must match the URL")
 		return
 	}
 	v, err := a.management.UpdateProfile(r.Context(), req.Definition, req.RepositoryID)
@@ -200,11 +203,16 @@ func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	d.DisallowUnknownFields()
 	if err := d.Decode(target); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_request", "message": err.Error()})
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "request_too_large", "JSON request body exceeds 1 MiB")
+			return false
+		}
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return false
 	}
 	if err := d.Decode(&struct{}{}); err != io.EOF {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_request", "message": "request must contain one JSON value"})
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request must contain one JSON value")
 		return false
 	}
 	return true
@@ -219,12 +227,17 @@ func writeManagementError(w http.ResponseWriter, err error) {
 		status = http.StatusConflict
 		code = "conflict"
 	}
-	writeJSON(w, status, map[string]string{"code": code, "message": err.Error()})
+	var transaction *management.FileTransactionError
+	if errors.As(err, &transaction) {
+		status = http.StatusInternalServerError
+		code = "installation_interrupted"
+	}
+	writeAPIError(w, status, code, err.Error())
 }
 
 func (a *API) repositoryReady(w http.ResponseWriter) bool {
 	if a.repositories == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "repositories_disabled", "message": "repository management is unavailable"})
+		writeAPIError(w, http.StatusServiceUnavailable, "repositories_disabled", "repository management is unavailable")
 		return false
 	}
 	return true
@@ -260,6 +273,32 @@ func (a *API) removeRepository(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+func (a *API) setRepositoryEnabled(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) || !a.repositoryReady(w) {
+		return
+	}
+	var req repositoryEnabledRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	source, err := a.repositories.SetEnabled(r.PathValue("id"), req.Enabled)
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, source)
+}
+func (a *API) refreshRepository(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) || !a.repositoryReady(w) {
+		return
+	}
+	source, err := a.repositories.Refresh(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, source)
+}
 func (a *API) browseRepository(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) || !a.repositoryReady(w) {
 		return
@@ -282,11 +321,26 @@ func (a *API) previewRepositoryProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, v)
 }
+func (a *API) previewRepositoryProfileUpdate(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) || !a.repositoryReady(w) {
+		return
+	}
+	v, err := a.repositories.CreateInstallPlan(r.Context(), r.PathValue("id"), r.PathValue("profileID"), true)
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
 func (a *API) installRepositoryProfile(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) || !a.repositoryReady(w) {
 		return
 	}
-	v, err := a.repositories.InstallProfile(r.Context(), r.PathValue("id"), r.PathValue("profileID"), false)
+	var req repositorymanager.InstallPlanRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	v, err := a.repositories.InstallProfilePlan(r.Context(), r.PathValue("id"), r.PathValue("profileID"), req.PlanID, false)
 	if err != nil {
 		writeRepositoryError(w, err)
 		return
@@ -297,7 +351,11 @@ func (a *API) updateRepositoryProfile(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) || !a.repositoryReady(w) {
 		return
 	}
-	v, err := a.repositories.InstallProfile(r.Context(), r.PathValue("id"), r.PathValue("profileID"), true)
+	var req repositorymanager.InstallPlanRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	v, err := a.repositories.InstallProfilePlan(r.Context(), r.PathValue("id"), r.PathValue("profileID"), req.PlanID, true)
 	if err != nil {
 		writeRepositoryError(w, err)
 		return
@@ -308,22 +366,71 @@ func (a *API) installRepositoryEngine(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) || !a.repositoryReady(w) {
 		return
 	}
-	v, err := a.repositories.InstallEngine(r.Context(), r.PathValue("id"), r.PathValue("engineID"), r.PathValue("version"))
+	var req repositorymanager.InstallPlanRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	v, err := a.repositories.InstallEnginePlan(r.Context(), r.PathValue("id"), r.PathValue("engineID"), r.PathValue("version"), req.PlanID)
 	if err != nil {
 		writeRepositoryError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, v)
 }
+func (a *API) previewRepositoryEngine(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) || !a.repositoryReady(w) {
+		return
+	}
+	v, err := a.repositories.CreateEngineInstallPlan(r.Context(), r.PathValue("id"), r.PathValue("engineID"), r.PathValue("version"))
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
 func writeRepositoryError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
 	code := "repository_error"
-	if errors.Is(err, management.ErrNotFound) {
+	var coded *repositorymanager.CodedError
+	if errors.As(err, &coded) {
+		code = coded.Code
+	}
+	if code == "status_persistence_failure" {
+		status = http.StatusInternalServerError
+	}
+	var transaction *management.FileTransactionError
+	if errors.As(err, &transaction) {
+		status = http.StatusInternalServerError
+		code = "installation_interrupted"
+	} else if errors.Is(err, management.ErrNotFound) {
 		status = http.StatusNotFound
 		code = "not_found"
 	} else if errors.Is(err, management.ErrConflict) {
 		status = http.StatusConflict
 		code = "conflict"
+	} else if errors.Is(err, repositorymanager.ErrStalePlan) {
+		status = http.StatusConflict
+		code = "stale_preview"
+	} else if errors.Is(err, repositorymanager.ErrPlanExpired) {
+		status = http.StatusConflict
+		code = "preview_expired"
+	} else if errors.Is(err, repositorymanager.ErrRepositoryDisabled) {
+		status = http.StatusConflict
+		code = "repository_disabled"
+	} else if errors.Is(err, repositorymanager.ErrMissingDependency) {
+		status = http.StatusUnprocessableEntity
+		code = "missing_dependency"
+	} else if errors.Is(err, repositorymanager.ErrIncompatible) {
+		status = http.StatusUnprocessableEntity
+		code = "incompatible_version"
+	} else if errors.Is(err, repositorymanager.ErrSignature) || errors.Is(err, repositorymanager.ErrExpiredMetadata) || errors.Is(err, repositorymanager.ErrRollback) {
+		status = http.StatusBadGateway
+		if code == "repository_error" {
+			code = "repository_trust_failure"
+		}
+	} else if errors.Is(err, repositorymanager.ErrUnsafePackage) {
+		status = http.StatusUnprocessableEntity
+		code = "unsafe_package"
 	}
-	writeJSON(w, status, map[string]string{"code": code, "message": err.Error()})
+	writeAPIError(w, status, code, err.Error())
 }

@@ -5,6 +5,8 @@ package management
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +35,34 @@ type EngineRecord struct {
 	Definition   engine.Definition   `json:"definition"`
 	Installation engine.Installation `json:"installation"`
 }
+
+// VerifiedEnginePackage is a fully verified and safely extracted package staged
+// by Repository Manager. A profile install commits all supplied engines and the
+// profile record together in one JSON state transaction.
+type VerifiedEnginePackage struct {
+	Definition   engine.Definition
+	SourceDir    string
+	ArtifactHash string
+	RepositoryID string
+}
+
+type FileTransactionError struct {
+	Operation error
+	Rollback  []error
+}
+
+func (e *FileTransactionError) Error() string {
+	if len(e.Rollback) == 0 {
+		return e.Operation.Error()
+	}
+	parts := make([]string, 0, len(e.Rollback))
+	for _, err := range e.Rollback {
+		parts = append(parts, err.Error())
+	}
+	return fmt.Sprintf("%v; rollback incomplete: %s", e.Operation, strings.Join(parts, "; "))
+}
+func (e *FileTransactionError) Unwrap() error { return e.Operation }
+
 type state struct {
 	SchemaVersion int             `json:"schemaVersion"`
 	Engines       []EngineRecord  `json:"engines"`
@@ -46,6 +76,7 @@ type Service struct {
 	data         state
 	lock         *flock.Flock
 	allowedRoots []string
+	removeAll    func(string) error
 }
 
 func Open(root string) (*Service, error) {
@@ -99,7 +130,7 @@ func OpenWithPolicy(root string, allowedRoots []string) (*Service, error) {
 		}
 		cleanRoots = append(cleanRoots, a)
 	}
-	s := &Service{root: abs, stateFile: filepath.Join(abs, "management.json"), lock: lock, allowedRoots: cleanRoots, data: state{SchemaVersion: 1, Engines: []EngineRecord{}, Profiles: []ProfileRecord{}}}
+	s := &Service{root: abs, stateFile: filepath.Join(abs, "management.json"), lock: lock, allowedRoots: cleanRoots, removeAll: os.RemoveAll, data: state{SchemaVersion: 1, Engines: []EngineRecord{}, Profiles: []ProfileRecord{}}}
 	b, err := os.ReadFile(s.stateFile)
 	if errors.Is(err, os.ErrNotExist) {
 		if err = s.recoverFilesystem(); err != nil {
@@ -148,13 +179,41 @@ func (s *Service) Close() error {
 
 func (s *Service) RootPath() string { return s.root }
 
+func (s *Service) SnapshotDigest() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return digestInstallState(s.data.Engines, s.data.Profiles)
+}
+
+func digestInstallState(engines []EngineRecord, profiles []ProfileRecord) (string, error) {
+	data, err := json.Marshal(struct {
+		Engines  []EngineRecord  `json:"engines"`
+		Profiles []ProfileRecord `json:"profiles"`
+	}{engines, profiles})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 func (s *Service) recoverFilesystem() error {
-	_ = os.RemoveAll(filepath.Join(s.root, ".repository-staging"))
+	if err := os.RemoveAll(filepath.Join(s.root, ".repository-staging")); err != nil {
+		return fmt.Errorf("remove interrupted repository staging: %w", err)
+	}
 	for _, pattern := range []string{".management-*.tmp", ".repositories-*.tmp"} {
-		matches, _ := filepath.Glob(filepath.Join(s.root, pattern))
-		for _, tmp := range matches {
-			_ = os.Remove(tmp)
+		matches, err := filepath.Glob(filepath.Join(s.root, pattern))
+		if err != nil {
+			return err
 		}
+		for _, tmp := range matches {
+			if err = os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove interrupted state file %s: %w", tmp, err)
+			}
+		}
+	}
+	if err := s.recoverRemovalTombstones(); err != nil {
+		return err
 	}
 	known := map[string]bool{}
 	for _, record := range s.data.Engines {
@@ -225,6 +284,61 @@ func (s *Service) recoverFilesystem() error {
 	return nil
 }
 
+func (s *Service) recoverRemovalTombstones() error {
+	base := filepath.Join(s.root, "engines")
+	ids, err := os.ReadDir(base)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if !id.IsDir() || id.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		engineDir := filepath.Join(base, id.Name())
+		entries, e := os.ReadDir(engineDir)
+		if e != nil {
+			return e
+		}
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry.Name(), ".removing-") {
+				continue
+			}
+			entryPath := filepath.Join(engineDir, entry.Name())
+			entryInfo, statErr := os.Lstat(entryPath)
+			if statErr != nil {
+				return fmt.Errorf("inspect interrupted engine-removal tombstone %s: %w", entryPath, statErr)
+			}
+			if !entryInfo.IsDir() || entryInfo.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("unsafe interrupted engine-removal tombstone %s", entryPath)
+			}
+			version := strings.TrimPrefix(entry.Name(), ".removing-")
+			tombstone := entryPath
+			final := filepath.Join(engineDir, version)
+			recorded := false
+			for _, record := range s.data.Engines {
+				if record.Installation.Managed && record.Installation.EngineID == id.Name() && record.Installation.Version == version {
+					recorded = true
+					break
+				}
+			}
+			if recorded {
+				if _, e = os.Lstat(final); errors.Is(e, os.ErrNotExist) {
+					if e = os.Rename(tombstone, final); e != nil {
+						return fmt.Errorf("restore interrupted engine removal %s: %w", version, e)
+					}
+				} else if e != nil {
+					return e
+				} else if e = os.RemoveAll(tombstone); e != nil {
+					return e
+				}
+			} else if e = os.RemoveAll(tombstone); e != nil {
+				return fmt.Errorf("remove committed engine-removal tombstone %s: %w", tombstone, e)
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Service) ListEngines(context.Context) ([]EngineRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -242,19 +356,267 @@ func (s *Service) ListProfiles(context.Context) ([]ProfileRecord, error) {
 // directory. It never fetches URLs or extracts archives. Definition executable
 // paths are relative file names under sourceDir.
 func (s *Service) InstallEngine(_ context.Context, d engine.Definition, sourceDir string) (EngineRecord, error) {
-	return s.installEngine(d, sourceDir, false, "", "")
+	return s.installEngine(d, sourceDir, false, "", "", "")
 }
 
 // InstallVerifiedEngine is reserved for the repository manager after TUF target
 // verification. This function copies only declared executables; it never runs code.
 func (s *Service) InstallVerifiedEngine(d engine.Definition, sourceDir, artifactSHA256, repositoryID string) (EngineRecord, error) {
+	return s.InstallVerifiedEnginePlan(d, sourceDir, artifactSHA256, repositoryID, "")
+}
+
+// InstallVerifiedEnginePlan binds the commit to the management state captured
+// by its immutable repository preview.
+func (s *Service) InstallVerifiedEnginePlan(d engine.Definition, sourceDir, artifactSHA256, repositoryID, expectedStateDigest string) (EngineRecord, error) {
 	if d.Artifact == nil || !strings.EqualFold(d.Artifact.SHA256, artifactSHA256) {
 		return EngineRecord{}, fmt.Errorf("verified package digest does not match the engine manifest")
 	}
-	return s.installEngine(d, sourceDir, true, artifactSHA256, repositoryID)
+	return s.installEngine(d, sourceDir, true, artifactSHA256, repositoryID, expectedStateDigest)
 }
 
-func (s *Service) CreateVerifiedStaging() (string, func(), error) {
+// InstallVerifiedProfile atomically adds missing verified engines and installs
+// or updates a profile with exact version selections from an immutable plan.
+func (s *Service) InstallVerifiedProfile(d profile.Definition, repositoryID string, packages []VerifiedEnginePackage, selections map[string]string, expectedStateDigest string, update bool) (ProfileRecord, error) {
+	if err := d.Validate(); err != nil {
+		return ProfileRecord{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	currentDigest, err := digestInstallState(s.data.Engines, s.data.Profiles)
+	if err != nil {
+		return ProfileRecord{}, err
+	}
+	if currentDigest != expectedStateDigest {
+		return ProfileRecord{}, fmt.Errorf("management state changed after preview: %w", ErrConflict)
+	}
+
+	profileIdx := profileIndex(s.data.Profiles, d.ID)
+	if update && profileIdx < 0 {
+		return ProfileRecord{}, ErrNotFound
+	}
+	if !update && profileIdx >= 0 {
+		return ProfileRecord{}, fmt.Errorf("profile %q: %w", d.ID, ErrConflict)
+	}
+
+	packageByKey := make(map[string]VerifiedEnginePackage, len(packages))
+	for _, pkg := range packages {
+		if err := pkg.Definition.Validate(); err != nil {
+			return ProfileRecord{}, err
+		}
+		if pkg.Definition.Artifact == nil || !strings.EqualFold(pkg.Definition.Artifact.SHA256, pkg.ArtifactHash) {
+			return ProfileRecord{}, fmt.Errorf("engine %q package digest does not match its signed manifest", pkg.Definition.ID)
+		}
+		if !safeID(pkg.Definition.ID) || pkg.SourceDir == "" {
+			return ProfileRecord{}, fmt.Errorf("engine package has an invalid id or staging directory")
+		}
+		requirementFound := false
+		for _, req := range d.Engines {
+			if req.EngineID == pkg.Definition.ID && selections[req.EngineID] == pkg.Definition.Version && req.Accepts(pkg.Definition) {
+				requirementFound = true
+			}
+		}
+		if !requirementFound {
+			return ProfileRecord{}, fmt.Errorf("engine package %q is not part of the selected profile plan", pkg.Definition.ID)
+		}
+		resolved, err := filepath.EvalSymlinks(pkg.SourceDir)
+		if err != nil {
+			return ProfileRecord{}, err
+		}
+		rel, err := filepath.Rel(filepath.Join(s.root, ".repository-staging"), resolved)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return ProfileRecord{}, fmt.Errorf("verified package staging directory is outside private storage")
+		}
+		key := pkg.Definition.ID + "\x00" + pkg.Definition.Version
+		if _, exists := packageByKey[key]; exists {
+			return ProfileRecord{}, fmt.Errorf("duplicate engine package %q: %w", key, ErrConflict)
+		}
+		packageByKey[key] = pkg
+	}
+
+	available := append([]EngineRecord(nil), s.data.Engines...)
+	for key, pkg := range packageByKey {
+		found := false
+		for _, existing := range available {
+			if existing.Installation.EngineID == pkg.Definition.ID && existing.Installation.Version == pkg.Definition.Version {
+				found = true
+				if !strings.EqualFold(existing.Installation.PackageSHA256, pkg.ArtifactHash) {
+					return ProfileRecord{}, fmt.Errorf("engine %q version %s has a conflicting installed digest: %w", pkg.Definition.ID, pkg.Definition.Version, ErrConflict)
+				}
+			}
+		}
+		if found {
+			delete(packageByKey, key)
+		}
+	}
+
+	for _, req := range d.Engines {
+		selected := selections[req.EngineID]
+		if selected == "" {
+			return ProfileRecord{}, fmt.Errorf("profile %q has no planned version for engine %q", d.ID, req.EngineID)
+		}
+		valid := false
+		for _, candidate := range available {
+			if candidate.Installation.EngineID == req.EngineID && candidate.Installation.Version == selected && req.Accepts(candidate.Definition) {
+				valid = true
+			}
+		}
+		if pkg, ok := packageByKey[req.EngineID+"\x00"+selected]; ok && req.Accepts(pkg.Definition) {
+			valid = true
+		}
+		if !valid {
+			return ProfileRecord{}, fmt.Errorf("profile %q requires compatible engine %q version %s: %w", d.ID, req.EngineID, selected, ErrNotFound)
+		}
+	}
+
+	type stagedInstall struct {
+		pkg   VerifiedEnginePackage
+		stage string
+		final string
+		rec   EngineRecord
+	}
+	staged := make([]stagedInstall, 0, len(packageByKey))
+	rollback := func(operation error) error {
+		var rollbackErrs []error
+		for i := len(staged) - 1; i >= 0; i-- {
+			if staged[i].stage != "" {
+				if err := s.removeAll(staged[i].stage); err != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("remove staging %s: %w", staged[i].stage, err))
+				}
+			}
+			if staged[i].final != "" {
+				if err := s.removeAll(staged[i].final); err != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("remove installed files %s: %w", staged[i].final, err))
+				}
+			}
+		}
+		if len(rollbackErrs) > 0 {
+			return &FileTransactionError{Operation: operation, Rollback: rollbackErrs}
+		}
+		return operation
+	}
+
+	keys := make([]string, 0, len(packageByKey))
+	for key := range packageByKey {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		pkg := packageByKey[key]
+		engineRoot := filepath.Join(s.root, "engines", safeSegment(pkg.Definition.ID))
+		if err := os.MkdirAll(engineRoot, 0700); err != nil {
+			return ProfileRecord{}, rollback(err)
+		}
+		info, err := os.Lstat(engineRoot)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			if err == nil {
+				err = fmt.Errorf("engine storage path must be a real directory")
+			}
+			return ProfileRecord{}, rollback(err)
+		}
+		stage, err := os.MkdirTemp(engineRoot, ".staging-")
+		if err != nil {
+			return ProfileRecord{}, rollback(err)
+		}
+		item := stagedInstall{pkg: pkg, stage: stage}
+		staged = append(staged, item)
+		paths := make(map[string]string, len(pkg.Definition.Executables))
+		for name, rel := range pkg.Definition.Executables {
+			if !safeFilePath(rel) {
+				return ProfileRecord{}, rollback(fmt.Errorf("executable %q must be a safe relative file path", name))
+			}
+			if err = rejectSymlinkPath(pkg.SourceDir, rel); err != nil {
+				return ProfileRecord{}, rollback(fmt.Errorf("executable %q: %w", name, err))
+			}
+			src := filepath.Join(pkg.SourceDir, filepath.FromSlash(rel))
+			finfo, e := os.Lstat(src)
+			if e != nil || !finfo.Mode().IsRegular() || finfo.Mode()&os.ModeSymlink != 0 || finfo.Mode().Perm()&0111 == 0 {
+				if e == nil {
+					e = fmt.Errorf("is not a regular executable file")
+				}
+				return ProfileRecord{}, rollback(fmt.Errorf("executable %q: %w", name, e))
+			}
+			dest := filepath.Join(stage, filepath.FromSlash(rel))
+			if err = os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
+				return ProfileRecord{}, rollback(err)
+			}
+			in, e := os.Open(src)
+			if e != nil {
+				return ProfileRecord{}, rollback(e)
+			}
+			opened, e := in.Stat()
+			if e != nil || !os.SameFile(finfo, opened) {
+				in.Close()
+				if e == nil {
+					e = fmt.Errorf("executable changed during installation")
+				}
+				return ProfileRecord{}, rollback(e)
+			}
+			out, e := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0700)
+			if e != nil {
+				in.Close()
+				return ProfileRecord{}, rollback(e)
+			}
+			_, copyErr := io.Copy(out, in)
+			syncErr := out.Sync()
+			closeOutErr := out.Close()
+			closeInErr := in.Close()
+			for _, closeErr := range []error{copyErr, syncErr, closeOutErr, closeInErr} {
+				if closeErr != nil {
+					return ProfileRecord{}, rollback(closeErr)
+				}
+			}
+			if err = os.Chmod(dest, 0700); err != nil {
+				return ProfileRecord{}, rollback(err)
+			}
+			paths[name] = filepath.Join(engineRoot, pkg.Definition.Version, filepath.FromSlash(rel))
+		}
+		if err = syncDirectories(stage); err != nil {
+			return ProfileRecord{}, rollback(err)
+		}
+		final := filepath.Join(engineRoot, pkg.Definition.Version)
+		if _, err = os.Lstat(final); err == nil {
+			return ProfileRecord{}, rollback(fmt.Errorf("engine install path already exists: %w", ErrConflict))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return ProfileRecord{}, rollback(err)
+		}
+		if err = os.Rename(stage, final); err != nil {
+			return ProfileRecord{}, rollback(err)
+		}
+		staged[len(staged)-1].stage = ""
+		staged[len(staged)-1].final = final
+		if err = syncDirectory(engineRoot); err != nil {
+			return ProfileRecord{}, rollback(err)
+		}
+		rec := EngineRecord{Definition: pkg.Definition, Installation: engine.Installation{EngineID: pkg.Definition.ID, Version: pkg.Definition.Version, Platform: pkg.Definition.Platform, Root: final, ExecutablePaths: paths, Managed: true, PackageSHA256: pkg.ArtifactHash, RepositoryID: pkg.RepositoryID}}
+		staged[len(staged)-1].rec = rec
+		available = append(available, rec)
+	}
+
+	_, pins, err := resolveWithPins(d, available, selections)
+	if err != nil {
+		return ProfileRecord{}, rollback(err)
+	}
+	next := s.data
+	next.Engines = append([]EngineRecord(nil), s.data.Engines...)
+	for _, item := range staged {
+		next.Engines = append(next.Engines, item.rec)
+	}
+	profileState := profile.Installation{ProfileID: d.ID, Version: d.Version, Enabled: true, RepositoryID: repositoryID, ResolvedEngines: pins}
+	if update {
+		profileState.Enabled = s.data.Profiles[profileIdx].State.Enabled
+		next.Profiles = append([]ProfileRecord(nil), s.data.Profiles...)
+		next.Profiles[profileIdx] = ProfileRecord{Definition: d, State: profileState}
+	} else {
+		next.Profiles = append(append([]ProfileRecord(nil), s.data.Profiles...), ProfileRecord{Definition: d, State: profileState})
+	}
+	if err = s.persist(next); err != nil {
+		return ProfileRecord{}, rollback(err)
+	}
+	s.data = next
+	return next.Profiles[profileIndex(next.Profiles, d.ID)], nil
+}
+
+func (s *Service) CreateVerifiedStaging() (string, func() error, error) {
 	base := filepath.Join(s.root, ".repository-staging")
 	if err := os.MkdirAll(base, 0700); err != nil {
 		return "", nil, err
@@ -263,10 +625,10 @@ func (s *Service) CreateVerifiedStaging() (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
-	return stage, func() { _ = os.RemoveAll(stage) }, nil
+	return stage, func() error { return os.RemoveAll(stage) }, nil
 }
 
-func (s *Service) installEngine(d engine.Definition, sourceDir string, verified bool, artifactSHA256, repositoryID string) (EngineRecord, error) {
+func (s *Service) installEngine(d engine.Definition, sourceDir string, verified bool, artifactSHA256, repositoryID, expectedStateDigest string) (record EngineRecord, retErr error) {
 	if d.Artifact != nil && !verified {
 		return EngineRecord{}, fmt.Errorf("remote engine artifacts are disabled until repository signatures are verified")
 	}
@@ -294,6 +656,15 @@ func (s *Service) installEngine(d engine.Definition, sourceDir string, verified 
 	sourceDir = resolvedSource
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if expectedStateDigest != "" {
+		currentDigest, digestErr := digestInstallState(s.data.Engines, s.data.Profiles)
+		if digestErr != nil {
+			return EngineRecord{}, digestErr
+		}
+		if currentDigest != expectedStateDigest {
+			return EngineRecord{}, fmt.Errorf("management state changed after preview: %w", ErrConflict)
+		}
+	}
 	for _, r := range s.data.Engines {
 		if r.Installation.EngineID == d.ID && r.Installation.Version == d.Version {
 			return EngineRecord{}, fmt.Errorf("engine %q version %s: %w", d.ID, d.Version, ErrConflict)
@@ -314,7 +685,15 @@ func (s *Service) installEngine(d engine.Definition, sourceDir string, verified 
 	if err != nil {
 		return EngineRecord{}, err
 	}
-	defer os.RemoveAll(stage)
+	defer func() {
+		if cleanupErr := s.removeAll(stage); cleanupErr != nil {
+			operation := retErr
+			if operation == nil {
+				operation = fmt.Errorf("engine installation committed but staging cleanup failed")
+			}
+			retErr = &FileTransactionError{Operation: operation, Rollback: []error{fmt.Errorf("remove staging %s: %w", stage, cleanupErr)}}
+		}
+	}()
 	paths := make(map[string]string, len(d.Executables))
 	for name, rel := range d.Executables {
 		if !safeFilePath(rel) {
@@ -382,15 +761,19 @@ func (s *Service) installEngine(d engine.Definition, sourceDir string, verified 
 		return EngineRecord{}, err
 	}
 	if err = syncDirectory(engineRoot); err != nil {
-		_ = os.RemoveAll(final)
+		if cleanupErr := s.removeAll(final); cleanupErr != nil {
+			return EngineRecord{}, &FileTransactionError{Operation: err, Rollback: []error{fmt.Errorf("remove installed files %s: %w", final, cleanupErr)}}
+		}
 		return EngineRecord{}, err
 	}
 	inst := engine.Installation{EngineID: d.ID, Version: d.Version, Platform: d.Platform, Root: final, ExecutablePaths: paths, Managed: true, PackageSHA256: artifactSHA256, RepositoryID: repositoryID}
-	record := EngineRecord{Definition: d, Installation: inst}
+	record = EngineRecord{Definition: d, Installation: inst}
 	next := s.data
 	next.Engines = append(append([]EngineRecord(nil), s.data.Engines...), record)
 	if err = s.persist(next); err != nil {
-		_ = os.RemoveAll(final)
+		if cleanupErr := s.removeAll(final); cleanupErr != nil {
+			return EngineRecord{}, &FileTransactionError{Operation: err, Rollback: []error{fmt.Errorf("remove uncommitted files %s: %w", final, cleanupErr)}}
+		}
 		return EngineRecord{}, err
 	}
 	s.data = next
@@ -646,6 +1029,53 @@ func (s *Service) RemoveEngine(_ context.Context, id, version string, resolveDep
 	if len(conflicts) > 0 && !resolveDependencies {
 		return fmt.Errorf("engine %q %s is required by enabled profiles; resolve dependencies explicitly: %w", id, version, ErrConflict)
 	}
+	tombstone := ""
+	if removed.Installation.Managed && removed.Installation.Root != "" {
+		engineDir := filepath.Dir(removed.Installation.Root)
+		info, err := os.Lstat(engineDir)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("engine storage path must be a real directory")
+		}
+		rootInfo, err := os.Lstat(removed.Installation.Root)
+		if err != nil {
+			return err
+		}
+		if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("engine installation root must be a real directory")
+		}
+		reservation, err := os.CreateTemp(engineDir, ".removing-")
+		if err != nil {
+			return err
+		}
+		tombstone = reservation.Name()
+		if err = reservation.Close(); err != nil {
+			if removeErr := os.Remove(tombstone); removeErr != nil {
+				return &FileTransactionError{Operation: err, Rollback: []error{fmt.Errorf("remove removal reservation %s: %w", tombstone, removeErr)}}
+			}
+			return err
+		}
+		if err = os.Remove(tombstone); err != nil {
+			return err
+		}
+		tombstone = filepath.Join(engineDir, ".removing-"+version)
+		if _, err = os.Lstat(tombstone); err == nil {
+			return fmt.Errorf("engine removal is already pending: %w", ErrConflict)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err = os.Rename(removed.Installation.Root, tombstone); err != nil {
+			return err
+		}
+		if err = syncDirectory(engineDir); err != nil {
+			if rollbackErr := os.Rename(tombstone, removed.Installation.Root); rollbackErr != nil {
+				return &FileTransactionError{Operation: err, Rollback: []error{rollbackErr}}
+			}
+			return err
+		}
+	}
 	next := s.data
 	next.Engines = append([]EngineRecord(nil), s.data.Engines...)
 	next.Engines = append(next.Engines[:idx], next.Engines[idx+1:]...)
@@ -654,11 +1084,24 @@ func (s *Service) RemoveEngine(_ context.Context, id, version string, resolveDep
 		next.Profiles[i].State.Enabled = false
 	}
 	if err := s.persist(next); err != nil {
+		if tombstone != "" {
+			if rollbackErr := os.Rename(tombstone, removed.Installation.Root); rollbackErr != nil {
+				return &FileTransactionError{Operation: err, Rollback: []error{rollbackErr}}
+			}
+			if syncErr := syncDirectory(filepath.Dir(removed.Installation.Root)); syncErr != nil {
+				return &FileTransactionError{Operation: err, Rollback: []error{syncErr}}
+			}
+		}
 		return err
 	}
 	s.data = next
-	if removed.Installation.Managed && removed.Installation.Root != "" {
-		_ = os.RemoveAll(removed.Installation.Root)
+	if tombstone != "" {
+		if err := s.removeAll(tombstone); err != nil {
+			return &FileTransactionError{Operation: fmt.Errorf("engine removal committed; filesystem cleanup is pending"), Rollback: []error{fmt.Errorf("remove tombstone %s: %w", tombstone, err)}}
+		}
+		if err := syncDirectory(filepath.Dir(removed.Installation.Root)); err != nil {
+			return &FileTransactionError{Operation: fmt.Errorf("engine removal committed; directory sync is pending"), Rollback: []error{err}}
+		}
 	}
 	return nil
 }
@@ -717,8 +1160,8 @@ func resolveWithPins(d profile.Definition, engines []EngineRecord, preferred map
 			if path == "" {
 				return nil, nil, fmt.Errorf("profile %q requires executable %q from engine %q, but it is not registered", d.ID, rule.Executable, req.EngineID)
 			}
-			info, err := os.Stat(path)
-			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0111 == 0 {
 				return nil, nil, fmt.Errorf("profile %q requires executable %q from engine %q, but it is unavailable or not executable", d.ID, rule.Executable, req.EngineID)
 			}
 		}
@@ -727,7 +1170,7 @@ func resolveWithPins(d profile.Definition, engines []EngineRecord, preferred map
 	}
 	return out, pins, nil
 }
-func (s *Service) persist(next state) error {
+func (s *Service) persist(next state) (retErr error) {
 	stored := next
 	stored.Engines = append([]EngineRecord(nil), next.Engines...)
 	for i := range stored.Engines {
@@ -759,7 +1202,19 @@ func (s *Service) persist(next state) error {
 		return err
 	}
 	name := tmp.Name()
-	defer os.Remove(name)
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if cleanupErr := os.Remove(name); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			operation := retErr
+			if operation == nil {
+				operation = fmt.Errorf("state committed but temporary state-file cleanup failed")
+			}
+			retErr = &FileTransactionError{Operation: operation, Rollback: []error{fmt.Errorf("remove temporary state file %s: %w", name, cleanupErr)}}
+		}
+	}()
 	if _, err = tmp.Write(b); err != nil {
 		tmp.Close()
 		return err
@@ -774,6 +1229,7 @@ func (s *Service) persist(next state) error {
 	if err = os.Rename(name, s.stateFile); err != nil {
 		return err
 	}
+	committed = true
 	dir, err := os.Open(s.root)
 	if err != nil {
 		return nil

@@ -179,3 +179,46 @@ func TestRepositoryAPIRequiresAdminAndExposesOfficialTrustState(t *testing.T) {
 		t.Fatalf("official root absence was not exposed honestly: %+v", body.Repositories)
 	}
 }
+
+func TestRepositoryInstallAPIRequiresPreviewPlanAndUsesStructuredErrors(t *testing.T) {
+	root := t.TempDir()
+	catalogService, err := catalog.New("0.1.0-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := management.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	repos, err := repositorymanager.Open(root, "0.1.0-dev", manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repos.Close()
+	server := httptest.NewServer(NewWithServices("0.1.0-dev", catalogService, manager, repos, "secret"))
+	defer server.Close()
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/repositories/trusted/profiles/video/install", strings.NewReader(`{"planId":"missing"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("stale installation plan status=%d", resp.StatusCode)
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != "stale_preview" || body.Error.Message == "" {
+		t.Fatalf("expected structured stale-preview error: %+v", body)
+	}
+}

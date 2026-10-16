@@ -2,6 +2,7 @@ package repositorymanager
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,20 @@ import (
 )
 
 type localFetcher struct{ root string }
+
+var secureRepositoryHTTPClient = &http.Client{
+	Timeout:   30 * time.Second,
+	Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return fmt.Errorf("too many redirects")
+		}
+		if len(via) == 0 || via[0].URL.Scheme != "https" || req.URL.Scheme != "https" || !strings.EqualFold(via[0].URL.Host, req.URL.Host) {
+			return fmt.Errorf("TUF repository redirect cannot change HTTPS origin")
+		}
+		return nil
+	},
+}
 
 func (f localFetcher) DownloadFile(raw string, max int64, _ time.Duration) ([]byte, error) {
 	u, err := url.Parse(raw)
@@ -74,6 +89,16 @@ func (f localFetcher) DownloadFile(raw string, max int64, _ time.Duration) ([]by
 }
 
 func newUpdater(ctx context.Context, source Source, root []byte, cache string) (*updater.Updater, error) {
+	parsedSource, err := url.Parse(source.URL)
+	if err != nil {
+		return nil, err
+	}
+	if source.Kind == KindCommunity && (parsedSource.Scheme != "https" || parsedSource.Host == "") {
+		return nil, fmt.Errorf("community repository must use HTTPS")
+	}
+	if source.Kind == KindLocal && (parsedSource.Scheme != "file" || parsedSource.Host != "") {
+		return nil, fmt.Errorf("local repository must use a hostless file URL")
+	}
 	metadataURL := strings.TrimRight(source.URL, "/") + "/metadata"
 	cfg, err := config.New(metadataURL, root)
 	if err != nil {
@@ -82,28 +107,15 @@ func newUpdater(ctx context.Context, source Source, root []byte, cache string) (
 	cfg.LocalMetadataDir = filepath.Join(cache, "metadata")
 	cfg.LocalTargetsDir = filepath.Join(cache, "targets")
 	cfg.PrefixTargetsWithHash = true
-	u, err := url.Parse(source.URL)
-	if err != nil {
-		return nil, err
-	}
 	if source.Kind == KindLocal {
-		base, err := filepath.Abs(filepath.Join(u.Host, u.Path))
+		base, err := filepath.Abs(filepath.Join(parsedSource.Host, parsedSource.Path))
 		if err != nil {
 			return nil, err
 		}
 		cfg.Fetcher = localFetcher{root: base}
 	}
 	if source.Kind != KindLocal {
-		client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("too many redirects")
-			}
-			if via[0].URL.Scheme != "https" || req.URL.Scheme != "https" {
-				return fmt.Errorf("TUF repository redirect cannot leave HTTPS")
-			}
-			return nil
-		}}
-		if err = cfg.SetDefaultFetcherHTTPClient(client); err != nil {
+		if err = cfg.SetDefaultFetcherHTTPClient(secureRepositoryHTTPClient); err != nil {
 			return nil, err
 		}
 	}

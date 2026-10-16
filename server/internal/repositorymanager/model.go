@@ -29,6 +29,10 @@ type Source struct {
 	Fingerprint string `json:"fingerprint"`
 	TrustedRoot string `json:"-"`
 	ApprovedAt  string `json:"approvedAt,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	Status      string `json:"status"`
+	LastRefresh string `json:"lastRefresh,omitempty"`
+	LastError   string `json:"lastError,omitempty"`
 }
 type CatalogIndex struct {
 	SchemaVersion              int            `json:"schemaVersion"`
@@ -56,11 +60,20 @@ type ProfileManifest struct {
 	Profile profile.Definition `json:"profile"`
 }
 type Catalog struct {
-	Repository Source               `json:"repository"`
-	Engines    []engine.Definition  `json:"engines"`
-	Profiles   []profile.Definition `json:"profiles"`
+	Repository           Source                `json:"repository"`
+	Engines              []engine.Definition   `json:"engines"`
+	Profiles             []profile.Definition  `json:"profiles"`
+	IncompatibleProfiles []IncompatibleProfile `json:"incompatibleProfiles,omitempty"`
+}
+type IncompatibleProfile struct {
+	ID      string `json:"id"`
+	Version string `json:"version"`
+	Reason  string `json:"reason"`
 }
 type InstallPreview struct {
+	PlanID         string              `json:"planId"`
+	CatalogDigest  string              `json:"catalogDigest"`
+	ExpiresAt      string              `json:"expiresAt"`
 	Repository     Source              `json:"repository"`
 	Publisher      string              `json:"publisher"`
 	Trust          Trust               `json:"trust"`
@@ -68,6 +81,22 @@ type InstallPreview struct {
 	Profile        profile.Definition  `json:"profile"`
 	Dependencies   []DependencyPreview `json:"dependencies"`
 	PlannedChanges []string            `json:"plannedChanges"`
+}
+
+type InstallPlanRequest struct {
+	PlanID string `json:"planId"`
+}
+
+type EngineInstallPreview struct {
+	PlanID         string            `json:"planId"`
+	CatalogDigest  string            `json:"catalogDigest"`
+	ExpiresAt      string            `json:"expiresAt"`
+	Repository     Source            `json:"repository"`
+	Publisher      string            `json:"publisher"`
+	Trust          Trust             `json:"trust"`
+	Engine         engine.Definition `json:"engine"`
+	ArtifactSHA256 string            `json:"artifactSha256"`
+	Action         string            `json:"action"`
 }
 type DependencyPreview struct {
 	EngineID         string              `json:"engineId"`

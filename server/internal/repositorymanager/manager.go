@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/theupdateframework/go-tuf/v2/metadata/updater"
 	"github.com/timisah/101conv/server/internal/engine"
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/profile"
@@ -37,11 +38,26 @@ const indexTarget = "catalog/index.json"
 
 type Manager struct {
 	mu                          sync.Mutex
+	operationMu                 sync.Mutex
 	tufMu                       sync.Mutex
 	root, stateFile, appVersion string
 	lock                        *flock.Flock
 	sources                     map[string]Source
 	engines                     *management.Service
+	plans                       map[string]installationPlan
+}
+
+type installationPlan struct {
+	preview           InstallPreview
+	enginePreview     *EngineInstallPreview
+	profile           profile.Definition
+	engineOnly        *engine.Definition
+	engineDefinitions map[string]engine.Definition
+	selections        map[string]string
+	installedDigest   string
+	update            bool
+	reuseEngine       bool
+	expires           time.Time
 }
 type AddRequest struct {
 	ID          string `json:"id"`
@@ -84,7 +100,7 @@ func Open(root, appVersion string, engineService *management.Service) (*Manager,
 	if !ok {
 		return nil, fmt.Errorf("repository storage is already open by another process")
 	}
-	m := &Manager{root: abs, stateFile: filepath.Join(abs, "repositories.json"), appVersion: appVersion, lock: lock, sources: map[string]Source{}, engines: engineService}
+	m := &Manager{root: abs, stateFile: filepath.Join(abs, "repositories.json"), appVersion: appVersion, lock: lock, sources: map[string]Source{}, engines: engineService, plans: map[string]installationPlan{}}
 	data, err := os.ReadFile(m.stateFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return m, nil
@@ -108,6 +124,24 @@ func Open(root, appVersion string, engineService *management.Service) (*Manager,
 			lock.Unlock()
 			return nil, fmt.Errorf("invalid pinned TUF root for repository %q", item.Source.ID)
 		}
+		if item.Source.Status == "" { // Older Phase 3 repositories were enabled by default.
+			item.Source.Enabled = true
+			item.Source.Status = "configured"
+		}
+		if !repoID(item.Source.ID) || item.Source.ID == "101conv-official" || item.Source.Kind != KindLocal && item.Source.Kind != KindCommunity {
+			lock.Unlock()
+			return nil, fmt.Errorf("invalid persisted repository configuration for %q", item.Source.ID)
+		}
+		rootHash := sha256.Sum256(rootBytes)
+		if hex.EncodeToString(rootHash[:]) != strings.TrimPrefix(item.Source.Fingerprint, "sha256:") {
+			lock.Unlock()
+			return nil, fmt.Errorf("persisted trust root fingerprint mismatch for repository %q", item.Source.ID)
+		}
+		fingerprint := sha256.Sum256(rootBytes)
+		if hex.EncodeToString(fingerprint[:]) != strings.TrimPrefix(item.Source.Fingerprint, "sha256:") {
+			lock.Unlock()
+			return nil, fmt.Errorf("persisted trust root fingerprint mismatch for repository %q", item.Source.ID)
+		}
 		item.Source.TrustedRoot = string(rootBytes)
 		m.sources[item.Source.ID] = item.Source
 	}
@@ -127,7 +161,7 @@ func (m *Manager) Close() error {
 func (m *Manager) List() []Source {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := []Source{{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustUnavailable}}
+	out := []Source{{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustUnavailable, Enabled: false, Status: "trust_unavailable", LastError: "official TUF root has not been provisioned"}}
 	for _, s := range m.sources {
 		s.TrustedRoot = ""
 		out = append(out, s)
@@ -170,7 +204,9 @@ func (m *Manager) Add(req AddRequest) (Source, error) {
 	if !strings.EqualFold(fp, strings.TrimPrefix(req.Fingerprint, "sha256:")) {
 		return Source{}, fmt.Errorf("TUF root fingerprint does not match the explicit administrator pin")
 	}
-	s := Source{ID: req.ID, Name: req.Name, URL: strings.TrimRight(req.URL, "/"), Kind: req.Kind, Trust: TrustPinned, Fingerprint: fp, TrustedRoot: string(rootBytes), ApprovedAt: time.Now().UTC().Format(time.RFC3339)}
+	s := Source{ID: req.ID, Name: strings.TrimSpace(req.Name), URL: strings.TrimRight(req.URL, "/"), Kind: req.Kind, Trust: TrustPinned, Fingerprint: fp, TrustedRoot: string(rootBytes), ApprovedAt: time.Now().UTC().Format(time.RFC3339), Enabled: true, Status: "configured"}
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sources[s.ID]; exists {
@@ -188,6 +224,10 @@ func (m *Manager) Add(req AddRequest) (Source, error) {
 	return s, nil
 }
 func (m *Manager) Remove(id string) error {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
+	m.tufMu.Lock()
+	defer m.tufMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if id == "101conv-official" {
@@ -197,12 +237,85 @@ func (m *Manager) Remove(id string) error {
 	if !ok {
 		return management.ErrNotFound
 	}
+	if err := os.RemoveAll(filepath.Join(m.root, "tuf", id)); err != nil {
+		return fmt.Errorf("remove repository metadata cache: %w", err)
+	}
 	delete(m.sources, id)
 	if err := m.persist(); err != nil {
 		m.sources[id] = s
 		return err
 	}
-	return os.RemoveAll(filepath.Join(m.root, "tuf", id))
+	for planID, plan := range m.plans {
+		if plan.preview.Repository.ID == id || plan.enginePreview != nil && plan.enginePreview.Repository.ID == id {
+			delete(m.plans, planID)
+		}
+	}
+	return nil
+}
+
+func (m *Manager) SetEnabled(id string, enabled bool) (Source, error) {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
+	if id == "101conv-official" {
+		return Source{}, fmt.Errorf("official source enablement requires a provisioned trust root")
+	}
+	m.tufMu.Lock()
+	defer m.tufMu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sources[id]
+	if !ok {
+		return Source{}, management.ErrNotFound
+	}
+	previous := s
+	s.Enabled = enabled
+	if !enabled {
+		s.Status = "disabled"
+		s.LastError = ""
+	} else if s.Status == "disabled" {
+		s.Status = "configured"
+	}
+	m.sources[id] = s
+	if err := m.persist(); err != nil {
+		m.sources[id] = previous
+		return Source{}, err
+	}
+	if !enabled {
+		for planID, plan := range m.plans {
+			if plan.preview.Repository.ID == id || plan.enginePreview != nil && plan.enginePreview.Repository.ID == id {
+				delete(m.plans, planID)
+			}
+		}
+	}
+	s.TrustedRoot = ""
+	return s, nil
+}
+
+func (m *Manager) Refresh(ctx context.Context, id string) (Source, error) {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
+	source, err := m.getSource(id)
+	if err != nil {
+		return Source{}, err
+	}
+	if !source.Enabled {
+		return Source{}, ErrRepositoryDisabled
+	}
+	m.tufMu.Lock()
+	_, err = m.loadViewLocked(ctx, source)
+	m.tufMu.Unlock()
+	if persistErr := m.recordRefresh(id, err); persistErr != nil {
+		if err != nil {
+			return Source{}, errors.Join(err, fmt.Errorf("persist repository status: %w", persistErr))
+		}
+		return Source{}, fmt.Errorf("persist repository status: %w", persistErr)
+	}
+	if err != nil {
+		return Source{}, err
+	}
+	updated, _ := m.getSource(id)
+	updated.TrustedRoot = ""
+	return updated, nil
 }
 func (m *Manager) getSource(id string) (Source, error) {
 	m.mu.Lock()
@@ -215,6 +328,8 @@ func (m *Manager) getSource(id string) (Source, error) {
 }
 
 func (m *Manager) Browse(ctx context.Context, id string) (Catalog, error) {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
 	s, err := m.getSource(id)
 	if err != nil {
 		return Catalog{}, err
@@ -222,97 +337,225 @@ func (m *Manager) Browse(ctx context.Context, id string) (Catalog, error) {
 	if s.Trust != TrustPinned {
 		return Catalog{}, fmt.Errorf("repository has no pinned TUF root; metadata inspection is disabled")
 	}
-	data, err := m.readTarget(ctx, s, indexTarget, maxIndexBytes)
+	if !s.Enabled {
+		return Catalog{}, ErrRepositoryDisabled
+	}
+	m.tufMu.Lock()
+	view, err := m.loadViewLocked(ctx, s)
+	m.tufMu.Unlock()
 	if err != nil {
-		return Catalog{}, err
+		return Catalog{}, errors.Join(err, m.recordRefresh(s.ID, err))
+	}
+	if err := m.recordRefresh(s.ID, nil); err != nil {
+		return Catalog{}, fmt.Errorf("persist repository status: %w", err)
+	}
+	return view.catalog, nil
+}
+
+type verifiedView struct {
+	catalog Catalog
+	digest  string
+	updater *updater.Updater
+	targets map[string][]byte
+}
+
+func (m *Manager) loadViewLocked(ctx context.Context, s Source) (verifiedView, error) {
+	up, err := newUpdater(ctx, s, []byte(s.TrustedRoot), filepath.Join(m.root, "tuf", s.ID))
+	if err != nil {
+		return verifiedView{}, err
+	}
+	if err = up.Refresh(); err != nil {
+		return verifiedView{}, fmt.Errorf("TUF metadata refresh failed: %w", classifyTUFError(err))
+	}
+	view := verifiedView{updater: up, targets: map[string][]byte{}}
+	metadataDir := filepath.Join(m.root, "tuf", s.ID, "metadata")
+	metadataFiles, err := os.ReadDir(metadataDir)
+	if err != nil {
+		return verifiedView{}, fmt.Errorf("read verified TUF metadata cache: %w", err)
+	}
+	for _, entry := range metadataFiles {
+		if entry.IsDir() {
+			continue
+		}
+		info, e := os.Lstat(filepath.Join(metadataDir, entry.Name()))
+		if e != nil {
+			return verifiedView{}, e
+		}
+		if !info.Mode().IsRegular() || info.Size() > maxIndexBytes {
+			return verifiedView{}, fmt.Errorf("unsafe or oversized cached metadata file %q", entry.Name())
+		}
+		b, e := os.ReadFile(filepath.Join(metadataDir, entry.Name()))
+		if e != nil {
+			return verifiedView{}, e
+		}
+		view.targets["@metadata:"+entry.Name()] = b
+	}
+	read := func(target string, max int64) ([]byte, error) {
+		b, e := downloadVerified(up, target, max)
+		if e == nil {
+			view.targets[target] = b
+		}
+		return b, e
+	}
+	data, err := read(indexTarget, maxIndexBytes)
+	if err != nil {
+		return verifiedView{}, err
 	}
 	var index CatalogIndex
 	if err = json.Unmarshal(data, &index); err != nil {
-		return Catalog{}, fmt.Errorf("decode signed repository index: %w", err)
+		return verifiedView{}, fmt.Errorf("decode signed repository index: %w", err)
 	}
 	if index.SchemaVersion != 1 {
-		return Catalog{}, fmt.Errorf("unsupported repository index schema %d", index.SchemaVersion)
+		return verifiedView{}, fmt.Errorf("unsupported repository index schema %d", index.SchemaVersion)
 	}
 	if !compatible(m.appVersion, index.MinimumAppVersion, index.MaximumAppVersionExclusive) {
-		return Catalog{}, fmt.Errorf("repository is incompatible with 101conv %s", m.appVersion)
+		return verifiedView{}, coded("incompatible_version", fmt.Errorf("%w: repository does not support 101conv %s", ErrIncompatible, m.appVersion))
 	}
-	out := Catalog{Repository: s, Engines: []engine.Definition{}, Profiles: []profile.Definition{}}
+	out := Catalog{Repository: s, Engines: []engine.Definition{}, Profiles: []profile.Definition{}, IncompatibleProfiles: []IncompatibleProfile{}}
+	seenEngines, seenProfiles := map[string]bool{}, map[string]bool{}
 	for _, entry := range index.Engines {
 		if !safeTarget(entry.ManifestTarget) {
-			return Catalog{}, fmt.Errorf("unsafe engine manifest target %q", entry.ManifestTarget)
+			return verifiedView{}, fmt.Errorf("unsafe engine manifest target %q", entry.ManifestTarget)
 		}
-		raw, e := m.readTarget(ctx, s, entry.ManifestTarget, maxIndexBytes)
+		key := entry.ID + "\x00" + entry.Version
+		if seenEngines[key] {
+			return verifiedView{}, fmt.Errorf("duplicate engine release %q", entry.ID)
+		}
+		seenEngines[key] = true
+		raw, e := read(entry.ManifestTarget, maxIndexBytes)
 		if e != nil {
-			return Catalog{}, fmt.Errorf("engine %q manifest: %w", entry.ID, e)
+			return verifiedView{}, fmt.Errorf("engine %q manifest: %w", entry.ID, e)
 		}
 		var manifest EngineManifest
 		if e = json.Unmarshal(raw, &manifest); e != nil {
-			return Catalog{}, e
+			return verifiedView{}, e
 		}
 		d := manifest.Engine
 		if d.ID != entry.ID || d.Version != entry.Version || d.Name != entry.Name {
-			return Catalog{}, fmt.Errorf("catalog entry and engine manifest disagree for %q", entry.ID)
+			return verifiedView{}, fmt.Errorf("catalog entry and engine manifest disagree for %q", entry.ID)
 		}
 		if e = d.Validate(); e != nil {
-			return Catalog{}, e
+			return verifiedView{}, e
 		}
 		if d.Artifact != nil && !safeTarget(d.Artifact.URL) {
-			return Catalog{}, fmt.Errorf("engine %q artifact target is unsafe", d.ID)
+			return verifiedView{}, fmt.Errorf("engine %q artifact target is unsafe", d.ID)
 		}
 		out.Engines = append(out.Engines, d)
 	}
+	for _, definition := range out.Engines {
+		if definition.Artifact == nil {
+			continue
+		}
+		info, e := up.GetTargetInfo(definition.Artifact.URL)
+		if e != nil {
+			return verifiedView{}, fmt.Errorf("engine %q artifact metadata: %w", definition.ID, e)
+		}
+		if info.Length < 0 || info.Length > maxPackageBytes {
+			return verifiedView{}, fmt.Errorf("engine %q artifact exceeds package size limit", definition.ID)
+		}
+		hash := info.Hashes["sha256"]
+		if len(hash) == 0 || !strings.EqualFold(hex.EncodeToString(hash), definition.Artifact.SHA256) {
+			return verifiedView{}, fmt.Errorf("engine %q artifact digest differs from its signed manifest", definition.ID)
+		}
+		view.targets["@artifact:"+definition.Artifact.URL] = []byte(fmt.Sprintf("%d:%s", info.Length, hex.EncodeToString(hash)))
+	}
 	for _, entry := range index.Profiles {
 		if !safeTarget(entry.ManifestTarget) {
-			return Catalog{}, fmt.Errorf("unsafe profile manifest target %q", entry.ManifestTarget)
+			return verifiedView{}, fmt.Errorf("unsafe profile manifest target %q", entry.ManifestTarget)
 		}
-		raw, e := m.readTarget(ctx, s, entry.ManifestTarget, maxIndexBytes)
+		key := entry.ID + "\x00" + entry.Version
+		if seenProfiles[key] {
+			return verifiedView{}, fmt.Errorf("duplicate profile release %q", entry.ID)
+		}
+		seenProfiles[key] = true
+		raw, e := read(entry.ManifestTarget, maxIndexBytes)
 		if e != nil {
-			return Catalog{}, fmt.Errorf("profile %q manifest: %w", entry.ID, e)
+			return verifiedView{}, fmt.Errorf("profile %q manifest: %w", entry.ID, e)
 		}
 		var manifest ProfileManifest
 		if e = json.Unmarshal(raw, &manifest); e != nil {
-			return Catalog{}, e
+			return verifiedView{}, e
 		}
 		d := manifest.Profile
 		if d.ID != entry.ID || d.Version != entry.Version || d.Name != entry.Name {
-			return Catalog{}, fmt.Errorf("catalog entry and profile manifest disagree for %q", entry.ID)
+			return verifiedView{}, fmt.Errorf("catalog entry and profile manifest disagree for %q", entry.ID)
 		}
 		if e = d.Validate(); e != nil {
-			return Catalog{}, e
+			return verifiedView{}, e
 		}
 		if compatible(m.appVersion, d.MinimumAppVersion, d.MaximumAppVersionExclusive) {
 			out.Profiles = append(out.Profiles, d)
+		} else {
+			out.IncompatibleProfiles = append(out.IncompatibleProfiles, IncompatibleProfile{ID: d.ID, Version: d.Version, Reason: fmt.Sprintf("profile does not support 101conv %s", m.appVersion)})
 		}
 	}
-	return out, nil
+	view.catalog = out
+	view.digest = digestCatalogTargets(view.targets)
+	return view, nil
 }
 
 func (m *Manager) Preview(ctx context.Context, repoID, profileID string) (InstallPreview, error) {
-	c, err := m.Browse(ctx, repoID)
+	return m.CreateInstallPlan(ctx, repoID, profileID, false)
+}
+
+func (m *Manager) CreateInstallPlan(ctx context.Context, repoID, profileID string, update bool) (InstallPreview, error) {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
+	s, err := m.getSource(repoID)
 	if err != nil {
 		return InstallPreview{}, err
 	}
-	var p profile.Definition
-	found := false
-	for _, candidate := range c.Profiles {
-		if candidate.ID == profileID {
-			p = candidate
-			found = true
+	if !s.Enabled {
+		return InstallPreview{}, ErrRepositoryDisabled
+	}
+	m.tufMu.Lock()
+	view, err := m.loadViewLocked(ctx, s)
+	m.tufMu.Unlock()
+	if err != nil {
+		return InstallPreview{}, errors.Join(err, m.recordRefresh(s.ID, err))
+	}
+	if err = m.recordRefresh(s.ID, nil); err != nil {
+		return InstallPreview{}, fmt.Errorf("persist repository status: %w", err)
+	}
+	p, ok := highestProfile(view.catalog.Profiles, profileID)
+	if !ok {
+		for _, incompatible := range view.catalog.IncompatibleProfiles {
+			if incompatible.ID == profileID {
+				return InstallPreview{}, coded("incompatible_version", fmt.Errorf("%w: %s", ErrIncompatible, incompatible.Reason))
+			}
+		}
+		return InstallPreview{}, management.ErrNotFound
+	}
+	installedProfiles, err := m.engines.ListProfiles(ctx)
+	if err != nil {
+		return InstallPreview{}, err
+	}
+	profileExists := false
+	preferred := map[string]string{}
+	for _, current := range installedProfiles {
+		if current.Definition.ID == profileID {
+			profileExists = true
+			preferred = current.State.ResolvedEngines
 			break
 		}
 	}
-	if !found {
+	if update && !profileExists {
 		return InstallPreview{}, management.ErrNotFound
+	}
+	if !update && profileExists {
+		return InstallPreview{}, fmt.Errorf("profile %q: %w", profileID, management.ErrConflict)
 	}
 	installed, err := m.engines.ListEngines(ctx)
 	if err != nil {
 		return InstallPreview{}, err
 	}
-	preview := InstallPreview{Repository: c.Repository, Publisher: c.Repository.Name, Trust: c.Repository.Trust, License: p.License, Profile: p, Dependencies: []DependencyPreview{}, PlannedChanges: []string{"install profile " + p.ID + " " + p.Version}}
+	engineDefinitions := make(map[string]engine.Definition)
+	selections := make(map[string]string)
+	preview := InstallPreview{CatalogDigest: view.digest, Repository: view.catalog.Repository, Publisher: view.catalog.Repository.Name, Trust: view.catalog.Repository.Trust, License: p.License, Profile: p, Dependencies: []DependencyPreview{}, PlannedChanges: []string{"install profile " + p.ID + " " + p.Version}}
 	for _, req := range p.Engines {
 		dep := DependencyPreview{EngineID: req.EngineID, VersionRange: req.Versions, Capabilities: req.Capabilities, Action: "install engine"}
 		for _, current := range installed {
-			if req.Accepts(current.Definition) && profileExecutablesAvailable(p, current.Installation) && (dep.InstalledVersion == "" || newer(current.Installation.Version, dep.InstalledVersion)) {
+			if current.Installation.Version == preferred[req.EngineID] && req.Accepts(current.Definition) && profileExecutablesAvailable(p, current.Installation) {
 				dep.InstalledVersion = current.Installation.Version
 				dep.EngineName = current.Definition.Name
 				dep.EngineLicense = current.Definition.License
@@ -320,9 +563,22 @@ func (m *Manager) Preview(ctx context.Context, repoID, profileID string) (Instal
 				break
 			}
 		}
+		if dep.InstalledVersion == "" {
+			for _, current := range installed {
+				if req.Accepts(current.Definition) && profileExecutablesAvailable(p, current.Installation) && (dep.InstalledVersion == "" || newer(current.Installation.Version, dep.InstalledVersion)) {
+					dep.InstalledVersion = current.Installation.Version
+					dep.EngineName = current.Definition.Name
+					dep.EngineLicense = current.Definition.License
+				}
+			}
+		}
+		if dep.InstalledVersion != "" {
+			dep.Action = "reuse installed engine"
+			selections[req.EngineID] = dep.InstalledVersion
+		}
 		if dep.Action == "install engine" {
 			best := ""
-			for _, d := range c.Engines {
+			for _, d := range view.catalog.Engines {
 				if req.Accepts(d) && (best == "" || newer(d.Version, best)) {
 					best = d.Version
 					dep.EngineName = d.Name
@@ -330,155 +586,372 @@ func (m *Manager) Preview(ctx context.Context, repoID, profileID string) (Instal
 				}
 			}
 			if best == "" {
-				return InstallPreview{}, fmt.Errorf("profile %q needs engine %q range [%s,%s) and capabilities %v, but no compatible engine is available", p.ID, req.EngineID, req.Versions.Minimum, req.Versions.MaximumExclusive, req.Capabilities)
+				return InstallPreview{}, coded("missing_dependency", fmt.Errorf("%w: profile %q needs engine %q range [%s,%s) and capabilities %v, but no compatible engine is available", ErrMissingDependency, p.ID, req.EngineID, req.Versions.Minimum, req.Versions.MaximumExclusive, req.Capabilities))
+			}
+			selections[req.EngineID] = best
+			for _, def := range view.catalog.Engines {
+				if def.ID == req.EngineID && def.Version == best {
+					engineDefinitions[req.EngineID+"\x00"+best] = def
+				}
 			}
 			preview.PlannedChanges = append(preview.PlannedChanges, fmt.Sprintf("install engine %s %s", req.EngineID, best))
 		}
 		preview.Dependencies = append(preview.Dependencies, dep)
 	}
-	return preview, nil
+	installedDigest, err := m.engines.SnapshotDigest()
+	if err != nil {
+		return InstallPreview{}, err
+	}
+	planID, err := randomPlanID()
+	if err != nil {
+		return InstallPreview{}, err
+	}
+	expires := time.Now().UTC().Add(10 * time.Minute)
+	preview.PlanID = planID
+	preview.ExpiresAt = expires.Format(time.RFC3339)
+	storedPreview, err := cloneJSON(preview)
+	if err != nil {
+		return InstallPreview{}, err
+	}
+	m.mu.Lock()
+	m.prunePlansLocked(time.Now())
+	m.plans[planID] = installationPlan{preview: storedPreview, profile: storedPreview.Profile, engineDefinitions: engineDefinitions, selections: selections, installedDigest: installedDigest, update: update, expires: expires}
+	m.mu.Unlock()
+	return cloneJSON(preview)
 }
 
 func (m *Manager) InstallProfile(ctx context.Context, repoID, profileID string, update bool) (management.ProfileRecord, error) {
-	preview, err := m.Preview(ctx, repoID, profileID)
+	preview, err := m.CreateInstallPlan(ctx, repoID, profileID, update)
 	if err != nil {
 		return management.ProfileRecord{}, err
 	}
-	catalog, err := m.Browse(ctx, repoID)
-	if err != nil {
-		return management.ProfileRecord{}, err
-	}
-	before, err := m.engines.ListEngines(ctx)
-	if err != nil {
-		return management.ProfileRecord{}, err
-	}
-	known := map[string]bool{}
-	for _, record := range before {
-		known[record.Installation.EngineID+"\x00"+record.Installation.Version] = true
-	}
-	var newlyInstalled []management.EngineRecord
-	for _, dependency := range preview.Dependencies {
-		if dependency.Action == "reuse installed engine" {
-			continue
-		}
-		var best engine.Definition
-		found := false
-		for _, candidate := range catalog.Engines {
-			for _, req := range preview.Profile.Engines {
-				if req.EngineID == dependency.EngineID && req.Accepts(candidate) && (!found || newer(candidate.Version, best.Version)) {
-					best = candidate
-					found = true
-				}
-			}
-		}
-		if !found {
-			return management.ProfileRecord{}, fmt.Errorf("repository has no compatible engine %q", dependency.EngineID)
-		}
-		var record management.EngineRecord
-		if record, err = m.installEngine(ctx, catalog.Repository, best); err != nil {
-			m.rollbackNewEngines(newlyInstalled)
-			return management.ProfileRecord{}, err
-		}
-		if !known[record.Installation.EngineID+"\x00"+record.Installation.Version] {
-			newlyInstalled = append(newlyInstalled, record)
-			known[record.Installation.EngineID+"\x00"+record.Installation.Version] = true
-		}
-	}
-	if update {
-		record, err := m.engines.UpdateProfile(ctx, preview.Profile, repoID)
-		if err != nil {
-			m.rollbackNewEngines(newlyInstalled)
-		}
-		return record, err
-	}
-	record, err := m.engines.InstallProfile(ctx, preview.Profile, repoID)
-	if err != nil {
-		m.rollbackNewEngines(newlyInstalled)
-	}
-	return record, err
+	return m.InstallPlan(ctx, preview.PlanID)
 }
 
-func (m *Manager) rollbackNewEngines(records []management.EngineRecord) {
-	for i := len(records) - 1; i >= 0; i-- {
-		_ = m.engines.RemoveEngine(context.Background(), records[i].Installation.EngineID, records[i].Installation.Version, false)
+func (m *Manager) InstallProfilePlan(ctx context.Context, repoID, profileID, planID string, update bool) (management.ProfileRecord, error) {
+	m.mu.Lock()
+	plan, ok := m.plans[planID]
+	m.mu.Unlock()
+	if !ok || plan.preview.Repository.ID != repoID || plan.profile.ID != profileID || plan.update != update {
+		return management.ProfileRecord{}, ErrStalePlan
 	}
+	return m.InstallPlan(ctx, planID)
 }
-func (m *Manager) InstallEngine(ctx context.Context, repoID, engineID, engineVersion string) (management.EngineRecord, error) {
-	catalog, err := m.Browse(ctx, repoID)
-	if err != nil {
-		return management.EngineRecord{}, err
+
+func (m *Manager) InstallPlan(ctx context.Context, planID string) (management.ProfileRecord, error) {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
+	m.mu.Lock()
+	plan, ok := m.plans[planID]
+	if ok && time.Now().After(plan.expires) {
+		delete(m.plans, planID)
+		ok = false
 	}
-	for _, d := range catalog.Engines {
-		if d.ID == engineID && d.Version == engineVersion {
-			return m.installEngine(ctx, catalog.Repository, d)
+	m.mu.Unlock()
+	if !ok {
+		return management.ProfileRecord{}, ErrPlanExpired
+	}
+	source, err := m.getSource(plan.preview.Repository.ID)
+	if err != nil {
+		return management.ProfileRecord{}, err
+	}
+	if !source.Enabled {
+		return management.ProfileRecord{}, ErrRepositoryDisabled
+	}
+
+	stateDigest, err := m.engines.SnapshotDigest()
+	if err != nil {
+		return management.ProfileRecord{}, err
+	}
+	if stateDigest != plan.installedDigest {
+		return management.ProfileRecord{}, ErrStalePlan
+	}
+
+	m.tufMu.Lock()
+	view, err := m.loadViewLocked(ctx, source)
+	if err != nil {
+		m.tufMu.Unlock()
+		return management.ProfileRecord{}, errors.Join(err, m.recordRefresh(source.ID, err))
+	}
+	if view.digest != plan.preview.CatalogDigest {
+		m.tufMu.Unlock()
+		return management.ProfileRecord{}, errors.Join(ErrStalePlan, m.recordRefresh(source.ID, nil))
+	}
+	var packages []management.VerifiedEnginePackage
+	var cleanupPaths []string
+	cleanup := func() error {
+		var errs []error
+		for i := len(cleanupPaths) - 1; i >= 0; i-- {
+			if e := os.RemoveAll(cleanupPaths[i]); e != nil {
+				errs = append(errs, fmt.Errorf("clean package staging %s: %w", cleanupPaths[i], e))
+			}
+		}
+		if len(errs) > 0 {
+			return errors.Join(errs...)
+		}
+		return nil
+	}
+	for _, dep := range plan.preview.Dependencies {
+		if dep.Action == "reuse installed engine" {
+			continue
+		}
+		key := dep.EngineID + "\x00" + plan.selections[dep.EngineID]
+		def, found := plan.engineDefinitions[key]
+		if !found || def.Artifact == nil {
+			err = fmt.Errorf("planned engine %q has no verified artifact definition", dep.EngineID)
+			break
+		}
+		archive, e := downloadVerified(view.updater, def.Artifact.URL, maxPackageBytes)
+		if e != nil {
+			err = e
+			break
+		}
+		sum := sha256.Sum256(archive)
+		digest := hex.EncodeToString(sum[:])
+		if !strings.EqualFold(digest, def.Artifact.SHA256) {
+			err = coded("signature_failure", fmt.Errorf("%w: verified artifact digest changed for engine %q", ErrSignature, def.ID))
+			break
+		}
+		stage, _, e := m.engines.CreateVerifiedStaging()
+		if e != nil {
+			err = e
+			break
+		}
+		cleanupPaths = append(cleanupPaths, stage)
+		extractRoot := filepath.Join(stage, "contents")
+		if e = os.Mkdir(extractRoot, 0700); e != nil {
+			err = e
+			break
+		}
+		if e = extractArchive(archive, def.Artifact.Format, extractRoot); e != nil {
+			err = coded("unsafe_package", fmt.Errorf("%w: %v", ErrUnsafePackage, e))
+			break
+		}
+		packages = append(packages, management.VerifiedEnginePackage{Definition: def, SourceDir: extractRoot, ArtifactHash: digest, RepositoryID: source.ID})
+	}
+	m.tufMu.Unlock()
+	if err != nil {
+		statusErr := m.recordRefresh(source.ID, err)
+		if cleanupErr := cleanup(); cleanupErr != nil {
+			rollbackErrors := []error{cleanupErr}
+			if statusErr != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("persist repository status: %w", statusErr))
+			}
+			return management.ProfileRecord{}, &management.FileTransactionError{Operation: err, Rollback: rollbackErrors}
+		}
+		if statusErr != nil {
+			return management.ProfileRecord{}, errors.Join(err, fmt.Errorf("persist repository status: %w", statusErr))
+		}
+		return management.ProfileRecord{}, err
+	}
+	record, installErr := m.engines.InstallVerifiedProfile(plan.profile, source.ID, packages, plan.selections, plan.installedDigest, plan.update)
+	cleanupErr := cleanup()
+	if cleanupErr != nil {
+		if installErr != nil {
+			return record, &management.FileTransactionError{Operation: installErr, Rollback: []error{cleanupErr}}
+		}
+		return record, &management.FileTransactionError{Operation: fmt.Errorf("installation committed but package staging cleanup failed"), Rollback: []error{cleanupErr}}
+	}
+	if installErr != nil {
+		return management.ProfileRecord{}, installErr
+	}
+	statusErr := m.recordRefresh(source.ID, nil)
+	m.mu.Lock()
+	delete(m.plans, planID)
+	m.mu.Unlock()
+	if statusErr != nil {
+		return record, coded("status_persistence_failure", fmt.Errorf("profile installation committed, but repository status could not be saved: %w", statusErr))
+	}
+	return record, nil
+}
+
+func (m *Manager) CreateEngineInstallPlan(ctx context.Context, repoID, engineID, engineVersion string) (EngineInstallPreview, error) {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
+	source, err := m.getSource(repoID)
+	if err != nil {
+		return EngineInstallPreview{}, err
+	}
+	if !source.Enabled {
+		return EngineInstallPreview{}, ErrRepositoryDisabled
+	}
+	m.tufMu.Lock()
+	view, err := m.loadViewLocked(ctx, source)
+	m.tufMu.Unlock()
+	if err != nil {
+		return EngineInstallPreview{}, errors.Join(err, m.recordRefresh(repoID, err))
+	}
+	if err = m.recordRefresh(repoID, nil); err != nil {
+		return EngineInstallPreview{}, fmt.Errorf("persist repository status: %w", err)
+	}
+	var def engine.Definition
+	found := false
+	for _, candidate := range view.catalog.Engines {
+		if candidate.ID == engineID && candidate.Version == engineVersion {
+			def, found = candidate, true
+			break
 		}
 	}
-	return management.EngineRecord{}, management.ErrNotFound
-}
-func (m *Manager) installEngine(ctx context.Context, source Source, d engine.Definition) (management.EngineRecord, error) {
+	if !found {
+		return EngineInstallPreview{}, management.ErrNotFound
+	}
+	if def.Artifact == nil {
+		return EngineInstallPreview{}, fmt.Errorf("repository engine manifest has no artifact")
+	}
 	installed, err := m.engines.ListEngines(ctx)
 	if err != nil {
-		return management.EngineRecord{}, err
+		return EngineInstallPreview{}, err
 	}
-	if d.Artifact == nil {
-		return management.EngineRecord{}, fmt.Errorf("repository engine manifest has no artifact")
-	}
-	for _, existing := range installed {
-		if existing.Installation.EngineID == d.ID && existing.Installation.Version == d.Version {
-			if strings.EqualFold(existing.Installation.PackageSHA256, d.Artifact.SHA256) {
-				return existing, nil
+	reuse := false
+	for _, record := range installed {
+		if record.Installation.EngineID == engineID && record.Installation.Version == engineVersion {
+			if !strings.EqualFold(record.Installation.PackageSHA256, def.Artifact.SHA256) {
+				return EngineInstallPreview{}, fmt.Errorf("installed engine digest conflicts with repository: %w", management.ErrConflict)
 			}
-			return management.EngineRecord{}, fmt.Errorf("engine %q version %s has a conflicting installed digest: %w", d.ID, d.Version, management.ErrConflict)
+			reuse = true
 		}
 	}
-	archive, err := m.readTarget(ctx, source, d.Artifact.URL, maxPackageBytes)
+	stateDigest, err := m.engines.SnapshotDigest()
+	if err != nil {
+		return EngineInstallPreview{}, err
+	}
+	planID, err := randomPlanID()
+	if err != nil {
+		return EngineInstallPreview{}, err
+	}
+	expires := time.Now().UTC().Add(10 * time.Minute)
+	preview := EngineInstallPreview{PlanID: planID, CatalogDigest: view.digest, ExpiresAt: expires.Format(time.RFC3339), Repository: view.catalog.Repository, Publisher: view.catalog.Repository.Name, Trust: view.catalog.Repository.Trust, Engine: def, ArtifactSHA256: def.Artifact.SHA256, Action: "install engine"}
+	if reuse {
+		preview.Action = "reuse installed engine"
+	}
+	storedPreview, err := cloneJSON(preview)
+	if err != nil {
+		return EngineInstallPreview{}, err
+	}
+	m.mu.Lock()
+	m.prunePlansLocked(time.Now())
+	definition := def
+	m.plans[planID] = installationPlan{enginePreview: &storedPreview, engineOnly: &definition, installedDigest: stateDigest, expires: expires, reuseEngine: reuse}
+	m.mu.Unlock()
+	return cloneJSON(preview)
+}
+
+func (m *Manager) InstallEnginePlan(ctx context.Context, repoID, engineID, engineVersion, planID string) (management.EngineRecord, error) {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
+	m.mu.Lock()
+	plan, ok := m.plans[planID]
+	if ok && time.Now().After(plan.expires) {
+		delete(m.plans, planID)
+		ok = false
+	}
+	m.mu.Unlock()
+	if !ok || plan.enginePreview == nil || plan.enginePreview.Repository.ID != repoID || plan.engineOnly.ID != engineID || plan.engineOnly.Version != engineVersion {
+		return management.EngineRecord{}, ErrStalePlan
+	}
+	source, err := m.getSource(repoID)
 	if err != nil {
 		return management.EngineRecord{}, err
+	}
+	if !source.Enabled {
+		return management.EngineRecord{}, ErrRepositoryDisabled
+	}
+	stateDigest, err := m.engines.SnapshotDigest()
+	if err != nil {
+		return management.EngineRecord{}, err
+	}
+	if stateDigest != plan.installedDigest {
+		return management.EngineRecord{}, ErrStalePlan
+	}
+	m.tufMu.Lock()
+	view, err := m.loadViewLocked(ctx, source)
+	if err != nil {
+		m.tufMu.Unlock()
+		return management.EngineRecord{}, errors.Join(err, m.recordRefresh(repoID, err))
+	}
+	if view.digest != plan.enginePreview.CatalogDigest {
+		m.tufMu.Unlock()
+		return management.EngineRecord{}, errors.Join(ErrStalePlan, m.recordRefresh(repoID, nil))
+	}
+	if plan.reuseEngine {
+		m.tufMu.Unlock()
+		installed, e := m.engines.ListEngines(ctx)
+		if e != nil {
+			return management.EngineRecord{}, e
+		}
+		for _, record := range installed {
+			if record.Installation.EngineID == engineID && record.Installation.Version == engineVersion {
+				m.mu.Lock()
+				delete(m.plans, planID)
+				m.mu.Unlock()
+				return record, nil
+			}
+		}
+		return management.EngineRecord{}, ErrStalePlan
+	}
+	definition := *plan.engineOnly
+	if definition.Artifact == nil {
+		m.tufMu.Unlock()
+		return management.EngineRecord{}, fmt.Errorf("repository engine manifest has no artifact")
+	}
+	archive, err := downloadVerified(view.updater, definition.Artifact.URL, maxPackageBytes)
+	m.tufMu.Unlock()
+	if err != nil {
+		return management.EngineRecord{}, errors.Join(err, m.recordRefresh(repoID, err))
 	}
 	sum := sha256.Sum256(archive)
 	digest := hex.EncodeToString(sum[:])
-	if !strings.EqualFold(digest, d.Artifact.SHA256) {
-		return management.EngineRecord{}, fmt.Errorf("package SHA-256 does not match signed engine manifest")
+	if !strings.EqualFold(digest, definition.Artifact.SHA256) {
+		err = coded("signature_failure", fmt.Errorf("%w: package SHA-256 does not match signed engine manifest", ErrSignature))
+		return management.EngineRecord{}, errors.Join(err, m.recordRefresh(repoID, err))
 	}
 	stage, cleanup, err := m.engines.CreateVerifiedStaging()
 	if err != nil {
 		return management.EngineRecord{}, err
 	}
-	defer cleanup()
-	if err = extractArchive(archive, d.Artifact.Format, stage); err != nil {
+	if err = extractArchive(archive, definition.Artifact.Format, stage); err != nil {
+		err = coded("unsafe_package", fmt.Errorf("%w: %v", ErrUnsafePackage, err))
+		if cleanErr := cleanup(); cleanErr != nil {
+			rollbackErrors := []error{cleanErr}
+			if statusErr := m.recordRefresh(repoID, err); statusErr != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("persist repository status: %w", statusErr))
+			}
+			return management.EngineRecord{}, &management.FileTransactionError{Operation: err, Rollback: rollbackErrors}
+		}
+		return management.EngineRecord{}, errors.Join(err, m.recordRefresh(repoID, err))
+	}
+	record, installErr := m.engines.InstallVerifiedEnginePlan(definition, stage, digest, source.ID, plan.installedDigest)
+	cleanErr := cleanup()
+	if cleanErr != nil {
+		if installErr != nil {
+			return management.EngineRecord{}, &management.FileTransactionError{Operation: installErr, Rollback: []error{cleanErr}}
+		}
+		return record, &management.FileTransactionError{Operation: fmt.Errorf("engine installation committed but package staging cleanup failed"), Rollback: []error{cleanErr}}
+	}
+	if installErr == nil {
+		m.mu.Lock()
+		delete(m.plans, planID)
+		m.mu.Unlock()
+		if statusErr := m.recordRefresh(repoID, nil); statusErr != nil {
+			return record, coded("status_persistence_failure", fmt.Errorf("engine installation committed, but repository status could not be saved: %w", statusErr))
+		}
+	} else {
+		if statusErr := m.recordRefresh(repoID, installErr); statusErr != nil {
+			return record, errors.Join(installErr, fmt.Errorf("persist repository status: %w", statusErr))
+		}
+	}
+	return record, installErr
+}
+
+func (m *Manager) InstallEngine(ctx context.Context, repoID, engineID, engineVersion string) (management.EngineRecord, error) {
+	preview, err := m.CreateEngineInstallPlan(ctx, repoID, engineID, engineVersion)
+	if err != nil {
 		return management.EngineRecord{}, err
 	}
-	return m.engines.InstallVerifiedEngine(d, stage, digest, source.ID)
+	return m.InstallEnginePlan(ctx, repoID, engineID, engineVersion, preview.PlanID)
 }
 
-func (m *Manager) readTarget(ctx context.Context, s Source, target string, max int64) ([]byte, error) {
-	if !safeTarget(target) {
-		return nil, fmt.Errorf("unsafe TUF target %q", target)
-	}
-	m.tufMu.Lock()
-	defer m.tufMu.Unlock()
-	up, err := newUpdater(ctx, s, []byte(s.TrustedRoot), filepath.Join(m.root, "tuf", s.ID))
-	if err != nil {
-		return nil, err
-	}
-	if err = up.Refresh(); err != nil {
-		return nil, fmt.Errorf("TUF metadata refresh failed: %w", err)
-	}
-	info, err := up.GetTargetInfo(target)
-	if err != nil {
-		return nil, err
-	}
-	if info.Length < 0 || info.Length > max {
-		return nil, fmt.Errorf("target %q exceeds size limit", target)
-	}
-	_, data, err := up.DownloadTarget(info, "", "")
-	if err != nil {
-		return nil, fmt.Errorf("TUF target verification failed: %w", err)
-	}
-	return data, nil
-}
-
-func (m *Manager) persist() error {
+func (m *Manager) persist() (retErr error) {
 	st := fileState{SchemaVersion: 1, Sources: []storedSource{}}
 	for _, s := range m.sources {
 		raw := base64.StdEncoding.EncodeToString([]byte(s.TrustedRoot))
@@ -496,7 +969,19 @@ func (m *Manager) persist() error {
 		return err
 	}
 	name := tmp.Name()
-	defer os.Remove(name)
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if cleanupErr := os.Remove(name); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			operation := retErr
+			if operation == nil {
+				operation = fmt.Errorf("repository state committed but temporary state-file cleanup failed")
+			}
+			retErr = errors.Join(operation, fmt.Errorf("remove temporary repository state file %s: %w", name, cleanupErr))
+		}
+	}()
 	if _, err = tmp.Write(data); err != nil {
 		tmp.Close()
 		return err
@@ -511,6 +996,7 @@ func (m *Manager) persist() error {
 	if err = os.Rename(name, m.stateFile); err != nil {
 		return err
 	}
+	committed = true
 	dir, err := os.Open(m.root)
 	if err == nil {
 		_ = dir.Sync()
@@ -543,8 +1029,8 @@ func profileExecutablesAvailable(p profile.Definition, inst engine.Installation)
 			if path == "" {
 				return false
 			}
-			info, err := os.Stat(path)
-			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0111 == 0 {
 				return false
 			}
 		}
