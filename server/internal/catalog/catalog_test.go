@@ -1,6 +1,10 @@
 package catalog
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/timisah/101conv/server/internal/repository"
+)
 
 func TestVersionCompatibilityBoundaries(t *testing.T) {
 	tests := []struct {
@@ -31,6 +35,9 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 	if service.Source().ID != "101conv-official" {
 		t.Fatalf("unexpected source: %+v", service.Source())
 	}
+	if service.Source().Trust != "unverified" {
+		t.Fatalf("unsigned catalog must not be reported as signature-verified: %+v", service.Source())
+	}
 	entries, err := service.Available()
 	if err != nil {
 		t.Fatalf("catalog should support this app: %v", err)
@@ -44,6 +51,39 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 	}
 	if _, err := old.Available(); err == nil {
 		t.Fatal("expected exclusive maximum app version to be rejected")
+	}
+}
+
+func TestIndexAcceptsSeparateEngineReferencesAlongsideProfiles(t *testing.T) {
+	index := Index{
+		Version: 1,
+		Engines: []repository.EngineReference{{
+			ID: "ffmpeg", Version: "9.0.0", Name: "FFmpeg", ManifestURL: "https://example.org/engines/ffmpeg.json",
+		}},
+		Profiles: []Entry{{
+			ID: "video-webm", Version: "1.0.0", Name: "Video WebM", ManifestURL: "https://example.org/profiles/video-webm.json",
+		}},
+	}
+	if err := validateIndex(index); err != nil {
+		t.Fatalf("separated engine/profile references should validate: %v", err)
+	}
+}
+
+func TestAvailableEnginesFiltersIncompatibleEngineReferences(t *testing.T) {
+	service, err := New("0.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.index = Index{Version: 1, Engines: []repository.EngineReference{
+		{ID: "current", Version: "1.0.0", Name: "Current", ManifestURL: "https://example.org/current.json", MinimumAppVersion: "0.0.1", MaximumAppVersionExclusive: "0.2.0"},
+		{ID: "future", Version: "1.0.0", Name: "Future", ManifestURL: "https://example.org/future.json", MinimumAppVersion: "0.2.0"},
+	}}
+	entries, err := service.AvailableEngines()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].ID != "current" {
+		t.Fatalf("available engines = %+v, want only current engine", entries)
 	}
 }
 
