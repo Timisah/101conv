@@ -690,6 +690,51 @@ func TestOfficialSourceTrustDependsOnProvisionedRoot(t *testing.T) {
 	}
 }
 
+func TestUnsignedOfficialApprovalPersistsAndCanBeRevoked(t *testing.T) {
+	root := t.TempDir()
+	eng, err := management.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := Open(root, "0.1.0", eng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := m.SetOfficialUnsignedApproval(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Trust != TrustApprovedUnsigned || !source.Enabled {
+		t.Fatalf("expected explicit unsigned approval, got %#v", source)
+	}
+	if err = m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = eng.Close(); err != nil {
+		t.Fatal(err)
+	}
+	eng, err = management.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	m, err = Open(root, "0.1.0", eng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if got := m.List()[0]; got.ID != "101conv-official" || got.Trust != TrustApprovedUnsigned {
+		t.Fatalf("unsigned approval did not persist: %#v", got)
+	}
+	source, err = m.SetOfficialUnsignedApproval(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Trust != TrustUnavailable {
+		t.Fatalf("revocation did not restore browse-only trust state: %#v", source)
+	}
+}
+
 func TestUnsignedOfficialCatalogCanBeBrowsedButNotInstalled(t *testing.T) {
 	targets := makeCatalog(t, nil)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

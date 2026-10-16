@@ -33,6 +33,9 @@ type engineVersionRequest struct {
 type repositoryEnabledRequest struct {
 	Enabled bool `json:"enabled"`
 }
+type repositoryTrustRequest struct {
+	Approved bool `json:"approved"`
+}
 
 func (a *API) listEngines(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) {
@@ -293,6 +296,25 @@ func (a *API) setRepositoryEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	source, err := a.repositories.SetEnabled(r.PathValue("id"), req.Enabled)
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, source)
+}
+func (a *API) setRepositoryTrust(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) || !a.repositoryReady(w) {
+		return
+	}
+	if r.PathValue("id") != "101conv-official" {
+		writeRepositoryError(w, management.ErrNotFound)
+		return
+	}
+	var req repositoryTrustRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	source, err := a.repositories.SetOfficialUnsignedApproval(req.Approved)
 	if err != nil {
 		writeRepositoryError(w, err)
 		return

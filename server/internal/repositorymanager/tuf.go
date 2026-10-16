@@ -132,6 +132,56 @@ func downloadPackageVerified(ctx context.Context, up *updater.Updater, artifact 
 	return data, nil
 }
 
+// downloadPackageUnsigned is only available after an administrator explicitly
+// approves unsigned installation from the built-in GitHub catalog. It limits
+// the request to the same GitHub release hosts, enforces the manifest size and
+// SHA-256, and relies on the existing safe archive extractor. These checks
+// detect corruption but do not authenticate the publisher.
+func downloadPackageUnsigned(ctx context.Context, artifact *engine.Artifact, max int64) ([]byte, error) {
+	if artifact == nil || artifact.DownloadURL == "" {
+		return nil, fmt.Errorf("unsigned official engine manifest has no download URL")
+	}
+	if err := validateExternalArtifactURL(artifact.DownloadURL); err != nil {
+		return nil, err
+	}
+	if artifact.SizeBytes <= 0 || artifact.SizeBytes > max {
+		return nil, fmt.Errorf("unsigned package has invalid or oversized declared length")
+	}
+	if len(artifact.SHA256) != sha256.Size*2 {
+		return nil, fmt.Errorf("unsigned package manifest has invalid SHA-256")
+	}
+	if _, err := hex.DecodeString(artifact.SHA256); err != nil {
+		return nil, fmt.Errorf("unsigned package manifest has invalid SHA-256: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, artifact.DownloadURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := secureArtifactHTTPClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("download unsigned GitHub release: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream release returned HTTP %d", response.StatusCode)
+	}
+	if response.ContentLength >= 0 && response.ContentLength != artifact.SizeBytes {
+		return nil, fmt.Errorf("unsigned package length differs from its catalog manifest")
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, artifact.SizeBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) != artifact.SizeBytes {
+		return nil, fmt.Errorf("unsigned package length differs from its catalog manifest")
+	}
+	actual := sha256.Sum256(data)
+	if !strings.EqualFold(hex.EncodeToString(actual[:]), artifact.SHA256) {
+		return nil, fmt.Errorf("unsigned package SHA-256 differs from its catalog manifest")
+	}
+	return data, nil
+}
+
 func (f localFetcher) DownloadFile(raw string, max int64, _ time.Duration) ([]byte, error) {
 	u, err := url.Parse(raw)
 	if err != nil {

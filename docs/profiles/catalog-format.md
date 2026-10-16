@@ -4,7 +4,7 @@
 
 ## Official catalog status
 
-The official repository is hosted as static files on GitHub and appears by default in browse-only mode. The Go service fetches only the catalog index and engine/profile manifests; unsigned metadata is labeled unverified, and package preview, installation, and updates remain blocked. The service never downloads artifacts while browsing. The catalog becomes trusted and installable after the project owner provisions and embeds a real TUF root in `server/internal/repositorymanager/official-root.json` and publishes signed metadata. That file is intentionally empty in this source tree. A checksum by itself does not establish publisher identity.
+The official repository is hosted as static files on GitHub and appears by default in browse-only mode. An administrator can explicitly approve unsigned official installs from Administration. That choice persists in Go data storage and enables package previews/install/update using HTTPS, declared sizes, SHA-256 checks, compatibility checks, and safe extraction. These checks detect corruption but do not authenticate the publisher; anyone able to alter the GitHub catalog can replace the manifests and hashes. Revoke the approval in Administration at any time. A verified TUF root remains the recommended way to enable installs. The service never downloads artifacts while browsing. The root slot is intentionally empty until production signing is provisioned.
 
 The Go catalog already defines two packages:
 

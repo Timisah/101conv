@@ -16,8 +16,9 @@ const (
 type Trust string
 
 const (
-	TrustPinned      Trust = "pinned"
-	TrustUnavailable Trust = "unavailable"
+	TrustPinned           Trust = "pinned"
+	TrustUnavailable      Trust = "unavailable"
+	TrustApprovedUnsigned Trust = "approved_unsigned"
 )
 
 type Source struct {

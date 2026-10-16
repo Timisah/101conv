@@ -50,6 +50,7 @@ type Manager struct {
 	root, stateFile, appVersion string
 	lock                        *flock.Flock
 	officialRoot                []byte
+	officialUnsignedApproved    bool
 	officialStatus              Source
 	sources                     map[string]Source
 	engines                     *management.Service
@@ -89,8 +90,9 @@ type storedSource struct {
 	TrustedRoot string `json:"trustedRoot"`
 }
 type fileState struct {
-	SchemaVersion int            `json:"schemaVersion"`
-	Sources       []storedSource `json:"sources"`
+	SchemaVersion            int            `json:"schemaVersion"`
+	Sources                  []storedSource `json:"sources"`
+	OfficialUnsignedApproved bool           `json:"officialUnsignedApproved,omitempty"`
 }
 
 func Open(root, appVersion string, engineService *management.Service) (*Manager, error) {
@@ -141,6 +143,7 @@ func Open(root, appVersion string, engineService *management.Service) (*Manager,
 		lock.Unlock()
 		return nil, fmt.Errorf("unsupported repository state schema %d", saved.SchemaVersion)
 	}
+	m.officialUnsignedApproved = saved.OfficialUnsignedApproved
 	for _, item := range saved.Sources {
 		rootBytes, e := base64.StdEncoding.DecodeString(item.TrustedRoot)
 		if e != nil {
@@ -195,8 +198,13 @@ func (m *Manager) officialSource() Source {
 	var source Source
 	if len(m.officialRoot) == 0 {
 		// The public GitHub catalog can be browsed as unsigned metadata. This does
-		// not make it trusted: all install and update paths still require TUF.
-		source = Source{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustUnavailable, Enabled: true, Status: "browse_only", LastError: "Unsigned catalog: browsing only; installs require a verified trust root"}
+		// not make it trusted. Installation requires a separate explicit admin approval.
+		source = Source{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustUnavailable, Enabled: true, Status: "browse_only", LastError: "Unsigned catalog: browsing only; admin approval is required to install"}
+		if m.officialUnsignedApproved {
+			source.Trust = TrustApprovedUnsigned
+			source.Status = "approved_unsigned"
+			source.LastError = "Administrator approved installs from unsigned GitHub metadata"
+		}
 	} else {
 		source = Source{ID: "101conv-official", Name: "101conv Official Catalog", URL: officialURL, Kind: KindOfficial, Trust: TrustPinned, TrustedRoot: string(m.officialRoot), Enabled: true, Status: "configured"}
 	}
@@ -206,6 +214,36 @@ func (m *Manager) officialSource() Source {
 		source.LastError = m.officialStatus.LastError
 	}
 	return source
+}
+
+// SetOfficialUnsignedApproval explicitly opts this instance into installing
+// packages from the GitHub catalog without TUF signatures. The installer still
+// enforces HTTPS, artifact hashes, archive limits, and atomic installation, but
+// the publisher identity is not cryptographically authenticated.
+func (m *Manager) SetOfficialUnsignedApproval(approved bool) (Source, error) {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
+	if len(m.officialRoot) > 0 {
+		return Source{}, fmt.Errorf("official catalog already has a verified trust root")
+	}
+	m.mu.Lock()
+	previous := m.officialUnsignedApproved
+	m.officialUnsignedApproved = approved
+	if err := m.persist(); err != nil {
+		m.officialUnsignedApproved = previous
+		m.mu.Unlock()
+		return Source{}, fmt.Errorf("persist official catalog approval: %w", err)
+	}
+	for planID, plan := range m.plans {
+		if plan.preview.Repository.ID == "101conv-official" || plan.enginePreview != nil && plan.enginePreview.Repository.ID == "101conv-official" {
+			delete(m.plans, planID)
+		}
+	}
+	m.officialStatus = Source{}
+	source := m.officialSource()
+	m.mu.Unlock()
+	source.TrustedRoot = ""
+	return source, nil
 }
 
 func (m *Manager) Add(req AddRequest) (Source, error) {
@@ -339,9 +377,13 @@ func (m *Manager) Refresh(ctx context.Context, id string) (Source, error) {
 	if !source.Enabled {
 		return Source{}, ErrRepositoryDisabled
 	}
-	m.tufMu.Lock()
-	_, err = m.loadViewLocked(ctx, source)
-	m.tufMu.Unlock()
+	if id == "101conv-official" && len(m.officialRoot) == 0 {
+		_, err = loadUnsignedView(ctx, source, officialURL, m.appVersion)
+	} else {
+		m.tufMu.Lock()
+		_, err = m.loadViewLocked(ctx, source)
+		m.tufMu.Unlock()
+	}
 	if persistErr := m.recordRefresh(id, err); persistErr != nil {
 		if err != nil {
 			return Source{}, errors.Join(err, fmt.Errorf("persist repository status: %w", persistErr))
@@ -379,18 +421,22 @@ func (m *Manager) Browse(ctx context.Context, id string) (Catalog, error) {
 		return Catalog{}, ErrRepositoryDisabled
 	}
 	if id == "101conv-official" && len(m.officialRoot) == 0 {
-		catalog, err := loadUnsignedCatalog(ctx, s, officialURL, m.appVersion)
+		view, err := loadUnsignedView(ctx, s, officialURL, m.appVersion)
 		m.mu.Lock()
 		if err != nil {
 			m.officialStatus = Source{Status: "error", LastRefresh: time.Now().UTC().Format(time.RFC3339), LastError: err.Error()}
 		} else {
-			m.officialStatus = Source{Status: "browse_only", LastRefresh: time.Now().UTC().Format(time.RFC3339), LastError: "Unsigned catalog: browsing only; installs require a verified trust root"}
+			status, message := "browse_only", "Unsigned catalog: browsing only; admin approval is required to install"
+			if m.officialUnsignedApproved {
+				status, message = "approved_unsigned", "Administrator approved installs from unsigned GitHub metadata"
+			}
+			m.officialStatus = Source{Status: status, LastRefresh: time.Now().UTC().Format(time.RFC3339), LastError: message}
 		}
 		m.mu.Unlock()
 		if err != nil {
 			return Catalog{}, err
 		}
-		return catalog, nil
+		return view.catalog, nil
 	}
 	if s.Trust != TrustPinned {
 		return Catalog{}, fmt.Errorf("repository has no pinned TUF root; metadata inspection is disabled")
@@ -407,14 +453,18 @@ func (m *Manager) Browse(ctx context.Context, id string) (Catalog, error) {
 	return view.catalog, nil
 }
 
-// loadUnsignedCatalog is deliberately read-only. It fetches only the catalog
-// index and engine/profile manifests; package artifacts are never fetched here.
-// Any repository operation that creates an installation plan continues to use
-// loadViewLocked and therefore requires a pinned TUF root.
+// loadUnsignedCatalog is a compatibility wrapper used by tests and browsing.
 func loadUnsignedCatalog(ctx context.Context, source Source, base, appVersion string) (Catalog, error) {
+	view, err := loadUnsignedView(ctx, source, base, appVersion)
+	return view.catalog, err
+}
+
+// loadUnsignedView reads only public catalog metadata. It never fetches
+// package artifacts; install code calls the separate opt-in downloader.
+func loadUnsignedView(ctx context.Context, source Source, base, appVersion string) (verifiedView, error) {
 	baseURL, err := url.Parse(strings.TrimRight(base, "/") + "/")
 	if err != nil || (baseURL.Scheme != "https" && !(baseURL.Scheme == "http" && (baseURL.Hostname() == "127.0.0.1" || baseURL.Hostname() == "localhost"))) || baseURL.Host == "" {
-		return Catalog{}, fmt.Errorf("invalid official catalog URL")
+		return verifiedView{}, fmt.Errorf("invalid official catalog URL")
 	}
 	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 3 || req.URL.Scheme != baseURL.Scheme || req.URL.Host != baseURL.Host {
@@ -422,6 +472,7 @@ func loadUnsignedCatalog(ctx context.Context, source Source, base, appVersion st
 		}
 		return nil
 	}}
+	targets := map[string][]byte{}
 	read := func(target string) ([]byte, error) {
 		if !safeTarget(target) {
 			return nil, fmt.Errorf("unsafe catalog target %q", target)
@@ -447,62 +498,63 @@ func loadUnsignedCatalog(ctx context.Context, source Source, base, appVersion st
 		if int64(len(data)) > maxIndexBytes {
 			return nil, fmt.Errorf("catalog target %q exceeds size limit", target)
 		}
+		targets[target] = data
 		return data, nil
 	}
 	data, err := read(indexTarget)
 	if err != nil {
-		return Catalog{}, err
+		return verifiedView{}, err
 	}
 	var index CatalogIndex
 	if err = json.Unmarshal(data, &index); err != nil {
-		return Catalog{}, fmt.Errorf("decode unsigned catalog index: %w", err)
+		return verifiedView{}, fmt.Errorf("decode unsigned catalog index: %w", err)
 	}
 	if index.SchemaVersion != 1 || !compatible(appVersion, index.MinimumAppVersion, index.MaximumAppVersionExclusive) {
-		return Catalog{}, fmt.Errorf("unsupported or incompatible catalog")
+		return verifiedView{}, fmt.Errorf("unsupported or incompatible catalog")
 	}
 	if len(index.Engines)+len(index.Profiles) > 500 {
-		return Catalog{}, fmt.Errorf("catalog contains too many entries")
+		return verifiedView{}, fmt.Errorf("catalog contains too many entries")
 	}
 	out := Catalog{Repository: source, Engines: []engine.Definition{}, Profiles: []profile.Definition{}, IncompatibleProfiles: []IncompatibleProfile{}}
 	for _, entry := range index.Engines {
 		if !safeTarget(entry.ManifestTarget) {
-			return Catalog{}, fmt.Errorf("unsafe engine manifest target %q", entry.ManifestTarget)
+			return verifiedView{}, fmt.Errorf("unsafe engine manifest target %q", entry.ManifestTarget)
 		}
 		raw, e := read(entry.ManifestTarget)
 		if e != nil {
-			return Catalog{}, fmt.Errorf("read engine %q manifest: %w", entry.ID, e)
+			return verifiedView{}, fmt.Errorf("read engine %q manifest: %w", entry.ID, e)
 		}
 		var manifest EngineManifest
 		if e = json.Unmarshal(raw, &manifest); e != nil {
-			return Catalog{}, fmt.Errorf("decode engine %q manifest: %w", entry.ID, e)
+			return verifiedView{}, fmt.Errorf("decode engine %q manifest: %w", entry.ID, e)
 		}
 		d := manifest.Engine
 		if d.ID != entry.ID || d.Version != entry.Version || d.Name != entry.Name {
-			return Catalog{}, fmt.Errorf("catalog entry and engine manifest disagree for %q", entry.ID)
+			return verifiedView{}, fmt.Errorf("catalog entry and engine manifest disagree for %q", entry.ID)
 		}
 		if e = d.Validate(); e != nil {
-			return Catalog{}, e
+			return verifiedView{}, e
 		}
 		out.Engines = append(out.Engines, d)
 	}
 	for _, entry := range index.Profiles {
 		if !safeTarget(entry.ManifestTarget) {
-			return Catalog{}, fmt.Errorf("unsafe profile manifest target %q", entry.ManifestTarget)
+			return verifiedView{}, fmt.Errorf("unsafe profile manifest target %q", entry.ManifestTarget)
 		}
 		raw, e := read(entry.ManifestTarget)
 		if e != nil {
-			return Catalog{}, fmt.Errorf("read profile %q manifest: %w", entry.ID, e)
+			return verifiedView{}, fmt.Errorf("read profile %q manifest: %w", entry.ID, e)
 		}
 		var manifest ProfileManifest
 		if e = json.Unmarshal(raw, &manifest); e != nil {
-			return Catalog{}, fmt.Errorf("decode profile %q manifest: %w", entry.ID, e)
+			return verifiedView{}, fmt.Errorf("decode profile %q manifest: %w", entry.ID, e)
 		}
 		d := manifest.Profile
 		if d.ID != entry.ID || d.Version != entry.Version || d.Name != entry.Name {
-			return Catalog{}, fmt.Errorf("catalog entry and profile manifest disagree for %q", entry.ID)
+			return verifiedView{}, fmt.Errorf("catalog entry and profile manifest disagree for %q", entry.ID)
 		}
 		if e = d.Validate(); e != nil {
-			return Catalog{}, e
+			return verifiedView{}, e
 		}
 		if compatible(appVersion, d.MinimumAppVersion, d.MaximumAppVersionExclusive) {
 			out.Profiles = append(out.Profiles, d)
@@ -510,7 +562,7 @@ func loadUnsignedCatalog(ctx context.Context, source Source, base, appVersion st
 			out.IncompatibleProfiles = append(out.IncompatibleProfiles, IncompatibleProfile{ID: d.ID, Version: d.Version, Reason: "profile is incompatible with this application version"})
 		}
 	}
-	return out, nil
+	return verifiedView{catalog: out, digest: digestCatalogTargets(targets), targets: targets}, nil
 }
 
 type verifiedView struct {
@@ -683,11 +735,15 @@ func (m *Manager) CreateInstallPlan(ctx context.Context, repoID, profileID strin
 	if !s.Enabled {
 		return InstallPreview{}, ErrRepositoryDisabled
 	}
-	if s.Trust != TrustPinned {
-		return InstallPreview{}, fmt.Errorf("repository is browse-only until its trust root is provisioned")
-	}
 	m.tufMu.Lock()
-	view, err := m.loadViewLocked(ctx, s)
+	var view verifiedView
+	if s.ID == "101conv-official" && s.Trust == TrustApprovedUnsigned {
+		view, err = loadUnsignedView(ctx, s, officialURL, m.appVersion)
+	} else if s.Trust == TrustPinned {
+		view, err = m.loadViewLocked(ctx, s)
+	} else {
+		err = fmt.Errorf("repository is browse-only until its trust root is provisioned or an administrator approves unsigned installs")
+	}
 	m.tufMu.Unlock()
 	if err != nil {
 		return InstallPreview{}, errors.Join(err, m.recordRefresh(s.ID, err))
@@ -836,6 +892,10 @@ func (m *Manager) InstallPlan(ctx context.Context, planID string) (management.Pr
 	if !source.Enabled {
 		return management.ProfileRecord{}, ErrRepositoryDisabled
 	}
+	unsignedApproval := source.ID == "101conv-official" && source.Trust == TrustApprovedUnsigned
+	if source.Trust != TrustPinned && !unsignedApproval {
+		return management.ProfileRecord{}, fmt.Errorf("repository approval was removed or trust is unavailable")
+	}
 
 	stateDigest, err := m.engines.SnapshotDigest()
 	if err != nil {
@@ -846,7 +906,12 @@ func (m *Manager) InstallPlan(ctx context.Context, planID string) (management.Pr
 	}
 
 	m.tufMu.Lock()
-	view, err := m.loadViewLocked(ctx, source)
+	var view verifiedView
+	if unsignedApproval {
+		view, err = loadUnsignedView(ctx, source, officialURL, m.appVersion)
+	} else {
+		view, err = m.loadViewLocked(ctx, source)
+	}
 	if err != nil {
 		m.tufMu.Unlock()
 		return management.ProfileRecord{}, errors.Join(err, m.recordRefresh(source.ID, err))
@@ -876,10 +941,16 @@ func (m *Manager) InstallPlan(ctx context.Context, planID string) (management.Pr
 		key := dep.EngineID + "\x00" + plan.selections[dep.EngineID]
 		def, found := plan.engineDefinitions[key]
 		if !found || def.Artifact == nil {
-			err = fmt.Errorf("planned engine %q has no verified artifact definition", dep.EngineID)
+			err = fmt.Errorf("planned engine %q has no artifact definition", dep.EngineID)
 			break
 		}
-		archive, e := downloadPackageVerified(ctx, view.updater, def.Artifact, maxPackageBytes)
+		var archive []byte
+		var e error
+		if unsignedApproval {
+			archive, e = downloadPackageUnsigned(ctx, def.Artifact, maxPackageBytes)
+		} else {
+			archive, e = downloadPackageVerified(ctx, view.updater, def.Artifact, maxPackageBytes)
+		}
 		if e != nil {
 			err = e
 			break
@@ -887,7 +958,11 @@ func (m *Manager) InstallPlan(ctx context.Context, planID string) (management.Pr
 		sum := sha256.Sum256(archive)
 		digest := hex.EncodeToString(sum[:])
 		if !strings.EqualFold(digest, def.Artifact.SHA256) {
-			err = coded("signature_failure", fmt.Errorf("%w: verified artifact digest changed for engine %q", ErrSignature, def.ID))
+			if unsignedApproval {
+				err = coded("package_integrity_failure", fmt.Errorf("package digest changed for engine %q", def.ID))
+			} else {
+				err = coded("signature_failure", fmt.Errorf("%w: verified artifact digest changed for engine %q", ErrSignature, def.ID))
+			}
 			break
 		}
 		stage, _, e := m.engines.CreateVerifiedStaging()
@@ -953,11 +1028,15 @@ func (m *Manager) CreateEngineInstallPlan(ctx context.Context, repoID, engineID,
 	if !source.Enabled {
 		return EngineInstallPreview{}, ErrRepositoryDisabled
 	}
-	if source.Trust != TrustPinned {
-		return EngineInstallPreview{}, fmt.Errorf("repository is browse-only until its trust root is provisioned")
-	}
 	m.tufMu.Lock()
-	view, err := m.loadViewLocked(ctx, source)
+	var view verifiedView
+	if repoID == "101conv-official" && source.Trust == TrustApprovedUnsigned {
+		view, err = loadUnsignedView(ctx, source, officialURL, m.appVersion)
+	} else if source.Trust == TrustPinned {
+		view, err = m.loadViewLocked(ctx, source)
+	} else {
+		err = fmt.Errorf("repository is browse-only until its trust root is provisioned or an administrator approves unsigned installs")
+	}
 	m.tufMu.Unlock()
 	if err != nil {
 		return EngineInstallPreview{}, errors.Join(err, m.recordRefresh(repoID, err))
@@ -1037,6 +1116,10 @@ func (m *Manager) InstallEnginePlan(ctx context.Context, repoID, engineID, engin
 	if !source.Enabled {
 		return management.EngineRecord{}, ErrRepositoryDisabled
 	}
+	unsignedApproval := source.ID == "101conv-official" && source.Trust == TrustApprovedUnsigned
+	if source.Trust != TrustPinned && !unsignedApproval {
+		return management.EngineRecord{}, fmt.Errorf("repository approval was removed or trust is unavailable")
+	}
 	stateDigest, err := m.engines.SnapshotDigest()
 	if err != nil {
 		return management.EngineRecord{}, err
@@ -1045,7 +1128,12 @@ func (m *Manager) InstallEnginePlan(ctx context.Context, repoID, engineID, engin
 		return management.EngineRecord{}, ErrStalePlan
 	}
 	m.tufMu.Lock()
-	view, err := m.loadViewLocked(ctx, source)
+	var view verifiedView
+	if unsignedApproval {
+		view, err = loadUnsignedView(ctx, source, officialURL, m.appVersion)
+	} else {
+		view, err = m.loadViewLocked(ctx, source)
+	}
 	if err != nil {
 		m.tufMu.Unlock()
 		return management.EngineRecord{}, errors.Join(err, m.recordRefresh(repoID, err))
@@ -1075,7 +1163,12 @@ func (m *Manager) InstallEnginePlan(ctx context.Context, repoID, engineID, engin
 		m.tufMu.Unlock()
 		return management.EngineRecord{}, fmt.Errorf("repository engine manifest has no artifact")
 	}
-	archive, err := downloadPackageVerified(ctx, view.updater, definition.Artifact, maxPackageBytes)
+	var archive []byte
+	if unsignedApproval {
+		archive, err = downloadPackageUnsigned(ctx, definition.Artifact, maxPackageBytes)
+	} else {
+		archive, err = downloadPackageVerified(ctx, view.updater, definition.Artifact, maxPackageBytes)
+	}
 	m.tufMu.Unlock()
 	if err != nil {
 		return management.EngineRecord{}, errors.Join(err, m.recordRefresh(repoID, err))
@@ -1083,7 +1176,11 @@ func (m *Manager) InstallEnginePlan(ctx context.Context, repoID, engineID, engin
 	sum := sha256.Sum256(archive)
 	digest := hex.EncodeToString(sum[:])
 	if !strings.EqualFold(digest, definition.Artifact.SHA256) {
-		err = coded("signature_failure", fmt.Errorf("%w: package SHA-256 does not match signed engine manifest", ErrSignature))
+		if unsignedApproval {
+			err = coded("package_integrity_failure", fmt.Errorf("package SHA-256 differs from the unsigned catalog manifest"))
+		} else {
+			err = coded("signature_failure", fmt.Errorf("%w: package SHA-256 does not match signed engine manifest", ErrSignature))
+		}
 		return management.EngineRecord{}, errors.Join(err, m.recordRefresh(repoID, err))
 	}
 	stage, cleanup, err := m.engines.CreateVerifiedStaging()
@@ -1133,7 +1230,7 @@ func (m *Manager) InstallEngine(ctx context.Context, repoID, engineID, engineVer
 }
 
 func (m *Manager) persist() (retErr error) {
-	st := fileState{SchemaVersion: 1, Sources: []storedSource{}}
+	st := fileState{SchemaVersion: 1, Sources: []storedSource{}, OfficialUnsignedApproved: m.officialUnsignedApproved}
 	for _, s := range m.sources {
 		raw := base64.StdEncoding.EncodeToString([]byte(s.TrustedRoot))
 		safe := s

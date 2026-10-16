@@ -259,6 +259,34 @@ func TestRepositoryAPIRequiresAdminAndExposesOfficialTrustState(t *testing.T) {
 	if len(body.Repositories) != 1 || body.Repositories[0].ID != "101conv-official" || body.Repositories[0].Trust != repositorymanager.TrustUnavailable {
 		t.Fatalf("official root absence was not exposed honestly: %+v", body.Repositories)
 	}
+	approve, _ := http.NewRequest(http.MethodPatch, server.URL+"/api/v1/repositories/101conv-official/trust", strings.NewReader(`{"approved":true}`))
+	approve.Header.Set("Content-Type", "application/json")
+	if unauth, e := server.Client().Do(approve); e != nil {
+		t.Fatal(e)
+	} else {
+		unauth.Body.Close()
+		if unauth.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("unsigned trust approval without admin auth status=%d", unauth.StatusCode)
+		}
+	}
+	approve, _ = http.NewRequest(http.MethodPatch, server.URL+"/api/v1/repositories/101conv-official/trust", strings.NewReader(`{"approved":true}`))
+	approve.Header.Set("Authorization", "Bearer secret")
+	approve.Header.Set("Content-Type", "application/json")
+	resp, err = server.Client().Do(approve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("admin unsigned trust approval status=%d", resp.StatusCode)
+	}
+	var approved repositorymanager.Source
+	if err = json.NewDecoder(resp.Body).Decode(&approved); err != nil {
+		t.Fatal(err)
+	}
+	if approved.Trust != repositorymanager.TrustApprovedUnsigned {
+		t.Fatalf("admin approval not reflected in API: %+v", approved)
+	}
 }
 
 func TestRepositoryInstallAPIRequiresPreviewPlanAndUsesStructuredErrors(t *testing.T) {

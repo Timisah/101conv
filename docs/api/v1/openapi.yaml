@@ -37,7 +37,7 @@ paths:
       summary: List configured repository sources and trust state
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       responses:
-        '200': { description: Sources including the bundled official source's trust availability }
+        '200': { description: Sources including the bundled official source's approval state }
         '401': { description: Administrator bearer token required }
     post:
       summary: Add an explicitly approved local or community TUF repository
@@ -91,29 +91,49 @@ paths:
         '200': { description: Updated source state; disablement invalidates outstanding plans }
         '401': { description: Administrator bearer token required }
         '409': { description: Bundled official source has no provisioned root }
+  /api/v1/repositories/{id}/trust:
+    patch:
+      summary: Explicitly approve or revoke unsigned installs from the bundled GitHub catalog
+      description: This development-stage opt-in does not authenticate publisher identity. HTTPS and the catalog-provided package digest are checked, but unsigned catalog metadata can be replaced by anyone able to alter the upstream GitHub source.
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, const: 101conv-official } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approved]
+              properties:
+                approved: { type: boolean }
+      responses:
+        '200': { description: Updated official catalog approval state; revocation invalidates outstanding plans }
+        '400': { description: Verified official trust root already provisioned }
+        '401': { description: Administrator bearer token or session required }
   /api/v1/repositories/{id}/refresh:
     post:
-      summary: Refresh and verify signed metadata, update status and record errors
+      summary: Refresh repository metadata and update status
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
-        '200': { description: Verified repository status and refresh time }
+        '200': { description: Repository status and refresh time; the built-in official catalog can refresh unsigned metadata }
         '502': { description: Signature, expiration, or rollback verification failed }
         '401': { description: Administrator bearer token required }
   /api/v1/repositories/{id}/catalog:
     get:
-      summary: Browse a verified repository catalog without executing package contents
+      summary: Browse repository metadata without downloading or executing package contents
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
-        '200': { description: Signed engine and profile definitions }
+        '200': { description: Engine and profile definitions; unsigned official metadata is returned as untrusted }
         '400': { description: Trust, signature, expiry, rollback, or compatibility validation failed }
         '401': { description: Administrator bearer token required }
   /api/v1/repositories/{id}/profiles/{profileID}/preview:
     get:
-      summary: Preview publisher, trust, license, dependencies, capabilities, and planned changes
+      summary: Preview publisher, trust state, license, dependencies, capabilities, and planned changes for an approved source
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }

@@ -61,6 +61,7 @@ func NewWithJobServices(version string, catalogService *catalog.Service, managem
 	mux.HandleFunc("POST /api/v1/repositories", a.addRepository)
 	mux.HandleFunc("DELETE /api/v1/repositories/{id}", a.removeRepository)
 	mux.HandleFunc("PATCH /api/v1/repositories/{id}/enabled", a.setRepositoryEnabled)
+	mux.HandleFunc("PATCH /api/v1/repositories/{id}/trust", a.setRepositoryTrust)
 	mux.HandleFunc("POST /api/v1/repositories/{id}/refresh", a.refreshRepository)
 	mux.HandleFunc("GET /api/v1/repositories/{id}/catalog", a.browseRepository)
 	mux.HandleFunc("GET /api/v1/repositories/{id}/profiles/{profileID}/preview", a.previewRepositoryProfile)
