@@ -8,13 +8,15 @@ import (
 
 	"github.com/timisah/101conv/server/internal/catalog"
 	"github.com/timisah/101conv/server/internal/management"
+	"github.com/timisah/101conv/server/internal/repositorymanager"
 )
 
 type API struct {
-	version    string
-	catalog    *catalog.Service
-	management *management.Service
-	adminToken string
+	version      string
+	catalog      *catalog.Service
+	management   *management.Service
+	adminToken   string
+	repositories *repositorymanager.Manager
 }
 
 func New(version string, catalogService *catalog.Service) http.Handler {
@@ -22,7 +24,11 @@ func New(version string, catalogService *catalog.Service) http.Handler {
 }
 
 func NewWithManagement(version string, catalogService *catalog.Service, managementService *management.Service, adminToken string) http.Handler {
-	a := &API{version: version, catalog: catalogService, management: managementService, adminToken: adminToken}
+	return NewWithServices(version, catalogService, managementService, nil, adminToken)
+}
+
+func NewWithServices(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, adminToken string) http.Handler {
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, adminToken: adminToken}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.ready)
@@ -40,6 +46,15 @@ func NewWithManagement(version string, catalogService *catalog.Service, manageme
 	mux.HandleFunc("PATCH /api/v1/profiles/{id}/enabled", a.setProfileEnabled)
 	mux.HandleFunc("DELETE /api/v1/profiles/{id}", a.removeProfile)
 	mux.HandleFunc("GET /api/v1/profiles/{id}/engines", a.resolveProfile)
+	mux.HandleFunc("PUT /api/v1/profiles/{id}/engines/{engineID}", a.selectProfileEngine)
+	mux.HandleFunc("GET /api/v1/repositories", a.listRepositories)
+	mux.HandleFunc("POST /api/v1/repositories", a.addRepository)
+	mux.HandleFunc("DELETE /api/v1/repositories/{id}", a.removeRepository)
+	mux.HandleFunc("GET /api/v1/repositories/{id}/catalog", a.browseRepository)
+	mux.HandleFunc("GET /api/v1/repositories/{id}/profiles/{profileID}/preview", a.previewRepositoryProfile)
+	mux.HandleFunc("POST /api/v1/repositories/{id}/profiles/{profileID}/install", a.installRepositoryProfile)
+	mux.HandleFunc("PUT /api/v1/repositories/{id}/profiles/{profileID}", a.updateRepositoryProfile)
+	mux.HandleFunc("POST /api/v1/repositories/{id}/engines/{engineID}/{version}/install", a.installRepositoryEngine)
 	return mux
 }
 

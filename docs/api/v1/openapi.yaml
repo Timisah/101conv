@@ -6,6 +6,101 @@ info:
 servers:
   - url: /
 paths:
+  /api/v1/repositories:
+    get:
+      summary: List configured repository sources and trust state
+      security: [{ engineAdmin: [] }]
+      responses:
+        '200': { description: Sources including the bundled official source's trust availability }
+        '401': { description: Administrator bearer token required }
+    post:
+      summary: Add an explicitly approved local or community TUF repository
+      description: The supplied root fingerprint must be independently verified by the administrator.
+      security: [{ engineAdmin: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name, url, kind, trustedRoot, fingerprint, approved]
+              properties:
+                id: { type: string }
+                name: { type: string }
+                url: { type: string, format: uri }
+                kind: { type: string, enum: [community, local] }
+                trustedRoot: { type: string, contentEncoding: base64 }
+                fingerprint: { type: string, description: SHA-256 of exact root bytes }
+                approved: { type: boolean, const: true }
+      responses:
+        '201': { description: Repository pinned and approved }
+        '400': { description: Invalid source, root, fingerprint, or approval }
+        '401': { description: Administrator bearer token required }
+  /api/v1/repositories/{id}:
+    delete:
+      summary: Remove a configured repository and its metadata cache
+      security: [{ engineAdmin: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Repository removed }
+        '401': { description: Administrator bearer token required }
+        '404': { description: Repository not found }
+  /api/v1/repositories/{id}/catalog:
+    get:
+      summary: Browse a verified repository catalog without executing package contents
+      security: [{ engineAdmin: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Signed engine and profile definitions }
+        '400': { description: Trust, signature, expiry, rollback, or compatibility validation failed }
+        '401': { description: Administrator bearer token required }
+  /api/v1/repositories/{id}/profiles/{profileID}/preview:
+    get:
+      summary: Preview publisher, trust, license, dependencies, capabilities, and planned changes
+      security: [{ engineAdmin: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: profileID, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Installation preview; no package is installed }
+        '400': { description: Invalid repository or unsatisfied dependency }
+        '401': { description: Administrator bearer token required }
+  /api/v1/repositories/{id}/profiles/{profileID}/install:
+    post:
+      summary: Install a trusted repository profile and missing engines
+      security: [{ engineAdmin: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: profileID, required: true, schema: { type: string } }
+      responses:
+        '201': { description: Installed profile and resolved dependencies }
+        '400': { description: Verification, extraction, compatibility, or dependency failure }
+        '401': { description: Administrator bearer token required }
+  /api/v1/repositories/{id}/profiles/{profileID}:
+    put:
+      summary: Update an installed profile from its trusted repository
+      security: [{ engineAdmin: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: profileID, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Updated profile }
+        '400': { description: Verification or dependency failure }
+        '401': { description: Administrator bearer token required }
+  /api/v1/repositories/{id}/engines/{engineID}/{version}/install:
+    post:
+      summary: Install a verified engine release; existing versions remain available for rollback
+      security: [{ engineAdmin: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: engineID, required: true, schema: { type: string } }
+        - { in: path, name: version, required: true, schema: { type: string } }
+      responses:
+        '201': { description: Installed engine version }
+        '400': { description: Verification or package installation failed }
+        '401': { description: Administrator bearer token required }
   /api/v1/profiles:
     get:
       summary: List profile catalogs and installed profiles
@@ -154,6 +249,9 @@ paths:
         '409': { description: Job has not succeeded }
 components:
   securitySchemes:
+    engineAdmin:
+      type: http
+      scheme: bearer
     sessionCookie:
       type: apiKey
       in: cookie

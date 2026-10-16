@@ -1,6 +1,6 @@
-// Package management implements durable local engine and profile lifecycle.
-// Remote package installation is intentionally unsupported until repositories
-// can authenticate their manifests.
+// Package management implements the durable engine and profile lifecycle.
+// Repository installation can call the verified-package seam only after TUF
+// validation; local registration and installation remain path-policy bound.
 package management
 
 import (
@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gofrs/flock"
 	"github.com/timisah/101conv/server/internal/engine"
 	"github.com/timisah/101conv/server/internal/profile"
 	"github.com/timisah/101conv/server/internal/version"
@@ -39,13 +40,22 @@ type state struct {
 }
 
 type Service struct {
-	mu        sync.Mutex
-	root      string
-	stateFile string
-	data      state
+	mu           sync.Mutex
+	root         string
+	stateFile    string
+	data         state
+	lock         *flock.Flock
+	allowedRoots []string
 }
 
 func Open(root string) (*Service, error) {
+	abs, _ := filepath.Abs(root)
+	return OpenWithPolicy(root, []string{filepath.Join(abs, "imports")})
+}
+
+// OpenWithPolicy acquires an exclusive lifetime lock. Every process that writes
+// this JSON store must use this constructor; multiple app instances are refused.
+func OpenWithPolicy(root string, allowedRoots []string) (*Service, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("data directory is required")
 	}
@@ -53,24 +63,65 @@ func Open(root string) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err = os.MkdirAll(abs, 0700); err != nil {
+		return nil, err
+	}
+	abs, err = filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, err
+	}
 	if err = os.MkdirAll(filepath.Join(abs, "engines"), 0700); err != nil {
 		return nil, err
 	}
-	s := &Service{root: abs, stateFile: filepath.Join(abs, "management.json"), data: state{SchemaVersion: 1, Engines: []EngineRecord{}, Profiles: []ProfileRecord{}}}
+	lock := flock.New(filepath.Join(abs, "management.lock"))
+	locked, err := lock.TryLock()
+	if err != nil {
+		return nil, err
+	}
+	if !locked {
+		return nil, fmt.Errorf("management storage is already open by another process")
+	}
+	cleanRoots := make([]string, 0, len(allowedRoots))
+	for _, r := range allowedRoots {
+		a, e := filepath.Abs(r)
+		if e != nil {
+			lock.Unlock()
+			return nil, e
+		}
+		if e = os.MkdirAll(a, 0700); e != nil {
+			lock.Unlock()
+			return nil, e
+		}
+		a, e = filepath.EvalSymlinks(a)
+		if e != nil {
+			lock.Unlock()
+			return nil, e
+		}
+		cleanRoots = append(cleanRoots, a)
+	}
+	s := &Service{root: abs, stateFile: filepath.Join(abs, "management.json"), lock: lock, allowedRoots: cleanRoots, data: state{SchemaVersion: 1, Engines: []EngineRecord{}, Profiles: []ProfileRecord{}}}
 	b, err := os.ReadFile(s.stateFile)
 	if errors.Is(err, os.ErrNotExist) {
 		if err = s.recoverFilesystem(); err != nil {
+			lock.Unlock()
 			return nil, fmt.Errorf("recover engine installations: %w", err)
 		}
 		return s, nil
 	}
 	if err != nil {
+		lock.Unlock()
 		return nil, err
 	}
 	if err = json.Unmarshal(b, &s.data); err != nil {
+		lock.Unlock()
 		return nil, fmt.Errorf("read management state: %w", err)
 	}
+	if err = s.expandPortablePaths(); err != nil {
+		lock.Unlock()
+		return nil, err
+	}
 	if s.data.SchemaVersion != 1 {
+		lock.Unlock()
 		return nil, fmt.Errorf("unsupported management state schema %d", s.data.SchemaVersion)
 	}
 	if s.data.Engines == nil {
@@ -80,12 +131,31 @@ func Open(root string) (*Service, error) {
 		s.data.Profiles = []ProfileRecord{}
 	}
 	if err := s.recoverFilesystem(); err != nil {
+		lock.Unlock()
 		return nil, fmt.Errorf("recover engine installations: %w", err)
 	}
 	return s, nil
 }
 
+func (s *Service) Close() error {
+	if s.lock == nil {
+		return nil
+	}
+	err := s.lock.Unlock()
+	s.lock = nil
+	return err
+}
+
+func (s *Service) RootPath() string { return s.root }
+
 func (s *Service) recoverFilesystem() error {
+	_ = os.RemoveAll(filepath.Join(s.root, ".repository-staging"))
+	for _, pattern := range []string{".management-*.tmp", ".repositories-*.tmp"} {
+		matches, _ := filepath.Glob(filepath.Join(s.root, pattern))
+		for _, tmp := range matches {
+			_ = os.Remove(tmp)
+		}
+	}
 	known := map[string]bool{}
 	for _, record := range s.data.Engines {
 		if record.Installation.Managed {
@@ -172,7 +242,32 @@ func (s *Service) ListProfiles(context.Context) ([]ProfileRecord, error) {
 // directory. It never fetches URLs or extracts archives. Definition executable
 // paths are relative file names under sourceDir.
 func (s *Service) InstallEngine(_ context.Context, d engine.Definition, sourceDir string) (EngineRecord, error) {
-	if d.Artifact != nil {
+	return s.installEngine(d, sourceDir, false, "", "")
+}
+
+// InstallVerifiedEngine is reserved for the repository manager after TUF target
+// verification. This function copies only declared executables; it never runs code.
+func (s *Service) InstallVerifiedEngine(d engine.Definition, sourceDir, artifactSHA256, repositoryID string) (EngineRecord, error) {
+	if d.Artifact == nil || !strings.EqualFold(d.Artifact.SHA256, artifactSHA256) {
+		return EngineRecord{}, fmt.Errorf("verified package digest does not match the engine manifest")
+	}
+	return s.installEngine(d, sourceDir, true, artifactSHA256, repositoryID)
+}
+
+func (s *Service) CreateVerifiedStaging() (string, func(), error) {
+	base := filepath.Join(s.root, ".repository-staging")
+	if err := os.MkdirAll(base, 0700); err != nil {
+		return "", nil, err
+	}
+	stage, err := os.MkdirTemp(base, "package-")
+	if err != nil {
+		return "", nil, err
+	}
+	return stage, func() { _ = os.RemoveAll(stage) }, nil
+}
+
+func (s *Service) installEngine(d engine.Definition, sourceDir string, verified bool, artifactSHA256, repositoryID string) (EngineRecord, error) {
+	if d.Artifact != nil && !verified {
 		return EngineRecord{}, fmt.Errorf("remote engine artifacts are disabled until repository signatures are verified")
 	}
 	if err := d.Validate(); err != nil {
@@ -184,6 +279,19 @@ func (s *Service) InstallEngine(_ context.Context, d engine.Definition, sourceDi
 	if sourceDir == "" {
 		return EngineRecord{}, fmt.Errorf("local source directory is required")
 	}
+	resolvedSource, err := filepath.EvalSymlinks(sourceDir)
+	if err != nil {
+		return EngineRecord{}, err
+	}
+	if verified {
+		rel, e := filepath.Rel(filepath.Join(s.root, ".repository-staging"), resolvedSource)
+		if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return EngineRecord{}, fmt.Errorf("verified package staging directory is outside private storage")
+		}
+	} else if err = s.requireAllowedPath(resolvedSource); err != nil {
+		return EngineRecord{}, fmt.Errorf("source directory: %w", err)
+	}
+	sourceDir = resolvedSource
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, r := range s.data.Engines {
@@ -277,7 +385,7 @@ func (s *Service) InstallEngine(_ context.Context, d engine.Definition, sourceDi
 		_ = os.RemoveAll(final)
 		return EngineRecord{}, err
 	}
-	inst := engine.Installation{EngineID: d.ID, Version: d.Version, Platform: d.Platform, Root: final, ExecutablePaths: paths, Managed: true}
+	inst := engine.Installation{EngineID: d.ID, Version: d.Version, Platform: d.Platform, Root: final, ExecutablePaths: paths, Managed: true, PackageSHA256: artifactSHA256, RepositoryID: repositoryID}
 	record := EngineRecord{Definition: d, Installation: inst}
 	next := s.data
 	next.Engines = append(append([]EngineRecord(nil), s.data.Engines...), record)
@@ -301,8 +409,17 @@ func (s *Service) RegisterManualEngine(_ context.Context, d engine.Definition, p
 	if !safeID(d.ID) {
 		return EngineRecord{}, fmt.Errorf("engine id must contain only letters, digits, dot, underscore, or hyphen")
 	}
+	validatedPaths := make(map[string]string, len(d.Executables))
 	for name := range d.Executables {
 		p := paths[name]
+		resolved, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			return EngineRecord{}, fmt.Errorf("executable %q: %w", name, err)
+		}
+		if err = s.requireAllowedPath(resolved); err != nil {
+			return EngineRecord{}, fmt.Errorf("executable %q: %w", name, err)
+		}
+		p = resolved
 		info, err := os.Stat(p)
 		if err != nil {
 			return EngineRecord{}, fmt.Errorf("executable %q: %w", name, err)
@@ -313,6 +430,7 @@ func (s *Service) RegisterManualEngine(_ context.Context, d engine.Definition, p
 		if info.Mode().Perm()&0111 == 0 {
 			return EngineRecord{}, fmt.Errorf("executable %q has no execute permission", name)
 		}
+		validatedPaths[name] = p
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -321,7 +439,7 @@ func (s *Service) RegisterManualEngine(_ context.Context, d engine.Definition, p
 			return EngineRecord{}, ErrConflict
 		}
 	}
-	inst := engine.Installation{EngineID: d.ID, Version: d.Version, Platform: d.Platform, ExecutablePaths: clone(paths), Managed: false}
+	inst := engine.Installation{EngineID: d.ID, Version: d.Version, Platform: d.Platform, ExecutablePaths: validatedPaths, Managed: false}
 	rec := EngineRecord{Definition: d, Installation: inst}
 	next := s.data
 	next.Engines = append(append([]EngineRecord(nil), s.data.Engines...), rec)
@@ -332,8 +450,8 @@ func (s *Service) RegisterManualEngine(_ context.Context, d engine.Definition, p
 	return rec, nil
 }
 
-// UpdateEngine installs a new immutable version beside the existing one. Active
-// profiles continue resolving the newest version in their declared range.
+// UpdateEngine installs a new immutable version beside existing releases. Active
+// profiles keep their selected version until explicitly upgraded or rolled back.
 func (s *Service) UpdateEngine(ctx context.Context, id string, d engine.Definition, sourceDir string) (EngineRecord, error) {
 	if id != d.ID {
 		return EngineRecord{}, fmt.Errorf("engine id must match the URL")
@@ -364,10 +482,11 @@ func (s *Service) InstallProfile(_ context.Context, d profile.Definition, reposi
 			return ProfileRecord{}, fmt.Errorf("profile %q: %w", d.ID, ErrConflict)
 		}
 	}
-	if _, err := resolve(d, s.data.Engines); err != nil {
+	_, pins, err := resolveWithPins(d, s.data.Engines, nil)
+	if err != nil {
 		return ProfileRecord{}, err
 	}
-	rec := ProfileRecord{Definition: d, State: profile.Installation{ProfileID: d.ID, Version: d.Version, Enabled: true, RepositoryID: repositoryID}}
+	rec := ProfileRecord{Definition: d, State: profile.Installation{ProfileID: d.ID, Version: d.Version, Enabled: true, RepositoryID: repositoryID, ResolvedEngines: pins}}
 	next := s.data
 	next.Profiles = append(append([]ProfileRecord(nil), s.data.Profiles...), rec)
 	if err := s.persist(next); err != nil {
@@ -393,17 +512,65 @@ func (s *Service) UpdateProfile(_ context.Context, d profile.Definition, reposit
 	if idx < 0 {
 		return ProfileRecord{}, ErrNotFound
 	}
-	if _, err := resolve(d, s.data.Engines); err != nil {
+	_, pins, err := resolveWithPins(d, s.data.Engines, s.data.Profiles[idx].State.ResolvedEngines)
+	if err != nil {
 		return ProfileRecord{}, err
 	}
 	rec := s.data.Profiles[idx]
 	rec.Definition = d
 	rec.State.Version = d.Version
 	rec.State.RepositoryID = repositoryID
+	rec.State.ResolvedEngines = pins
 	next := s.data
 	next.Profiles = append([]ProfileRecord(nil), s.data.Profiles...)
 	next.Profiles[idx] = rec
 	if err := s.persist(next); err != nil {
+		return ProfileRecord{}, err
+	}
+	s.data = next
+	return rec, nil
+}
+
+// SelectProfileEngine explicitly upgrades or rolls back one profile's engine pin.
+func (s *Service) SelectProfileEngine(_ context.Context, profileID, engineID, engineVersion string) (ProfileRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx := profileIndex(s.data.Profiles, profileID)
+	if idx < 0 {
+		return ProfileRecord{}, ErrNotFound
+	}
+	rec := s.data.Profiles[idx]
+	requirementFound, versionFound := false, false
+	for _, req := range rec.Definition.Engines {
+		if req.EngineID == engineID {
+			requirementFound = true
+			for _, candidate := range s.data.Engines {
+				if candidate.Installation.EngineID == engineID && candidate.Installation.Version == engineVersion && req.Accepts(candidate.Definition) {
+					versionFound = true
+				}
+			}
+		}
+	}
+	if !requirementFound {
+		return ProfileRecord{}, fmt.Errorf("profile %q does not require engine %q", profileID, engineID)
+	}
+	if !versionFound {
+		return ProfileRecord{}, fmt.Errorf("engine %q version %s is not installed or is incompatible with profile %q", engineID, engineVersion, profileID)
+	}
+	pins := make(map[string]string, len(rec.State.ResolvedEngines))
+	for k, v := range rec.State.ResolvedEngines {
+		pins[k] = v
+	}
+	pins[engineID] = engineVersion
+	_, selected, err := resolveWithPins(rec.Definition, s.data.Engines, pins)
+	if err != nil {
+		return ProfileRecord{}, err
+	}
+	rec.State.ResolvedEngines = selected
+	next := s.data
+	next.Profiles = append([]ProfileRecord(nil), s.data.Profiles...)
+	next.Profiles[idx] = rec
+	if err = s.persist(next); err != nil {
 		return ProfileRecord{}, err
 	}
 	s.data = next
@@ -418,9 +585,11 @@ func (s *Service) SetProfileEnabled(_ context.Context, id string, enabled bool) 
 	}
 	rec := s.data.Profiles[idx]
 	if enabled {
-		if _, err := resolve(rec.Definition, s.data.Engines); err != nil {
+		_, pins, err := resolveWithPins(rec.Definition, s.data.Engines, rec.State.ResolvedEngines)
+		if err != nil {
 			return ProfileRecord{}, err
 		}
+		rec.State.ResolvedEngines = pins
 	}
 	rec.State.Enabled = enabled
 	next := s.data
@@ -460,16 +629,18 @@ func (s *Service) RemoveEngine(_ context.Context, id, version string, resolveDep
 	}
 	conflicts := []int{}
 	removed := s.data.Engines[idx]
-	candidate := removed.Definition
+	remaining := append([]EngineRecord(nil), s.data.Engines[:idx]...)
+	remaining = append(remaining, s.data.Engines[idx+1:]...)
+	resolvedProfiles := append([]ProfileRecord(nil), s.data.Profiles...)
 	for i, p := range s.data.Profiles {
 		if !p.State.Enabled {
 			continue
 		}
-		for _, req := range p.Definition.Engines {
-			if req.EngineID == id && req.Accepts(candidate) {
-				conflicts = append(conflicts, i)
-				break
-			}
+		_, pins, err := resolveWithPins(p.Definition, remaining, p.State.ResolvedEngines)
+		if err != nil {
+			conflicts = append(conflicts, i)
+		} else {
+			resolvedProfiles[i].State.ResolvedEngines = pins
 		}
 	}
 	if len(conflicts) > 0 && !resolveDependencies {
@@ -478,7 +649,7 @@ func (s *Service) RemoveEngine(_ context.Context, id, version string, resolveDep
 	next := s.data
 	next.Engines = append([]EngineRecord(nil), s.data.Engines...)
 	next.Engines = append(next.Engines[:idx], next.Engines[idx+1:]...)
-	next.Profiles = append([]ProfileRecord(nil), s.data.Profiles...)
+	next.Profiles = resolvedProfiles
 	for _, i := range conflicts {
 		next.Profiles[i].State.Enabled = false
 	}
@@ -499,11 +670,18 @@ func (s *Service) ResolveProfile(id string) ([]engine.Installation, error) {
 	if idx < 0 {
 		return nil, ErrNotFound
 	}
-	return resolve(s.data.Profiles[idx].Definition, s.data.Engines)
+	resolved, _, err := resolveWithPins(s.data.Profiles[idx].Definition, s.data.Engines, s.data.Profiles[idx].State.ResolvedEngines)
+	return resolved, err
 }
 
 func resolve(d profile.Definition, engines []EngineRecord) ([]engine.Installation, error) {
+	resolved, _, err := resolveWithPins(d, engines, nil)
+	return resolved, err
+}
+
+func resolveWithPins(d profile.Definition, engines []EngineRecord, preferred map[string]string) ([]engine.Installation, map[string]string, error) {
 	out := make([]engine.Installation, 0, len(d.Engines))
+	pins := make(map[string]string, len(d.Engines))
 	for _, req := range d.Engines {
 		var choices []EngineRecord
 		for _, candidate := range engines {
@@ -512,32 +690,67 @@ func resolve(d profile.Definition, engines []EngineRecord) ([]engine.Installatio
 			}
 		}
 		if len(choices) == 0 {
-			return nil, fmt.Errorf("profile %q requires engine %q version range [%s,%s) with capabilities %v; no installed engine matches", d.ID, req.EngineID, req.Versions.Minimum, req.Versions.MaximumExclusive, req.Capabilities)
+			return nil, nil, fmt.Errorf("profile %q requires engine %q version range [%s,%s) with capabilities %v; no installed engine matches", d.ID, req.EngineID, req.Versions.Minimum, req.Versions.MaximumExclusive, req.Capabilities)
 		}
 		sort.Slice(choices, func(i, j int) bool {
 			cmp, _ := version.Compare(choices[i].Installation.Version, choices[j].Installation.Version)
-			return cmp > 0
+			if cmp != 0 {
+				return cmp > 0
+			}
+			return choices[i].Installation.Version < choices[j].Installation.Version
 		})
-		chosen := choices[0].Installation
+		chosenIndex := 0
+		if preferred[req.EngineID] != "" {
+			for i, candidate := range choices {
+				if candidate.Installation.Version == preferred[req.EngineID] {
+					chosenIndex = i
+					break
+				}
+			}
+		}
+		chosen := choices[chosenIndex].Installation
 		for _, rule := range d.Rules {
 			if rule.EngineID != req.EngineID {
 				continue
 			}
 			path := chosen.ExecutablePaths[rule.Executable]
 			if path == "" {
-				return nil, fmt.Errorf("profile %q requires executable %q from engine %q, but it is not registered", d.ID, rule.Executable, req.EngineID)
+				return nil, nil, fmt.Errorf("profile %q requires executable %q from engine %q, but it is not registered", d.ID, rule.Executable, req.EngineID)
 			}
 			info, err := os.Stat(path)
 			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
-				return nil, fmt.Errorf("profile %q requires executable %q from engine %q, but it is unavailable or not executable", d.ID, rule.Executable, req.EngineID)
+				return nil, nil, fmt.Errorf("profile %q requires executable %q from engine %q, but it is unavailable or not executable", d.ID, rule.Executable, req.EngineID)
 			}
 		}
 		out = append(out, chosen)
+		pins[req.EngineID] = chosen.Version
 	}
-	return out, nil
+	return out, pins, nil
 }
 func (s *Service) persist(next state) error {
-	b, err := json.MarshalIndent(next, "", "  ")
+	stored := next
+	stored.Engines = append([]EngineRecord(nil), next.Engines...)
+	for i := range stored.Engines {
+		r := &stored.Engines[i]
+		if !r.Installation.Managed {
+			continue
+		}
+		root, err := filepath.Rel(s.root, r.Installation.Root)
+		if err != nil {
+			return err
+		}
+		r.Installation.Root = root
+		paths := make(map[string]string, len(r.Installation.ExecutablePaths))
+		for name, p := range r.Installation.ExecutablePaths {
+			rel, e := filepath.Rel(filepath.Join(s.root, root), p)
+			if e != nil {
+				return e
+			}
+			paths[name] = rel
+		}
+		r.Installation.ExecutablePaths = paths
+	}
+	b, err := json.MarshalIndent(stored, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -562,11 +775,46 @@ func (s *Service) persist(next state) error {
 		return err
 	}
 	dir, err := os.Open(s.root)
-	if err == nil {
-		err = dir.Sync()
-		dir.Close()
+	if err != nil {
+		return nil
+	} // the rename is committed; keep in-memory and disk state consistent.
+	defer dir.Close()
+	_ = dir.Sync() // a post-rename sync error cannot safely be reported as a failed transaction.
+	return nil
+}
+
+func (s *Service) expandPortablePaths() error {
+	for i := range s.data.Engines {
+		r := &s.data.Engines[i]
+		if !r.Installation.Managed {
+			continue
+		}
+		root := r.Installation.Root
+		if !filepath.IsAbs(root) {
+			root = filepath.Join(s.root, root)
+		}
+		r.Installation.Root = filepath.Clean(root)
+		for name, p := range r.Installation.ExecutablePaths {
+			if !filepath.IsAbs(p) {
+				r.Installation.ExecutablePaths[name] = filepath.Join(r.Installation.Root, p)
+			}
+		}
 	}
-	return err
+	return nil
+}
+
+func (s *Service) requireAllowedPath(path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	for _, root := range s.allowedRoots {
+		rel, e := filepath.Rel(root, abs)
+		if e == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))) {
+			return nil
+		}
+	}
+	return fmt.Errorf("path is outside administrator-approved import roots")
 }
 
 func syncDirectory(name string) error {

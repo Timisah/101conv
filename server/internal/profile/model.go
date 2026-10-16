@@ -43,11 +43,12 @@ type ConversionRule struct {
 // Installation represents user state for a profile. It is independent of both
 // the profile definition and the engine installation it references.
 type Installation struct {
-	ProfileID    string `json:"profileId"`
-	Version      string `json:"version"`
-	Enabled      bool   `json:"enabled"`
-	RepositoryID string `json:"repositoryId,omitempty"`
-	Customized   bool   `json:"customized,omitempty"`
+	ProfileID       string            `json:"profileId"`
+	Version         string            `json:"version"`
+	Enabled         bool              `json:"enabled"`
+	RepositoryID    string            `json:"repositoryId,omitempty"`
+	Customized      bool              `json:"customized,omitempty"`
+	ResolvedEngines map[string]string `json:"resolvedEngines,omitempty"`
 }
 
 type Store interface {

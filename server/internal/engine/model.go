@@ -18,6 +18,7 @@ type Definition struct {
 	Version       string   `json:"version"`
 	Name          string   `json:"name"`
 	Description   string   `json:"description,omitempty"`
+	License       string   `json:"license,omitempty"`
 	Platform      string   `json:"platform"`
 	Capabilities  []string `json:"capabilities,omitempty"`
 	// Executables maps stable executable names to package-relative paths. A

@@ -12,6 +12,7 @@ import (
 	"github.com/timisah/101conv/server/internal/catalog"
 	"github.com/timisah/101conv/server/internal/engine"
 	"github.com/timisah/101conv/server/internal/management"
+	"github.com/timisah/101conv/server/internal/repositorymanager"
 )
 
 func TestCatalogSourceIsAvailableOnFreshInstall(t *testing.T) {
@@ -34,7 +35,10 @@ func TestCatalogSourceIsAvailableOnFreshInstall(t *testing.T) {
 
 func TestManagementRESTLifecycleAndRestart(t *testing.T) {
 	ctxDir := t.TempDir()
-	sourceDir := t.TempDir()
+	sourceDir := filepath.Join(ctxDir, "imports")
+	if err := os.MkdirAll(sourceDir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(sourceDir, "ffmpeg"), []byte("test"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +50,7 @@ func TestManagementRESTLifecycleAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = manager.Close() })
 	server := httptest.NewServer(NewWithManagement("0.1.0-dev", catalogService, manager, "secret"))
 	defer server.Close()
 	post := func(path, body string) int {
@@ -73,10 +78,14 @@ func TestManagementRESTLifecycleAndRestart(t *testing.T) {
 			t.Fatalf("install profile status=%d", got)
 		}
 	}
+	if err = manager.Close(); err != nil {
+		t.Fatal(err)
+	}
 	manager2, err := management.Open(ctxDir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = manager2.Close() })
 	api2 := httptest.NewServer(NewWithManagement("0.1.0-dev", catalogService, manager2, "secret"))
 	defer api2.Close()
 	request, err := http.NewRequest(http.MethodGet, api2.URL+"/api/v1/profiles/mov-webm/engines", nil)
@@ -121,5 +130,52 @@ func TestManagementEndpointsRequireAdministratorToken(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated management status=%d", resp.StatusCode)
+	}
+}
+
+func TestRepositoryAPIRequiresAdminAndExposesOfficialTrustState(t *testing.T) {
+	root := t.TempDir()
+	catalogService, err := catalog.New("0.1.0-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := management.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	repos, err := repositorymanager.Open(root, "0.1.0-dev", manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repos.Close()
+	server := httptest.NewServer(NewWithServices("0.1.0-dev", catalogService, manager, repos, "secret"))
+	defer server.Close()
+	unauth, err := server.Client().Get(server.URL + "/api/v1/repositories")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauth.Body.Close()
+	if unauth.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated repository list status=%d", unauth.StatusCode)
+	}
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/repositories", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("repository list status=%d", resp.StatusCode)
+	}
+	var body struct {
+		Repositories []repositorymanager.Source `json:"repositories"`
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Repositories) != 1 || body.Repositories[0].ID != "101conv-official" || body.Repositories[0].Trust != repositorymanager.TrustUnavailable {
+		t.Fatalf("official root absence was not exposed honestly: %+v", body.Repositories)
 	}
 }
