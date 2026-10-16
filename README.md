@@ -1,18 +1,20 @@
 # 101conv
 
-101conv is a self-hosted file conversion application. The default production stack is defined in [`compose.yaml`](compose.yaml) and runs the React/Nginx web app, Go Core, restricted conversion Worker, and PostgreSQL.
+101conv is a self-hosted file conversion application. The supported application is a React web client, Go Core and restricted Worker, and PostgreSQL, deployed together from [`compose.yaml`](compose.yaml).
 
 ## Deploy with Portainer
 
-Use one Portainer Git stack for `https://github.com/Timisah/101conv`, branch `main`, Compose path `compose.yaml`. For an existing Java installation, follow the [in-place migration and rollback guide](docs/deployment/portainer.md) before pulling and redeploying. It preserves the Java data directory and existing Go named volumes; it does not import Java accounts, history, or converter definitions.
+Create or update one Git stack from `https://github.com/Timisah/101conv`, branch `main`, Compose path `compose.yaml`. The web interface is published on port `5656` by default. Only the web service publishes a host port; Core and PostgreSQL stay private.
 
-Set these variables in the Portainer stack:
+Set these variables in the Portainer stack's Environment variables table:
 
-- `DATA_PATH`: existing directory on the Docker host. The default Go state location is its `go-data` subdirectory; prepare that directory for UID/GID `65532:65532` as described in the guide.
-- `POSTGRES_PASSWORD`: a strong database password.
-- `ENGINE_ADMIN_TOKEN`: a strong administrator token for browser login and management APIs.
-- `PORT`: optional published port, default `5656`.
+- `DATA_PATH`: host directory whose `go-data` subdirectory contains Go management state and installed engines. For an existing installation, retain its current value. The directory `${DATA_PATH}/go-data` must already exist and be writable by UID/GID `65532:65532`.
+- `POSTGRES_PASSWORD`: strong PostgreSQL password. When retaining an existing database volume, keep its original database credentials.
+- `ENGINE_ADMIN_TOKEN`: strong administrator login/API token.
+- `PORT`: optional published web port; defaults to `5656`.
 
-Only the web service publishes a host port. The Go Core API is private behind Nginx. Portainer must build Compose services from the Git checkout; the web service rebuilds without build cache when redeployed so updated frontend files are served. Existing deployments should keep their current `DATA_PATH` and `PORT` values.
+Optionally set `GO_DATA_PATH` to the exact existing Go data directory instead of using `${DATA_PATH}/go-data`. Do not delete or replace the PostgreSQL, uploads, results, or Go data storage when updating the stack. Compose builds the frontend and backend from the checked-out commit without build cache, while HTML revalidation makes the newly built interface visible after deployment.
 
-The frontend and versioned API are documented in [`web/README.md`](web/README.md) and [`docs/api/v1/openapi.yaml`](docs/api/v1/openapi.yaml). For the real browser conversion smoke test, see [`scripts/phase5-browser-smoke.sh`](scripts/phase5-browser-smoke.sh).
+For a new deployment, create the Go data directory before deploying. For an existing installation, preserve the current path and named volumes. See the [Portainer deployment guide](docs/deployment/portainer.md) for storage, variables, and update details.
+
+The browser uses the versioned API documented in [`docs/api/v1/openapi.yaml`](docs/api/v1/openapi.yaml). Frontend development instructions are in [`web/README.md`](web/README.md); the browser conversion smoke test is [`scripts/phase5-browser-smoke.sh`](scripts/phase5-browser-smoke.sh).

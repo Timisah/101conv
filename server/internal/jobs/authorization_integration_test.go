@@ -5,9 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -65,42 +67,50 @@ func TestPostgresOwnerIsolationAndQuotas(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	first, err := service.CreateUploadFor(ctx, "user-one", 100, 25, "first.png", bytes.NewReader(bytes.Repeat([]byte("a"), 20)))
+	ownerSuffix, err := randomID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.CreateUploadFor(ctx, "user-one", 100, 25, "too-much.png", bytes.NewReader(bytes.Repeat([]byte("b"), 6))); !errors.Is(err, ErrQuotaExceeded) {
+	oneOwner := "user-one-" + ownerSuffix[:8]
+	twoOwner := "user-two-" + ownerSuffix[:8]
+	threeOwner := "user-three-" + ownerSuffix[:8]
+	quotaLimit := func(n int64) *int64 { return &n }
+	first, err := service.CreateUploadFor(ctx, oneOwner, 100, quotaLimit(25), "first.png", bytes.NewReader(bytes.Repeat([]byte("a"), 20)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.CreateUploadFor(ctx, oneOwner, 100, quotaLimit(25), "too-much.png", bytes.NewReader(bytes.Repeat([]byte("b"), 6))); !errors.Is(err, ErrQuotaExceeded) {
 		t.Fatalf("monthly input quota error=%v", err)
 	}
-	second, err := service.CreateUploadFor(ctx, "user-one", 100, 25, "second.png", bytes.NewReader([]byte("small")))
+	second, err := service.CreateUploadFor(ctx, oneOwner, 100, quotaLimit(25), "second.png", bytes.NewReader([]byte("small")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := service.CreateUploadFor(ctx, "user-two", 100, 25, "other.png", bytes.NewReader([]byte("private")))
+	other, err := service.CreateUploadFor(ctx, twoOwner, 100, quotaLimit(25), "other.png", bytes.NewReader([]byte("private")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	compressionUpload, err := service.CreateUploadFor(ctx, "user-two", 100, 25, "compressed.png", bytes.NewReader([]byte("compress me")))
+	compressionUpload, err := service.CreateUploadFor(ctx, twoOwner, 100, quotaLimit(25), "compressed.png", bytes.NewReader([]byte("compress me")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := func(upload string, key string) SubmitRequest {
 		return SubmitRequest{UploadID: upload, ProfileID: "test-profile", TargetFormat: "jpg", IdempotencyKey: key}
 	}
-	if _, _, err = service.SubmitFor(ctx, request(first.ID, "user-one-key-0001"), "user-one", Limits{MonthlyJobs: 1}); err != nil {
+	if _, _, err = service.SubmitFor(ctx, request(first.ID, "user-one-key-"+ownerSuffix[:8]+"-1"), oneOwner, Limits{MonthlyJobs: quotaLimit(1)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = service.SubmitFor(ctx, request(second.ID, "user-one-key-0002"), "user-one", Limits{MonthlyJobs: 1}); !errors.Is(err, ErrQuotaExceeded) {
+	if _, _, err = service.SubmitFor(ctx, request(second.ID, "user-one-key-"+ownerSuffix[:8]+"-2"), oneOwner, Limits{MonthlyJobs: quotaLimit(1)}); !errors.Is(err, ErrQuotaExceeded) {
 		t.Fatalf("monthly job quota error=%v", err)
 	}
-	if _, _, err = service.SubmitFor(ctx, request(other.ID, "user-two-key-0001"), "user-two", Limits{MonthlyJobs: 1}); err != nil {
+	if _, _, err = service.SubmitFor(ctx, request(other.ID, "user-two-key-"+ownerSuffix[:8]+"-1"), twoOwner, Limits{MonthlyJobs: quotaLimit(1)}); err != nil {
 		t.Fatal(err)
 	}
-	compressionRequest := request(compressionUpload.ID, "user-two-compress-001")
+	compressionRequest := request(compressionUpload.ID, "user-two-compress-"+ownerSuffix[:8])
 	compressionRequest.ProfileID = compressionProfile.ID
 	compressionRequest.Mode = "compress"
 	compressionRequest.Options = map[string]string{"targetSizeMb": "2"}
-	compressedJob, _, err := service.SubmitFor(ctx, compressionRequest, "user-two", Limits{MonthlyJobs: 2})
+	compressedJob, _, err := service.SubmitFor(ctx, compressionRequest, twoOwner, Limits{MonthlyJobs: quotaLimit(2)})
 	if err != nil {
 		t.Fatalf("compression job submission failed: %v", err)
 	}
@@ -109,23 +119,58 @@ func TestPostgresOwnerIsolationAndQuotas(t *testing.T) {
 	}
 	wrongConversion := request(compressionUpload.ID, "cross-mode-convert-001")
 	wrongConversion.ProfileID = compressionProfile.ID
-	if _, _, err = service.SubmitFor(ctx, wrongConversion, "user-two", Limits{MonthlyJobs: 3}); !errors.Is(err, ErrUnsupported) {
+	if _, _, err = service.SubmitFor(ctx, wrongConversion, twoOwner, Limits{MonthlyJobs: quotaLimit(3)}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("conversion with a compression profile should fail, got %v", err)
 	}
 	wrongCompression := request(compressionUpload.ID, "cross-mode-compress-01")
 	wrongCompression.Mode = "compress"
 	wrongCompression.Options = map[string]string{"targetSizeMb": "2"}
-	if _, _, err = service.SubmitFor(ctx, wrongCompression, "user-two", Limits{MonthlyJobs: 3}); !errors.Is(err, ErrUnsupported) {
+	if _, _, err = service.SubmitFor(ctx, wrongCompression, twoOwner, Limits{MonthlyJobs: quotaLimit(3)}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("compression with a conversion profile should fail, got %v", err)
 	}
-	if _, _, err = service.SubmitFor(ctx, request(other.ID, "user-three-key-0001"), "user-three", Limits{}); !errors.Is(err, ErrNotFound) {
+	if _, _, err = service.SubmitFor(ctx, request(other.ID, "user-three-key-"+ownerSuffix[:8]), threeOwner, Limits{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-account upload access error=%v", err)
 	}
-	items, total, err := service.List(ctx, ListFilter{Limit: 10, OwnerID: "user-one"})
+	raceOwner := "quota-race-" + ownerSuffix
+	uploadA, err := service.CreateUploadFor(ctx, raceOwner, 100, nil, "race-a.png", bytes.NewReader([]byte("a")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadB, err := service.CreateUploadFor(ctx, raceOwner, 100, nil, "race-b.png", bytes.NewReader([]byte("b")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	results := make(chan error, 2)
+	for i, upload := range []Upload{uploadA, uploadB} {
+		go func(i int, u Upload) {
+			defer wg.Done()
+			limit := int64(1)
+			_, _, e := service.SubmitFor(ctx, request(u.ID, fmt.Sprintf("race-submit-key-%s-%02d", ownerSuffix[:8], i)), raceOwner, Limits{MonthlyJobs: &limit})
+			results <- e
+		}(i, upload)
+	}
+	wg.Wait()
+	close(results)
+	accepted, quotaRejected := 0, 0
+	for e := range results {
+		if e == nil {
+			accepted++
+		} else if errors.Is(e, ErrQuotaExceeded) {
+			quotaRejected++
+		} else {
+			t.Errorf("unexpected concurrent quota result: %v", e)
+		}
+	}
+	if accepted != 1 || quotaRejected != 1 {
+		t.Fatalf("concurrent quota accepted=%d rejected=%d, want one each", accepted, quotaRejected)
+	}
+	items, total, err := service.List(ctx, ListFilter{Limit: 10, OwnerID: oneOwner})
 	if err != nil || total != 1 || len(items) != 1 {
 		t.Fatalf("user-one jobs=%d items=%d err=%v", total, len(items), err)
 	}
-	if _, err = service.GetFor(ctx, items[0].ID, "user-two"); !errors.Is(err, ErrNotFound) {
+	if _, err = service.GetFor(ctx, items[0].ID, twoOwner); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-account job detail access error=%v", err)
 	}
 }

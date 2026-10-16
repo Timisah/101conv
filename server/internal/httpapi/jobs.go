@@ -44,7 +44,7 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	upload, err := a.jobs.CreateUploadFor(r.Context(), p.ID, p.MaxFileBytes, p.MonthlyBytes, header.Filename, file)
+	upload, err := a.jobs.CreateUploadFor(r.Context(), p.ID, p.MaxFileBytes, p.Quotas.MonthlyBytes.Value, header.Filename, file)
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -61,7 +61,11 @@ func (a *API) submitCompressionJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) submitJobMode(w http.ResponseWriter, r *http.Request, forcedMode string) {
-	p, ok := a.requireCapability(w, r, auth.ScopeSubmit)
+	permissionScope := auth.ScopeSubmit
+	if forcedMode == "compress" {
+		permissionScope = auth.ScopeCompress
+	}
+	p, ok := a.requireCapability(w, r, permissionScope)
 	if !ok || !a.jobsReady(w) {
 		return
 	}
@@ -82,7 +86,7 @@ func (a *API) submitJobMode(w http.ResponseWriter, r *http.Request, forcedMode s
 		}
 		req.Mode = "convert"
 	}
-	job, duplicate, err := a.jobs.SubmitFor(r.Context(), req, p.ID, jobs.Limits{MonthlyJobs: p.MonthlyJobs})
+	job, duplicate, err := a.jobs.SubmitFor(r.Context(), req, p.ID, jobs.Limits{MonthlyJobs: p.Quotas.MonthlyJobs.Value})
 	if err != nil {
 		writeJobError(w, err)
 		return

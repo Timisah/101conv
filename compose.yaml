@@ -41,7 +41,7 @@ services:
       ENGINE_ADMIN_TOKEN: ${ENGINE_ADMIN_TOKEN:?Set a strong ENGINE_ADMIN_TOKEN in Portainer}
     volumes:
       - type: bind
-        source: ${GO_DATA_PATH:-${DATA_PATH:?Set DATA_PATH to the existing legacy data directory}/go-data}
+        source: ${GO_DATA_PATH:-${DATA_PATH:?Set DATA_PATH to the parent of the persistent Go data directory}/go-data}
         target: /var/lib/101conv
         bind:
           create_host_path: false
@@ -69,8 +69,7 @@ services:
     cpus: 1.5
     restart: unless-stopped
 
-  # Keep the legacy Java service ID so Compose replaces that container in place.
-  101conv:
+  web:
     build:
       context: ./web
       dockerfile: Dockerfile
@@ -118,7 +117,7 @@ services:
       JOB_LEASE: ${JOB_LEASE:-45s}
     volumes:
       - type: bind
-        source: ${GO_DATA_PATH:-${DATA_PATH:?Set DATA_PATH to the existing legacy data directory}/go-data}/engines
+        source: ${GO_DATA_PATH:-${DATA_PATH:?Set DATA_PATH to the parent of the persistent Go data directory}/go-data}/engines
         target: /var/lib/101conv/engines
         read_only: true
         bind:

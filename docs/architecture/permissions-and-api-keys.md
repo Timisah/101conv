@@ -1,48 +1,35 @@
-# Local accounts, permissions, quotas, and API keys
+# Accounts, groups, permissions, quotas, and API keys
 
-101conv keeps one deployment administrator and adds ordinary user accounts for conversion. The administrator remains the trusted operator of the instance; user accounts cannot install engines, edit profiles, or change repositories.
+The Go Core is authoritative for access and quota decisions. React controls only how administrators and users interact with that policy.
 
-## Account model
+## Policy model
 
-- `ENGINE_ADMIN_TOKEN` is still the global administrator credential. Existing integrations keep working; it is never sent to the browser. Use it only in trusted automation and keep it in a server-side secret store.
-- An administrator creates regular accounts through Administration. There is no public registration route. Passwords must be 12–256 characters and are stored as Argon2id hashes with random salts.
-- A regular account has two independent permissions: `canConvert` and `canReadJobs`. Disabling an account rejects its sessions and revokes all its API keys. Deleting through the API is deliberately a disable operation so historical jobs and ownership data are retained.
-- Regular users can see only their own jobs, attempts, and results. An administrator can see all jobs. Existing records are migrated to the legacy administrator owner so current history remains accessible.
+The deployment administrator authenticates with `ENGINE_ADMIN_TOKEN`. Administrators create local accounts; public registration is not exposed. Reusable roles grant permissions. A user may belong to multiple named groups; each group may reference a role and add explicit allow/deny rules. Grants from roles and groups combine, but a deny in any group wins over other inherited grants. An individual allow/deny override is highest priority. The user inspector lists effective permission values and the contributing role, group, and user override sources.
+
+Permission names are stable API identifiers:
+
+- `conversion.use`, `compression.use`
+- `jobs.read`, `jobs.cancel`
+- `converters.manage`, `repositories.manage`
+- `users.manage`, `groups.manage`, `roles.manage`
+- `api_keys.manage`
+
+Every protected API request checks the current effective permissions. Sessions and API keys do not cache an authorization grant: changes to group membership, role policy, user overrides, or enabled state take effect on the next request. API keys cannot administer the instance.
 
 ## Quotas
 
-Administrators can set a per-file byte limit (up to the instance's 100 MiB maximum), a monthly conversion count, and monthly uploaded input bytes. A zero monthly limit means unlimited. The Administration form starts new accounts at 100 conversions and 5 GiB of uploaded data per month.
+Each account and group has independent max-file bytes, monthly job count, and monthly uploaded bytes settings. Each field has an explicit `limited`, `unlimited`, or `inherit` mode; zero is never used as the new model's sentinel. An individual limited/unlimited setting overrides group settings. If the account inherits, the lowest limited value across its groups wins; absent a limited value, any unlimited group setting grants unlimited; otherwise the instance account default applies. Current instance upload/output/Worker safety bounds remain hard ceilings independent of account quotas.
 
-Uploaded bytes are charged when the upload is durably accepted, including files that are not later submitted. This reserves storage usage early and prevents users bypassing the data allowance with abandoned uploads. Conversion count is charged transactionally when a job is submitted; failed and canceled jobs still count. Both counters reset on the first day of each UTC month. Concurrent requests serialize quota checks per account in PostgreSQL, so parallel uploads or submissions cannot overspend the allowance.
+Monthly uploads are charged when persisted, including abandoned uploads. Jobs are charged when submitted, including failed or canceled work. Both values reset on the first day of the UTC month. PostgreSQL advisory transaction locks serialize quota reservations per user, preventing concurrent requests from exceeding limits.
 
 ## API keys
 
-Users create and revoke keys under Account & API keys. A key is a high-entropy bearer secret with a `101c_` prefix. The raw value is returned once; the database keeps only its SHA-256 digest. Each key gets a chosen subset of these scopes:
+Users create or revoke keys under Account & API keys. A key is a high-entropy bearer secret with the `101c_` prefix. Its raw value is shown once; PostgreSQL stores only a SHA-256 digest. Scopes include upload, conversion submission, compression submission, job reads/cancellation, and result downloads. Scopes intersect with the owner's current permissions and quotas. Disabling an account revokes its keys while preserving job ownership and history.
 
-- `conversion:upload`
-- `conversion:submit`
-- `jobs:read`
-- `jobs:cancel`
-- `results:download`
+## API and migration
 
-Scopes intersect with the account permissions and quotas. Disabling conversion or history access therefore also blocks older keys. Keys cannot perform administrator operations. Keys are revocable immediately, but currently have no built-in expiry date; users should rotate them when their integration's credential store supports rotation.
+The OpenAPI contract is [`../api/v1/openapi.yaml`](../api/v1/openapi.yaml). Account, bulk update, group/membership, and role operations are under `/api/v1/users`, `/api/v1/groups`, and `/api/v1/roles`. A delegated `users.manage` account can list accounts, create a restricted custom account with bounded default quotas, and enable/disable other users. Assigning roles or groups, changing permission/quota overrides, and resetting passwords require an administrator. Delegated group/role managers cannot change policies or memberships that affect their own account. Bulk requests return successful user IDs plus per-user failures; each user update and its audit event is transactional. The operation is intentionally partial-success across users, so a failure does not undo unrelated successful account changes.
 
-An external client can use its own user's key:
+Additive PostgreSQL migrations retain old account columns and backfill their conversion/history flags and numeric quota values into permission overrides and explicit quota modes. A previous zero monthly limit is migrated as unlimited; a positive value becomes limited. Existing account/job ownership and history are retained. Account disablement is soft and does not delete jobs or uploaded/result files.
 
-```sh
-curl -H "Authorization: Bearer $CONVERTER_API_KEY" \
-  -F "file=@input.png" \
-  https://converter.example/api/v1/uploads
-```
-
-The upload response supplies `id`. Submit that ID with an installed `profileId`, `targetFormat`, and unique `idempotencyKey` to `POST /api/v1/jobs`; use the same key on retry. Poll `GET /api/v1/jobs/{id}` and download `GET /api/v1/jobs/{id}/result`. Keys can be limited to the endpoints an integration needs. A shared administrator integration may continue to use `ENGINE_ADMIN_TOKEN`, which has full privileges and bypasses user quotas.
-
-## API and persistence
-
-The API is versioned under `/api/v1` and described in [`../api/v1/openapi.yaml`](../api/v1/openapi.yaml). User administration uses `GET/POST /users`, `PATCH/DELETE /users/{id}`. `DELETE` disables the account and revokes its keys. A user inspects their account and usage at `GET /me`, manages keys at `/me/api-keys`, and changes their password at `/me/password`. Key creation/list/revocation requires an interactive password-backed browser session; a leaked API key cannot manage the account's other credentials.
-
-On Core startup, additive PostgreSQL migrations create `conv_users` and `conv_api_keys`, then add owner IDs to the existing upload/job tables with `admin` as the default. The configured database and existing job rows are preserved. No Compose environment variable or manual data-path migration is required. If `DATABASE_URL` is not configured, account management remains unavailable, as do durable jobs.
-
-## Current boundaries
-
-This is a deliberately small role model: one administrator and regular users. There are no teams, custom roles, profile-specific entitlements, concurrent-job caps, external identity providers, API key expiry, or usage exports yet. Browser sessions are process-local and expire after 12 hours; users sign in again after a Core restart. Password reset changes the stored password but does not yet revoke other active browser sessions. The reverse proxy should serve the UI and API over HTTPS whenever credentials travel across an untrusted network.
+Administrative changes are recorded in `conv_audit_events`. The first version does not expose an audit search/export screen, expiring API keys, concurrent-job limits, or per-profile entitlements.

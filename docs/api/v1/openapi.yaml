@@ -124,7 +124,7 @@ paths:
       responses:
         '200': { description: User permissions and quota settings; password hashes and API key material are not returned }
     post:
-      summary: Create a regular user account (administrator only)
+      summary: Create a regular user account (users.manage permission required)
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       requestBody:
         required: true
@@ -132,21 +132,19 @@ paths:
           application/json:
             schema:
               type: object
-              required: [username, password, canConvert, canReadJobs, maxFileBytes]
+              required: [username, password, quotas]
               properties:
                 username: { type: string, minLength: 3, maxLength: 64 }
                 password: { type: string, minLength: 12, maxLength: 256, writeOnly: true }
-                canConvert: { type: boolean }
-                canReadJobs: { type: boolean }
-                maxFileBytes: { type: integer, minimum: 1, maximum: 104857600 }
-                monthlyJobs: { type: integer, minimum: 0, description: Zero means unlimited }
-                monthlyBytes: { type: integer, minimum: 0, description: Zero means unlimited; bytes are reserved at upload }
+                roleId: { type: string, description: Reusable permission role id }
+                quotas:
+                  $ref: '#/components/schemas/QuotaSettings'
       responses:
         '201': { description: User created; initial password is not retained in plaintext }
         '409': { description: Username already exists }
   /api/v1/users/{id}:
     patch:
-      summary: Change a user's permissions or quotas (administrator only)
+      summary: Change a user's permissions, role, groups, or quotas (users.manage permission required)
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
@@ -158,22 +156,101 @@ paths:
               type: object
               properties:
                 enabled: { type: boolean }
-                canConvert: { type: boolean }
-                canReadJobs: { type: boolean }
-                maxFileBytes: { type: integer, minimum: 1, maximum: 104857600 }
-                monthlyJobs: { type: integer, minimum: 0 }
-                monthlyBytes: { type: integer, minimum: 0 }
+                role: { type: string, enum: [user, admin] }
+                roleId: { type: string }
+                groupIds: { type: array, items: { type: string } }
+                permissionOverrides: { type: object, additionalProperties: { oneOf: [{type: boolean},{type: 'null'}] }, description: Null removes a user override and inherits policy }
+                quotas: { $ref: '#/components/schemas/QuotaSettings' }
                 password: { type: string, minLength: 12, maxLength: 256, writeOnly: true, description: Optional administrator password reset }
       responses:
         '200': { description: Updated user account }
         '404': { description: User not found }
     delete:
-      summary: Disable a user and revoke their API keys (administrator only)
+      summary: Disable a user and revoke their API keys (users.manage permission required)
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
         '204': { description: Account disabled; jobs and audit data remain stored }
+  /api/v1/users/bulk:
+    post:
+      summary: Apply selected account changes with per-user results (administrator only)
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userIds]
+              properties:
+                userIds: { type: array, minItems: 1, maxItems: 500, items: { type: string } }
+                enabled: { type: boolean }
+                role: { type: string, enum: [user, admin] }
+                roleId: { type: string }
+                groupAction: { type: string, enum: [add, remove] }
+                groupId: { type: string }
+                groupIds: { type: array, items: { type: string } }
+                permissionOverrides: { type: object, additionalProperties: { oneOf: [{type: boolean},{type: 'null'}] } }
+                quotas: { $ref: '#/components/schemas/QuotaSettings' }
+      responses:
+        '200': { description: All selected accounts updated }
+        '207': { description: Partial success with per-user errors }
+  /api/v1/groups:
+    get:
+      summary: List groups and effective group quota policies
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses: { '200': { description: Group definitions and membership counts } }
+    post:
+      summary: Create a group
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [name], properties: { id: {type: string}, name: {type: string}, description: {type: string}, roleId: {type: string}, permissions: {type: object, additionalProperties: {type: boolean}}, quotas: {$ref: '#/components/schemas/QuotaSettings'}} }
+      responses: { '200': { description: Group created } }
+  /api/v1/groups/{id}:
+    put:
+      summary: Update group policy
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, properties: {name: {type: string}, description: {type: string}, roleId: {type: string}, permissions: {type: object, additionalProperties: {type: boolean}}, quotas: {$ref: '#/components/schemas/QuotaSettings'}}}}}}
+      responses: { '200': { description: Group updated } }
+    delete:
+      summary: Delete a group without deleting its members or their job history
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses: { '204': { description: Group and memberships removed } }
+  /api/v1/groups/{id}/members:
+    put:
+      summary: Replace group membership
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [userIds], properties: {userIds: {type: array, maxItems: 1000, items: {type: string}}}}}}}
+      responses: { '204': { description: Membership replaced transactionally } }
+  /api/v1/roles:
+    get:
+      summary: List reusable roles and permission names
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses: { '200': { description: Roles and supported permissions } }
+    post:
+      summary: Create a reusable role
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [id, name, permissions], properties: {id: {type: string}, name: {type: string}, description: {type: string}, permissions: {type: object, additionalProperties: {type: boolean}}}}}}}
+      responses: { '200': { description: Role created } }
+  /api/v1/roles/{id}:
+    put:
+      summary: Update a reusable role
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, properties: {name: {type: string}, description: {type: string}, permissions: {type: object, additionalProperties: {type: boolean}}}}}}}
+      responses: { '200': { description: Role updated; active identities reevaluate immediately } }
+    delete:
+      summary: Delete an unused custom role
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses: { '204': { description: Role removed } }
   /api/v1/repositories:
     get:
       summary: List configured repository sources and trust state
@@ -582,6 +659,7 @@ components:
       type: apiKey
       in: cookie
       name: 101conv_admin
+      description: Browser session. Each endpoint checks its required effective permission; administrator accounts have all permissions.
   parameters:
     JobId:
       in: path
@@ -589,6 +667,20 @@ components:
       required: true
       schema: { type: string, format: uuid }
   schemas:
+    QuotaSettings:
+      type: object
+      required: [maxFileBytes, monthlyJobs, monthlyBytes]
+      description: Each quota is independent; group settings may inherit, while a user may inherit or override each value.
+      properties:
+        maxFileBytes: { $ref: '#/components/schemas/QuotaLimit' }
+        monthlyJobs: { $ref: '#/components/schemas/QuotaLimit' }
+        monthlyBytes: { $ref: '#/components/schemas/QuotaLimit' }
+    QuotaLimit:
+      type: object
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [limited, unlimited, inherit] }
+        value: { type: integer, minimum: 1, description: Required only when mode is limited; bytes for file/data quotas and jobs for job count. }
     Upload:
       type: object
       required: [id, fileName, extension, size, sha256, createdAt]

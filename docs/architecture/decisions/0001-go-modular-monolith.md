@@ -19,8 +19,7 @@ Go builds a small static service binary and offers direct support for HTTP serve
 
 ## Consequences
 
-- The backend is a deliberate rewrite; compatibility is defined by API and user-visible behavior, not by preserving Java internals.
-- The Java service remains a comparison baseline until the Go implementation passes migration and behavior gates.
+- The Go modular monolith is the only supported application implementation. Compatibility is defined by API contracts and current Go data formats, not by retaining obsolete runtime code.
 - PostgreSQL and a Worker role add operational components, but provide restart recovery and isolate converter execution from HTTP request handling.
-- Migration must preserve accounts, histories, configuration, installed profiles, and user files where feasible; the old data is not discarded during cutover.
+- Schema migration preserves existing Go accounts, histories, configuration, installed profiles, and user files. Compose updates do not remove persistent directories or named volumes.
 - The built-in catalog can be present while empty. Official profiles will be published only after package verification, platform compatibility, and licensing metadata are established.

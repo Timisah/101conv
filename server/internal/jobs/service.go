@@ -118,10 +118,10 @@ CREATE TABLE IF NOT EXISTS conv_job_attempts (
 }
 
 func (s *Service) CreateUpload(ctx context.Context, fileName string, input io.Reader) (view Upload, retErr error) {
-	return s.CreateUploadFor(ctx, "admin", MaxInputBytes, 0, fileName, input)
+	return s.CreateUploadFor(ctx, "admin", MaxInputBytes, nil, fileName, input)
 }
 
-func (s *Service) CreateUploadFor(ctx context.Context, ownerID string, maxFileBytes, monthlyInputBytes int64, fileName string, input io.Reader) (view Upload, retErr error) {
+func (s *Service) CreateUploadFor(ctx context.Context, ownerID string, maxFileBytes int64, monthlyInputBytes *int64, fileName string, input io.Reader) (view Upload, retErr error) {
 	if strings.TrimSpace(ownerID) == "" {
 		return Upload{}, fmt.Errorf("upload owner is required")
 	}
@@ -197,12 +197,12 @@ func (s *Service) CreateUploadFor(ctx context.Context, ownerID string, maxFileBy
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, ownerID); err != nil {
 		return Upload{}, err
 	}
-	if monthlyInputBytes > 0 {
+	if monthlyInputBytes != nil {
 		var used int64
 		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(sum(size_bytes),0) FROM conv_uploads WHERE owner_id=$1 AND created_at >= date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`, ownerID).Scan(&used); err != nil {
 			return Upload{}, err
 		}
-		if used+size > monthlyInputBytes {
+		if used+size > *monthlyInputBytes {
 			return Upload{}, ErrQuotaExceeded
 		}
 	}
@@ -221,7 +221,7 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (Job, bool, err
 }
 
 type Limits struct {
-	MonthlyJobs int
+	MonthlyJobs *int64
 }
 
 type MonthlyUsage struct {
@@ -361,12 +361,12 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		}
 		return Job{}, false, fmt.Errorf("%w: upload has already been submitted", ErrConflict)
 	}
-	if limits.MonthlyJobs > 0 {
+	if limits.MonthlyJobs != nil {
 		var jobCount int
 		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM conv_jobs j WHERE j.owner_id=$1 AND j.created_at >= date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`, ownerID).Scan(&jobCount); err != nil {
 			return Job{}, false, err
 		}
-		if jobCount >= limits.MonthlyJobs {
+		if int64(jobCount) >= *limits.MonthlyJobs {
 			return Job{}, false, ErrQuotaExceeded
 		}
 	}

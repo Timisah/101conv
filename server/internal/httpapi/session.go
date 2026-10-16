@@ -149,21 +149,21 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteStrictMode,
 	})
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusCreated, map[string]any{"authenticated": true, "username": principal.Username, "role": principal.Role, "canConvert": principal.CanConvert, "canReadJobs": principal.CanReadJobs, "expiresAt": expires.UTC()})
+	writeJSON(w, http.StatusCreated, map[string]any{"authenticated": true, "username": principal.Username, "role": principal.Role, "canConvert": principal.CanConvert, "canCompress": principal.Permissions[auth.PermissionCompression], "canReadJobs": principal.CanReadJobs, "permissions": principal.Permissions, "expiresAt": expires.UTC()})
 }
 
 func (a *API) getSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	p, ok := a.identity(r)
+	p, _, ok := a.identityWithMethod(r)
 	if !ok {
 		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "username": p.Username, "role": p.Role, "canConvert": p.CanConvert, "canReadJobs": p.CanReadJobs})
+	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "username": p.Username, "role": p.Role, "canConvert": p.CanConvert, "canCompress": p.Permissions[auth.PermissionCompression], "canReadJobs": p.CanReadJobs, "permissions": p.Permissions})
 }
 
 func (a *API) getSessionSettings(w http.ResponseWriter, r *http.Request) {
-	if !a.authorized(w, r) {
+	if !a.requireAdmin(w, r) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -175,7 +175,7 @@ func (a *API) getSessionSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) updateSessionSettings(w http.ResponseWriter, r *http.Request) {
-	if !a.authorized(w, r) {
+	if !a.requireAdmin(w, r) {
 		return
 	}
 	var req struct {

@@ -1,6 +1,6 @@
 # Converter catalogs
 
-101conv keeps the legacy Java catalog files for rollback compatibility. The Go marketplace uses a signed TUF repository at `catalog/metadata` and `catalog/targets`; do not replace the legacy `catalog/index.json`.
+The marketplace uses a versioned catalog at `catalog/metadata` and `catalog/targets`, verified with TUF when the repository trust root is provisioned. The current GitHub catalog index is also available for explicitly approved unsigned browsing/installation; unsigned packages are clearly identified in the UI.
 
 ## Official catalog status
 
@@ -46,7 +46,7 @@ The target manifests are already browseable from the existing GitHub repository 
 
 ## Repository and manifest format
 
-The repository base URL is `https://raw.githubusercontent.com/Timisah/101conv/main/catalog`. TUF metadata is under `/metadata`; target paths are under `/targets`. The signed `catalog/index.json` target is `catalog/targets/catalog/index.json`, separate from the legacy Java index at `catalog/index.json`.
+The repository base URL is `https://raw.githubusercontent.com/Timisah/101conv/main/catalog`. TUF metadata is under `/metadata`; target paths are under `/targets`. The signed catalog index target is `catalog/targets/catalog/index.json`.
 
 The signed index has schema version 1 and lists engine/profile manifest target paths. Engine manifests contain `{"engine": <engine.Definition>}` and profile manifests contain `{"profile": <profile.Definition>}`. A profile names its explicit `type` (`conversion` or `compression`), engine compatibility range, required capabilities, formats, and argv templates. Keep conversion and compression in separate profile manifests and catalog entries even when they use the same engine. The matching profile type is enforced at job submission, and an engine is installed once and shared by all profiles that depend on it. Older installed definitions without a type remain readable through the legacy compatibility path. Older repository manifests are classified as conversion-only when they have no compression block, or as compression-only when they do; new manifests should declare `type` explicitly.
 

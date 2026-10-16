@@ -1,8 +1,8 @@
-> Phase 5 adds the web/Nginx service, browser session, and jobs list. The Phase 4 deployment/auth descriptions below are historical; current deployment details are in [phase5-web.md](phase5-web.md).
+The current deployment and frontend behavior are documented in [phase5-web.md](phase5-web.md). This document describes the conversion runtime contract still used by the Go Core and Worker.
 
 # Phase 4: conversion jobs and restricted Worker
 
-Phase 4 adds a first real conversion path to the Go service while keeping the existing Java application and its deployment intact. This chapter describes that historical deployment. The current production deployment is the root `compose.yaml`, which replaces the Java runtime in the existing stack; see [`../deployment/portainer.md`](../deployment/portainer.md) for the migration procedure. `compose.go.yaml` is now a compatibility symlink to the root Compose file for existing stack configurations.
+The Go conversion path stores durable jobs and attempts in PostgreSQL, with one Core and one restricted Worker runtime role in the same Go codebase. The root `compose.yaml` defines the supported deployment with React/Nginx, Core, Worker, and PostgreSQL.
 
 ## Runtime boundary
 
@@ -26,14 +26,13 @@ The test suite includes a real, self-contained PPM P3 to PGM P2 converter in `se
 
 `go test ./...`, `go test -race ./...`, `go vet ./...`, and the Compose smoke test are the Phase 4 checks. Results from this implementation run are recorded in the delivery summary; Docker controls observed through Compose are subject to the host Docker daemon's enforcement and are not a substitute for a production host security audit.
 
-## Limits and next steps
+## Runtime limits
 
-- Authentication is one administrator bearer token, not per-user authorization or tenant isolation. A production public API needs user/session auth and per-job ownership checks.
 - The default scratch image contains no dynamic libraries. Many FFmpeg/ImageMagick distributions need a curated runtime image and allowlisted shared libraries; do not assume arbitrary installed binaries will execute in this image.
 - CPU and memory cgroups plus PID/disk bounds are configured at the Worker container, but no syscall profile, seccomp profile beyond Docker defaults, or per-job cgroup exists. This is process isolation, not a complete hostile-code sandbox.
 - The Worker has no public egress; its database is reachable only on the internal worker network. Compose isolation was tested locally, but Portainer/Swarm translation and host kernel enforcement need verification on the deployment host.
-- Jobs are globally administrator-visible, uploads are one-use, and there is no retention/garbage-collection policy yet. Result and upload disk usage requires operational monitoring and cleanup policy.
+- Jobs are scoped to their account owner, uploads are one-use, and there is no retention/garbage-collection policy yet. Result and upload disk usage requires operational monitoring and cleanup policy.
 - Progress is lease/heartbeat progress rather than converter-reported percent. Retry policy covers worker loss/interruption and is intentionally bounded.
 - The API returns bounded stdout/stderr in attempt details, but it has no structured converter-specific diagnostic mapping yet.
 
-Recommended Phase 5: establish user identity and authorization, retention quotas, engine-specific runtime packaging (including FFmpeg), richer progress/diagnostics, and a production container hardening review. Keep repository signing/publishing and the future isolated-worker threat model distinct from conversion scheduling or UI redesign.
+Next steps include backup/restore, retention and cleanup policy, engine-specific runtime packaging, richer progress/diagnostics, and a production container hardening review. Repository trust and signing remain separate from converter sandboxing.

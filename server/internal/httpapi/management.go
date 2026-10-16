@@ -123,7 +123,7 @@ func (a *API) listProfiles(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
-	if !p.IsAdmin() && (p.APIKey && !auth.ScopeAllows(p, auth.ScopeSubmit) || !p.APIKey && !p.CanConvert) {
+	if !p.IsAdmin() && (p.APIKey && !auth.ScopeAllows(p, auth.ScopeSubmit) && !auth.ScopeAllows(p, auth.ScopeCompress) || !p.APIKey && !p.Permissions[auth.PermissionConversion] && !p.Permissions[auth.PermissionCompression]) {
 		writeAPIError(w, http.StatusForbidden, "permission_denied", "conversion permission is required")
 		return
 	}

@@ -7,7 +7,7 @@ export COMPOSE_PROJECT_NAME="101conv-phase5-smoke-$$"
 export SMOKE_IMAGE="101conv-phase5-smoke:$$"
 export WEB_IMAGE="101conv-web:phase5-smoke-$$"
 export BUILDX_CONFIG="$tmp_root/buildx"
-export DATA_PATH="$tmp_root/legacy-data"
+export DATA_PATH="$tmp_root/data"
 export GO_DATA_PATH="$tmp_root/go-data"
 export POSTGRES_PASSWORD="phase5-smoke-$(date +%s)-$RANDOM"
 export ENGINE_ADMIN_TOKEN="phase5-admin-$(date +%s)-$RANDOM"
@@ -16,13 +16,11 @@ export PORT="127.0.0.1:$port_num"
 export SMOKE_BASE="http://127.0.0.1:$port_num"
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost"
 export no_proxy="$NO_PROXY"
-export BROWSER_IMAGE="101conv-browser-smoke:local"
+export BROWSER_IMAGE="101conv-browser-smoke:$$"
 mkdir -p "$GO_DATA_PATH/imports" "$GO_DATA_PATH/engines" "$BUILDX_CONFIG" "$tmp_root/state/uploads" "$tmp_root/state/results"
 chmod 0777 "$GO_DATA_PATH" "$GO_DATA_PATH/imports" "$GO_DATA_PATH/engines"
 chmod 0700 "$tmp_root/state/uploads" "$tmp_root/state/results"
 mkdir -p "$DATA_PATH"
-printf 'legacy-data-migration-sentinel\n' > "$DATA_PATH/convdb.mv.db"
-legacy_sentinel_hash="$(sha256sum "$DATA_PATH/convdb.mv.db" | cut -d' ' -f1)"
 
 cleanup() {
   status=$?
@@ -62,17 +60,6 @@ if [[ -n "${CODEX_PROXY_CERT:-}" && -r "$CODEX_PROXY_CERT" ]]; then
 else
   docker build -t "$WEB_IMAGE" "$repo_root/web"
 fi
-cat >"$tmp_root/legacy-compose.yaml" <<YAML
-services:
-  101conv:
-    image: nginx:1.27-alpine
-    ports:
-      - "${PORT}:80"
-    volumes:
-      - "${DATA_PATH}:/var/lib/101conv"
-YAML
-docker compose -p "$COMPOSE_PROJECT_NAME" -f "$tmp_root/legacy-compose.yaml" up -d
-legacy_container="$(docker compose -p "$COMPOSE_PROJECT_NAME" -f "$tmp_root/legacy-compose.yaml" ps -q 101conv)"
 cat >"$tmp_root/compose.override.yaml" <<YAML
 services:
   core:
@@ -81,18 +68,14 @@ services:
   worker:
     build: null
     image: ${SMOKE_IMAGE}
-  101conv:
+  web:
     build: null
     image: ${WEB_IMAGE}
 YAML
 
 docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" up -d
-if docker inspect "$legacy_container" >/dev/null 2>&1; then
-  printf 'The deployment did not replace the prior service container.\n' >&2
-  exit 1
-fi
 core_container="$(docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" ps -q core)"
-web_container="$(docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" ps -q 101conv)"
+web_container="$(docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" ps -q web)"
 for _ in $(seq 1 60); do
   health="$(docker inspect --format '{{.State.Health.Status}}' "$core_container" 2>/dev/null || true)"
   [[ "$health" == "healthy" ]] && break
@@ -110,7 +93,7 @@ docker build -f "$repo_root/web/Dockerfile.e2e" -t "$BROWSER_IMAGE" "$repo_root/
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_web-core" "$BROWSER_IMAGE" node - <<'NODE'
 const assert = require('node:assert/strict');
 (async () => {
-  const base = 'http://101conv:5656';
+  const base = 'http://web:5656';
   const response = await fetch(base + '/');
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-cache, must-revalidate');
@@ -122,7 +105,7 @@ const assert = require('node:assert/strict');
   assert.equal(assetResponse.headers.get('cache-control'), 'public, max-age=31536000, immutable');
 })().catch(error => { console.error(error); process.exit(1); });
 NODE
-docker run --rm --shm-size=1g --network "${COMPOSE_PROJECT_NAME}_web-core" -e SMOKE_BASE=http://101conv:5656 -e ENGINE_ADMIN_TOKEN -e CHROMIUM_PATH=/usr/bin/chromium -e NO_PROXY=101conv,core,localhost,127.0.0.1 -e no_proxy=101conv,core,localhost,127.0.0.1 -v "$repo_root/web/node_modules:/app/node_modules:ro" -v "$repo_root/web/smoke.cjs:/app/smoke.cjs:ro" -w /app "$BROWSER_IMAGE" node smoke.cjs
+docker run --rm --shm-size=1g --network "${COMPOSE_PROJECT_NAME}_web-core" -e SMOKE_BASE=http://web:5656 -e ENGINE_ADMIN_TOKEN -e CHROMIUM_PATH=/usr/bin/chromium -e NO_PROXY=web,core,localhost,127.0.0.1 -e no_proxy=web,core,localhost,127.0.0.1 -v "$repo_root/web/node_modules:/app/node_modules:ro" -v "$repo_root/web/smoke.cjs:/app/smoke.cjs:ro" -w /app "$BROWSER_IMAGE" node smoke.cjs
 docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" restart postgres core worker
 for _ in $(seq 1 60); do
   health="$(docker inspect --format '{{.State.Health.Status}}' "$core_container" 2>/dev/null || true)"
@@ -133,7 +116,7 @@ done
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_web-core" -e ENGINE_ADMIN_TOKEN "$BROWSER_IMAGE" node - <<'NODE'
 const assert = require('node:assert/strict');
 (async () => {
-  const base = 'http://101conv:5656';
+  const base = 'http://web:5656';
   const headers = { Authorization: 'Bearer ' + process.env.ENGINE_ADMIN_TOKEN };
   const response = await fetch(base + '/api/v1/jobs?limit=100', { headers });
   assert.equal(response.status, 200);
@@ -146,5 +129,4 @@ const assert = require('node:assert/strict');
   assert.match(await result.text(), /^P2\n/);
 })().catch(error => { console.error(error); process.exit(1); });
 NODE
-[[ "$(sha256sum "$DATA_PATH/convdb.mv.db" | cut -d' ' -f1)" == "$legacy_sentinel_hash" ]]
-printf 'Phase 5 browser conversion smoke test passed.\n'
+printf 'Go/React browser conversion smoke test passed.\n'

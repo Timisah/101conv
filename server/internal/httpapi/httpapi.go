@@ -64,6 +64,16 @@ func NewWithAccounts(version string, catalogService *catalog.Service, management
 	mux.HandleFunc("POST /api/v1/users", a.createUser)
 	mux.HandleFunc("PATCH /api/v1/users/{id}", a.updateUser)
 	mux.HandleFunc("DELETE /api/v1/users/{id}", a.deleteUser)
+	mux.HandleFunc("POST /api/v1/users/bulk", a.bulkUpdateUsers)
+	mux.HandleFunc("GET /api/v1/groups", a.listGroups)
+	mux.HandleFunc("POST /api/v1/groups", a.saveGroup)
+	mux.HandleFunc("PUT /api/v1/groups/{id}", a.saveGroup)
+	mux.HandleFunc("DELETE /api/v1/groups/{id}", a.deleteGroup)
+	mux.HandleFunc("PUT /api/v1/groups/{id}/members", a.setGroupMembers)
+	mux.HandleFunc("GET /api/v1/roles", a.listRoles)
+	mux.HandleFunc("POST /api/v1/roles", a.saveRole)
+	mux.HandleFunc("PUT /api/v1/roles/{id}", a.saveRole)
+	mux.HandleFunc("DELETE /api/v1/roles/{id}", a.deleteRole)
 	mux.HandleFunc("GET /api/v1/catalogs", a.catalogs)
 	mux.HandleFunc("GET /api/v1/catalogs/101conv-official", a.officialCatalog)
 	mux.HandleFunc("GET /api/v1/engines", a.listEngines)
@@ -103,7 +113,45 @@ func NewWithAccounts(version string, catalogService *catalog.Service, management
 }
 
 func (a *API) authorized(w http.ResponseWriter, r *http.Request) bool {
-	return a.requireAdmin(w, r)
+	permission := auth.PermissionConvertersManage
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/api/v1/repositories"):
+		permission = auth.PermissionRepositoriesManage
+	case strings.HasPrefix(r.URL.Path, "/api/v1/users"):
+		permission = auth.PermissionUsersManage
+	case strings.HasPrefix(r.URL.Path, "/api/v1/groups"):
+		permission = auth.PermissionGroupsManage
+	case strings.HasPrefix(r.URL.Path, "/api/v1/roles"):
+		permission = auth.PermissionRolesManage
+	case strings.HasPrefix(r.URL.Path, "/api/v1/settings"):
+		permission = auth.PermissionUsersManage
+	}
+	return a.requirePermission(w, r, permission)
+}
+
+func (a *API) requirePermission(w http.ResponseWriter, r *http.Request, permission string) bool {
+	if a.management == nil || a.adminToken == "" {
+		writeAPIError(w, http.StatusServiceUnavailable, "management_disabled", "management requires configured persistent storage and ENGINE_ADMIN_TOKEN")
+		return false
+	}
+	p, method, ok := a.identityWithMethod(r)
+	if !ok {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return false
+	}
+	if p.APIKey {
+		writeAPIError(w, http.StatusForbidden, "forbidden", "API keys cannot administer instance settings")
+		return false
+	}
+	if !p.IsAdmin() && !p.Permissions[permission] {
+		writeAPIError(w, http.StatusForbidden, "permission_denied", "the "+permission+" permission is required")
+		return false
+	}
+	if method == "session" && r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOriginRequest(r) {
+		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
+		return false
+	}
+	return true
 }
 
 func (a *API) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -153,7 +201,7 @@ func (a *API) identityWithMethod(r *http.Request) (auth.Principal, string, bool)
 	if !ok {
 		return auth.Principal{}, "", false
 	}
-	if p.Role != auth.RoleAdmin && a.accounts != nil {
+	if p.ID != "admin" && a.accounts != nil {
 		fresh, err := a.accounts.Principal(r.Context(), p.ID)
 		if err != nil {
 			return auth.Principal{}, "", false
@@ -181,18 +229,30 @@ func (a *API) requireCapability(w http.ResponseWriter, r *http.Request, scope st
 		return p, true
 	}
 	allowed := false
+	permission := ""
+	switch scope {
+	case auth.ScopeUpload:
+		permission = auth.PermissionConversion
+	case auth.ScopeSubmit:
+		permission = auth.PermissionConversion
+	case auth.ScopeCompress:
+		permission = auth.PermissionCompression
+	case auth.ScopeRead, auth.ScopeResult:
+		permission = auth.PermissionJobsRead
+	case auth.ScopeCancel:
+		permission = auth.PermissionJobsCancel
+	}
 	if p.APIKey {
 		allowed = auth.ScopeAllows(p, scope)
-		if scope == auth.ScopeUpload || scope == auth.ScopeSubmit || scope == auth.ScopeCancel {
-			allowed = allowed && p.CanConvert
+		if scope == auth.ScopeUpload {
+			allowed = allowed && (p.Permissions[auth.PermissionConversion] || p.Permissions[auth.PermissionCompression])
+		} else {
+			allowed = allowed && p.Permissions[permission]
 		}
-		if scope == auth.ScopeRead || scope == auth.ScopeResult {
-			allowed = allowed && p.CanReadJobs
-		}
-	} else if scope == auth.ScopeUpload || scope == auth.ScopeSubmit || scope == auth.ScopeCancel {
-		allowed = p.CanConvert
-	} else if scope == auth.ScopeRead || scope == auth.ScopeResult {
-		allowed = p.CanReadJobs
+	} else if scope == auth.ScopeUpload {
+		allowed = p.Permissions[auth.PermissionConversion] || p.Permissions[auth.PermissionCompression]
+	} else {
+		allowed = p.Permissions[permission]
 	}
 	if !allowed {
 		writeAPIError(w, http.StatusForbidden, "permission_denied", "this account or API key does not have the required permission")
