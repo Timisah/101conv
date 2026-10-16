@@ -114,6 +114,22 @@ func compressedTar(t *testing.T, format, name string) []byte {
 	return out.Bytes()
 }
 
+func lzipMembers(t *testing.T, contents []byte, split int) []byte {
+	t.Helper()
+	compress := func(chunk []byte) []byte {
+		var out bytes.Buffer
+		w := lzip.NewWriter(&out)
+		if _, err := w.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return out.Bytes()
+	}
+	return append(compress(contents[:split]), compress(contents[split:])...)
+}
+
 func TestExtractXzAndLzipArchivesSafely(t *testing.T) {
 	for _, format := range []string{"tar.xz", "tar.lz"} {
 		t.Run(format, func(t *testing.T) {
@@ -129,6 +145,37 @@ func TestExtractXzAndLzipArchivesSafely(t *testing.T) {
 				t.Fatalf("unexpected extracted bytes %q", got)
 			}
 		})
+	}
+}
+
+func TestExtractConcatenatedLzipMembers(t *testing.T) {
+	var raw bytes.Buffer
+	tw := tar.NewWriter(&raw)
+	if err := tw.WriteHeader(&tar.Header{Name: "tools/cjxl", Mode: 0700, Size: 4, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("test")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archive := lzipMembers(t, raw.Bytes(), len(raw.Bytes())/2)
+	root := t.TempDir()
+	if err := extractArchive(archive, "tar.lz", root); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "tools", "cjxl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "test" {
+		t.Fatalf("unexpected extracted bytes %q", got)
+	}
+	corrupt := append([]byte(nil), archive...)
+	corrupt[len(corrupt)-1] ^= 0x01
+	if err := extractArchive(corrupt, "tar.lz", t.TempDir()); err == nil {
+		t.Fatal("accepted a corrupted footer in the final lzip member")
 	}
 }
 

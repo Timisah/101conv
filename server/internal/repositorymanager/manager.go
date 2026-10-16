@@ -27,13 +27,13 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/sorairolake/lzip-go"
 	"github.com/theupdateframework/go-tuf/v2/metadata/updater"
 	"github.com/timisah/101conv/server/internal/engine"
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/profile"
 	"github.com/timisah/101conv/server/internal/version"
 	"github.com/ulikunitz/xz"
+	"github.com/ulikunitz/xz/lzma"
 )
 
 const officialURL = "https://raw.githubusercontent.com/Timisah/101conv/main/catalog"
@@ -1393,63 +1393,157 @@ func extractArchive(data []byte, format, root string) error {
 }
 
 func newSafeLzipReader(data []byte) (io.Reader, error) {
-	// lzip-go currently buffers the compressed member while checking its
-	// trailer. Reject undersized input before parsing and cap the archive's
-	// attacker-controlled LZMA dictionary request before the decoder allocates.
-	if len(data) < 26 || string(data[:4]) != "LZIP" || data[4] != 1 {
+	if len(data) < 26 {
 		return nil, fmt.Errorf("invalid or truncated lzip archive")
 	}
-	code := data[5]
-	dictionary := uint64(1) << (code & 0x1f)
-	dictionary -= (dictionary / 16) * uint64((code>>5)&0x07)
-	if dictionary > maxLzipDictionaryBytes {
-		return nil, fmt.Errorf("lzip dictionary exceeds %d-byte limit", maxLzipDictionaryBytes)
-	}
-	decoder, err := lzip.NewReader(bytes.NewReader(data))
-	if err != nil {
+	r := &validatedLzipReader{archive: data}
+	if err := r.startMember(); err != nil {
 		return nil, err
 	}
-	return &validatedLzipReader{decoder: decoder, archive: data}, nil
+	return r, nil
 }
 
 type validatedLzipReader struct {
-	decoder   io.Reader
-	archive   []byte
-	crc       uint32
-	size      uint64
-	validated bool
+	archive        []byte
+	offset         int
+	decoder        io.Reader
+	input          *trackedReader
+	memberStart    int
+	crc            uint32
+	memberDataSize uint64
+	totalSize      int64
+	done           bool
 }
 
 func (r *validatedLzipReader) Read(p []byte) (int, error) {
-	n, err := r.decoder.Read(p)
-	if n > 0 {
-		r.crc = crc32.Update(r.crc, crc32.IEEETable, p[:n])
-		r.size += uint64(n)
+	if len(p) == 0 {
+		return 0, nil
 	}
-	if errors.Is(err, io.EOF) && !r.validated {
-		if verifyErr := r.verifyFooter(); verifyErr != nil {
-			return n, verifyErr
+	if r.done {
+		return 0, io.EOF
+	}
+	for {
+		if r.decoder == nil {
+			if err := r.startMember(); err != nil {
+				return 0, err
+			}
 		}
-		r.validated = true
+		// Read one byte beyond the archive limit so oversized streams fail
+		// before the caller can write excess bytes to the extraction stage.
+		remaining := maxExpandedBytes - r.totalSize
+		limit := int64(len(p))
+		if remaining < limit {
+			limit = remaining + 1
+		}
+		if limit <= 0 {
+			return 0, fmt.Errorf("archive exceeds expansion limit")
+		}
+		n, err := r.decoder.Read(p[:limit])
+		if n > 0 {
+			r.crc = crc32.Update(r.crc, crc32.IEEETable, p[:n])
+			r.memberDataSize += uint64(n)
+			r.totalSize += int64(n)
+			if r.totalSize > maxExpandedBytes {
+				return n, fmt.Errorf("archive exceeds expansion limit")
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			if verifyErr := r.finishMember(); verifyErr != nil {
+				return n, verifyErr
+			}
+			if n > 0 {
+				return n, nil
+			}
+			if r.done {
+				return 0, io.EOF
+			}
+			continue
+		}
+		return n, err
 	}
-	return n, err
 }
 
-func (r *validatedLzipReader) verifyFooter() error {
-	if len(r.archive) < 26 {
+func (r *validatedLzipReader) startMember() error {
+	if r.offset == len(r.archive) {
+		r.done = true
+		return io.EOF
+	}
+	if len(r.archive)-r.offset < 26 || string(r.archive[r.offset:r.offset+4]) != "LZIP" || r.archive[r.offset+4] != 1 {
+		return fmt.Errorf("invalid or truncated lzip member")
+	}
+	code := r.archive[r.offset+5]
+	dictionary := uint64(1) << (code & 0x1f)
+	dictionary -= (dictionary / 16) * uint64((code>>5)&0x07)
+	if dictionary > maxLzipDictionaryBytes {
+		return fmt.Errorf("lzip dictionary exceeds %d-byte limit", maxLzipDictionaryBytes)
+	}
+	var header [lzma.HeaderLen]byte
+	header[0] = lzma.Properties{LC: 3, LP: 0, PB: 2}.Code()
+	binary.LittleEndian.PutUint32(header[1:5], uint32(dictionary))
+	binary.LittleEndian.PutUint64(header[5:], ^uint64(0)) // LZIP members end with the LZMA end marker.
+	r.input = &trackedReader{reader: io.MultiReader(bytes.NewReader(header[:]), bytes.NewReader(r.archive[r.offset+6:]))}
+	decoder, err := (lzma.ReaderConfig{DictCap: int(maxLzipDictionaryBytes)}).NewReader(r.input)
+	if err != nil {
+		return err
+	}
+	r.decoder = decoder
+	r.memberStart = r.offset
+	r.crc = 0
+	r.memberDataSize = 0
+	return nil
+}
+
+func (r *validatedLzipReader) finishMember() error {
+	compressedSize := r.input.count - lzma.HeaderLen
+	if compressedSize < 0 {
+		return fmt.Errorf("invalid lzip member stream")
+	}
+	footerOffset := r.memberStart + 6 + compressedSize
+	if footerOffset < r.memberStart || len(r.archive)-footerOffset < 20 {
 		return fmt.Errorf("truncated lzip footer")
 	}
-	footer := r.archive[len(r.archive)-20:]
+	footer := r.archive[footerOffset : footerOffset+20]
 	if got := binary.LittleEndian.Uint32(footer[:4]); got != r.crc {
 		return fmt.Errorf("lzip CRC mismatch")
 	}
-	if got := binary.LittleEndian.Uint64(footer[4:12]); got != r.size {
+	if got := binary.LittleEndian.Uint64(footer[4:12]); got != r.memberDataSize {
 		return fmt.Errorf("lzip uncompressed size mismatch")
 	}
-	if got := binary.LittleEndian.Uint64(footer[12:20]); got != uint64(len(r.archive)) {
+	memberLength := uint64(6 + compressedSize + 20)
+	if got := binary.LittleEndian.Uint64(footer[12:20]); got != memberLength {
 		return fmt.Errorf("lzip member size mismatch")
 	}
+	r.offset = footerOffset + 20
+	r.decoder = nil
+	r.input = nil
+	r.memberDataSize = 0
+	if r.offset == len(r.archive) {
+		r.done = true
+	}
 	return nil
+}
+
+// trackedReader implements io.ByteReader to prevent the LZMA decoder from
+// reading past a member's end marker into its trailer or the next member.
+type trackedReader struct {
+	reader io.Reader
+	count  int
+}
+
+func (r *trackedReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.count += n
+	return n, err
+}
+
+func (r *trackedReader) ReadByte() (byte, error) {
+	var b [1]byte
+	_, err := io.ReadFull(r.reader, b[:])
+	if err != nil {
+		return 0, err
+	}
+	r.count++
+	return b[0], nil
 }
 func safeArchivePath(root, name string) (string, error) {
 	if name == "" || strings.Contains(name, `\`) || filepath.IsAbs(name) {
