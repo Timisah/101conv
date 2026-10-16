@@ -124,6 +124,10 @@ func (d Definition) Validate() error {
 		}
 		engines[requirement.EngineID] = struct{}{}
 	}
+	// Rules are selected by source/target pair at runtime. Reject overlaps at
+	// install time so repository authors get one clear validation error rather
+	// than a profile that only fails when a particular pair is converted.
+	pairs := make(map[string]int)
 	for i, rule := range d.Rules {
 		if _, exists := engines[rule.EngineID]; !exists {
 			return fmt.Errorf("rule %d references undeclared engine %q", i, rule.EngineID)
@@ -136,6 +140,48 @@ func (d Definition) Validate() error {
 				return fmt.Errorf("rule %d contains an empty format", i)
 			}
 		}
+		for _, source := range rule.Sources {
+			for _, target := range rule.Targets {
+				key := normalizeFormat(source) + "\x00" + normalizeFormat(target)
+				if previous, exists := pairs[key]; exists {
+					return fmt.Errorf("rules %d and %d both match %s to %s", previous, i, normalizeFormat(source), normalizeFormat(target))
+				}
+				pairs[key] = i
+			}
+		}
 	}
 	return nil
+}
+
+// ValidateWorkerArguments checks the version-1 repository profile argument
+// contract. It is separate from Definition.Validate so legacy configurations
+// can still be loaded through the compatibility adapter.
+func ValidateWorkerArguments(arguments []string) error {
+	if len(arguments) == 0 || len(arguments) > 128 {
+		return fmt.Errorf("argument list must contain between 1 and 128 tokens")
+	}
+	seenSource, seenTarget := false, false
+	for _, arg := range arguments {
+		if len(arg) > 4096 || strings.ContainsRune(arg, '\x00') {
+			return fmt.Errorf("argument is too long or contains NUL")
+		}
+		switch arg {
+		case "{source}":
+			seenSource = true
+		case "{target}":
+			seenTarget = true
+		default:
+			if strings.ContainsAny(arg, "{}") {
+				return fmt.Errorf("only standalone {source} and {target} placeholders are supported")
+			}
+		}
+	}
+	if !seenSource || !seenTarget {
+		return fmt.Errorf("arguments must include standalone {source} and {target} placeholders")
+	}
+	return nil
+}
+
+func normalizeFormat(value string) string {
+	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(value)), ".")
 }

@@ -34,6 +34,18 @@ type fixture struct {
 	repo string
 }
 
+func TestRepositoryDependencyMustProvideEveryProfileExecutable(t *testing.T) {
+	p := profile.Definition{Rules: []profile.ConversionRule{{EngineID: "tool", Executable: "encode"}}}
+	definition := engine.Definition{ID: "tool", Executables: map[string]string{"decode": "bin/decode"}}
+	if profileExecutablesDeclared(p, definition) {
+		t.Fatal("engine missing a profile's executable must not be selected")
+	}
+	definition.Executables["encode"] = "bin/encode"
+	if !profileExecutablesDeclared(p, definition) {
+		t.Fatal("engine declaring the required executable should be selectable")
+	}
+}
+
 func newFixture(t *testing.T) fixture {
 	t.Helper()
 	keys := map[string]ed25519.PrivateKey{}

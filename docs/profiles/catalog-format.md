@@ -54,4 +54,57 @@ Packages remain hosted by upstream GitHub Releases; they are not committed to th
 
 Supported archives are `tar.gz`, `tar.xz`, `tar.lz`, and `zip`. Extraction rejects traversal, links, device files, unsupported entries, excessive entry counts, and expanded size over 2 GiB. XZ and LZip dictionary requests are capped at 128 MiB. Package downloads are capped at 1 GiB. Converter execution is handled by the restricted Worker; signature verification does not sandbox a converter.
 
+## Authoring and validating a profile
+
+Repository packages use stable engine IDs and profile IDs. A profile version is independent of an engine version. Prefer a tested compatibility range and required capabilities over pinning one engine patch release. A profile rule refers to the engine's stable executable name, never an executable path or shell command. `arguments` is an argv array: only standalone `{source}` and `{target}` tokens are substituted by the Worker. Rules may cover multiple source or target formats, but no two rules in one profile may match the same normalized input/output pair. Unsupported placeholders and ambiguous pairs are rejected when the repository is read.
+
+For a quick profile-only example:
+
+```json
+{
+  "profile": {
+    "schemaVersion": 1,
+    "id": "png-to-jxl",
+    "version": "1.0.0",
+    "name": "PNG to JPEG XL",
+    "license": "BSD-3-Clause",
+    "engines": [{
+      "engineId": "jpeg-xl",
+      "versions": {"minimum": "0.12.0", "maximumExclusive": "1.0.0"},
+      "capabilities": ["image.encode"]
+    }],
+    "rules": [{
+      "engineId": "jpeg-xl",
+      "executable": "cjxl",
+      "sources": ["png"],
+      "targets": ["jxl"],
+      "arguments": ["{source}", "{target}", "-q", "85"]
+    }]
+  }
+}
+```
+
+The referenced engine manifest must declare `id: "jpeg-xl"`, provide capability `image.encode`, and map executable name `cjxl` to a safe package-relative path. The catalog index entry's ID and version must match the manifest. Version range and capabilities are checked while previewing dependencies; the repository author tool also checks included engine candidates and executable names.
+
+Use this repository layout:
+
+```text
+catalog/
+  targets/catalog/index.json
+  targets/engines/jpeg-xl-linux-amd64.json
+  targets/profiles/png-to-jxl.json
+```
+
+Add an index entry with a unique ID/version pair and a path relative to `targets/`, then run preflight before publishing. This validates index/manifest agreement, schemas, ambiguous rules, argument placeholders, and included engine compatibility. It does not download or execute converter binaries.
+
+```bash
+cd server
+go run ./cmd/catalog-repo validate --catalog-root ../catalog
+go test ./cmd/catalog-repo ./internal/profile ./internal/repositorymanager
+```
+
+Only after validation should maintainers run `catalog-repo publish`. The publish step verifies upstream package bytes and signs the TUF metadata. Test an actual conversion with each new profile and supported engine build before release: structural validation cannot prove that converter-specific flags, codecs, or output behavior are correct.
+
+The manifest schema and validation behavior are versioned by `schemaVersion`. Additive optional fields can be introduced without a Core patch; changing placeholder semantics or execution behavior requires a schema/Worker compatibility change and should be documented as such. Third-party repositories should test against the oldest supported 101conv version named by their catalog bounds.
+
 Community repositories still require an administrator to pin their TUF root by an independently checked fingerprint. The marketplace reads the API trust value `pinned`; the React client now uses that same value when deciding which repositories to browse.

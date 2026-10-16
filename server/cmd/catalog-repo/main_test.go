@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/theupdateframework/go-tuf/v2/metadata"
+	"github.com/timisah/101conv/server/internal/profile"
+	"github.com/timisah/101conv/server/internal/repositorymanager"
 )
 
 func TestProvisionAndPublishTUFMetadata(t *testing.T) {
@@ -105,6 +107,48 @@ func TestInitRefusesToOverwriteExistingRoot(t *testing.T) {
 	}
 	if _, err = os.Stat(filepath.Join(dir, "keys")); !os.IsNotExist(err) {
 		t.Fatalf("key directory was created before validation: %v", err)
+	}
+}
+
+func TestValidateCheckedInCatalog(t *testing.T) {
+	catalogRoot := filepath.Join("..", "..", "..", "catalog")
+	if err := validateCatalog([]string{"--catalog-root", catalogRoot}); err != nil {
+		t.Fatalf("checked-in catalog should pass author preflight: %v", err)
+	}
+}
+
+func TestValidateCatalogRejectsUnsupportedProfilePlaceholder(t *testing.T) {
+	root := t.TempDir()
+	targets := filepath.Join(root, "targets")
+	profileDef := profile.Definition{
+		SchemaVersion: 1, ID: "test-profile", Version: "1.0.0", Name: "Test",
+		Engines: []profile.EngineRequirement{{EngineID: "manual-engine"}},
+		Rules:   []profile.ConversionRule{{EngineID: "manual-engine", Executable: "tool", Sources: []string{"png"}, Targets: []string{"jxl"}, Arguments: []string{"{source}", "{target}", "{quality}"}}},
+	}
+	manifest, err := json.Marshal(repositorymanager.ProfileManifest{Profile: profileDef})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(targets, "profiles", "test.json")
+	if err = os.MkdirAll(filepath.Dir(manifestPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(manifestPath, manifest, 0600); err != nil {
+		t.Fatal(err)
+	}
+	index, err := json.Marshal(repositorymanager.CatalogIndex{SchemaVersion: 1, Profiles: []repositorymanager.ProfileEntry{{ID: profileDef.ID, Version: profileDef.Version, ManifestTarget: "profiles/test.json"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(targets, "catalog", "index.json")
+	if err = os.MkdirAll(filepath.Dir(indexPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(indexPath, index, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = validateCatalog([]string{"--catalog-root", root}); err == nil || !strings.Contains(err.Error(), "placeholders") {
+		t.Fatalf("expected unsupported placeholder validation error, got %v", err)
 	}
 }
 

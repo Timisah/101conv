@@ -48,3 +48,33 @@ func TestDefinitionRejectsRuleWithoutDeclaredEngine(t *testing.T) {
 		t.Fatal("expected undeclared engine reference to be rejected")
 	}
 }
+
+func TestDefinitionRejectsAmbiguousFormatPairs(t *testing.T) {
+	definition := Definition{
+		SchemaVersion: 1, ID: "ambiguous", Version: "1.0.0", Name: "Ambiguous",
+		Engines: []EngineRequirement{{EngineID: "ffmpeg"}},
+		Rules: []ConversionRule{
+			{EngineID: "ffmpeg", Executable: "ffmpeg", Sources: []string{".JPG"}, Targets: []string{"png"}},
+			{EngineID: "ffmpeg", Executable: "ffmpeg", Sources: []string{"jpg"}, Targets: []string{"PNG"}},
+		},
+	}
+	if err := definition.Validate(); err == nil {
+		t.Fatal("expected overlapping source/target rules to be rejected")
+	}
+}
+
+func TestValidateWorkerArguments(t *testing.T) {
+	valid := []string{"--input", "{source}", "{target}"}
+	if err := ValidateWorkerArguments(valid); err != nil {
+		t.Fatalf("valid argv rejected: %v", err)
+	}
+	for _, invalid := range [][]string{
+		{"--input", "{source}", "{target}.jxl"},
+		{"--input", "{source}"},
+		{"{source}", "{target}", "{engine.variable:QUALITY}"},
+	} {
+		if err := ValidateWorkerArguments(invalid); err == nil {
+			t.Errorf("expected invalid arguments rejected: %#v", invalid)
+		}
+	}
+}

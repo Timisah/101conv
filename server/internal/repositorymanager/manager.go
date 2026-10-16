@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -556,6 +557,9 @@ func loadUnsignedView(ctx context.Context, source Source, base, appVersion strin
 		if e = d.Validate(); e != nil {
 			return verifiedView{}, e
 		}
+		if e = validateRepositoryProfile(d); e != nil {
+			return verifiedView{}, fmt.Errorf("profile %q: %w", d.ID, e)
+		}
 		if compatible(appVersion, d.MinimumAppVersion, d.MaximumAppVersionExclusive) {
 			out.Profiles = append(out.Profiles, d)
 		} else {
@@ -710,6 +714,9 @@ func (m *Manager) loadViewLocked(ctx context.Context, s Source) (verifiedView, e
 		if e = d.Validate(); e != nil {
 			return verifiedView{}, e
 		}
+		if e = validateRepositoryProfile(d); e != nil {
+			return verifiedView{}, fmt.Errorf("profile %q: %w", d.ID, e)
+		}
 		if compatible(m.appVersion, d.MinimumAppVersion, d.MaximumAppVersionExclusive) {
 			out.Profiles = append(out.Profiles, d)
 		} else {
@@ -813,7 +820,7 @@ func (m *Manager) CreateInstallPlan(ctx context.Context, repoID, profileID strin
 		if dep.Action == "install engine" {
 			best := ""
 			for _, d := range view.catalog.Engines {
-				if req.Accepts(d) && (best == "" || newer(d.Version, best)) {
+				if req.Accepts(d) && platformCompatible(d.Platform) && profileExecutablesDeclared(p, d) && (best == "" || newer(d.Version, best)) {
 					best = d.Version
 					dep.EngineName = d.Name
 					dep.EngineLicense = d.License
@@ -1314,6 +1321,30 @@ func profileExecutablesAvailable(p profile.Definition, inst engine.Installation)
 		}
 	}
 	return true
+}
+
+func profileExecutablesDeclared(p profile.Definition, definition engine.Definition) bool {
+	for _, rule := range p.Rules {
+		if rule.EngineID == definition.ID {
+			if _, exists := definition.Executables[rule.Executable]; !exists {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func platformCompatible(platform string) bool {
+	return platform == runtime.GOOS+"-"+runtime.GOARCH
+}
+
+func validateRepositoryProfile(definition profile.Definition) error {
+	for i, rule := range definition.Rules {
+		if err := profile.ValidateWorkerArguments(rule.Arguments); err != nil {
+			return fmt.Errorf("rule %d has unsupported worker arguments: %w", i, err)
+		}
+	}
+	return nil
 }
 func repoID(v string) bool {
 	if v == "" || len(v) > 100 {

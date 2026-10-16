@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/timisah/101conv/server/internal/management"
+	"github.com/timisah/101conv/server/internal/profile"
 )
 
 const (
@@ -269,27 +270,8 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (Job, bool, err
 }
 
 func validateArguments(arguments []string) ([]string, error) {
-	if len(arguments) == 0 || len(arguments) > 128 {
-		return nil, fmt.Errorf("%w: profile rule has an invalid argument list", ErrInvalidInput)
-	}
-	seenSource, seenTarget := false, false
-	for _, arg := range arguments {
-		if len(arg) > 4096 || strings.ContainsRune(arg, '\x00') {
-			return nil, fmt.Errorf("%w: profile argument is too long or contains NUL", ErrInvalidInput)
-		}
-		switch arg {
-		case "{source}":
-			seenSource = true
-		case "{target}":
-			seenTarget = true
-		default:
-			if strings.Contains(arg, "{source}") || strings.Contains(arg, "{target}") || strings.ContainsAny(arg, "{}") {
-				return nil, fmt.Errorf("%w: only standalone {source} and {target} placeholders are supported", ErrInvalidInput)
-			}
-		}
-	}
-	if !seenSource || !seenTarget {
-		return nil, fmt.Errorf("%w: profile rule must include {source} and {target}", ErrInvalidInput)
+	if err := profile.ValidateWorkerArguments(arguments); err != nil {
+		return nil, fmt.Errorf("%w: invalid profile arguments: %v", ErrInvalidInput, err)
 	}
 	return append([]string(nil), arguments...), nil
 }

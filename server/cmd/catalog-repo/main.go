@@ -20,12 +20,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/sigstore/sigstore/pkg/signature"
 	"github.com/theupdateframework/go-tuf/v2/metadata"
+	"github.com/timisah/101conv/server/internal/engine"
+	"github.com/timisah/101conv/server/internal/profile"
+	"github.com/timisah/101conv/server/internal/repositorymanager"
 )
 
 const maxArtifactSize = 1 << 30
@@ -43,10 +47,12 @@ type engineManifest struct {
 
 func main() {
 	if len(os.Args) < 2 {
-		fatal("usage: catalog-repo init|publish [flags]")
+		fatal("usage: catalog-repo validate|init|publish [flags]")
 	}
 	var err error
 	switch os.Args[1] {
+	case "validate":
+		err = validateCatalog(os.Args[2:])
 	case "init":
 		err = initRoot(os.Args[2:])
 	case "publish":
@@ -57,6 +63,135 @@ func main() {
 	if err != nil {
 		fatal("%v", err)
 	}
+}
+
+func validateCatalog(args []string) error {
+	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
+	catalogRoot := flags.String("catalog-root", "catalog", "catalog directory containing targets/catalog/index.json")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	targetRoot := filepath.Join(*catalogRoot, "targets")
+	readTarget := func(name string, into any) error {
+		if name == "" || strings.Contains(name, "\\") || path.IsAbs(name) {
+			return fmt.Errorf("unsafe target path %q", name)
+		}
+		for _, part := range strings.Split(name, "/") {
+			if part == "" || part == "." || part == ".." {
+				return fmt.Errorf("unsafe target path %q", name)
+			}
+		}
+		full := filepath.Join(targetRoot, filepath.FromSlash(name))
+		rootAbs, err := filepath.Abs(targetRoot)
+		if err != nil {
+			return err
+		}
+		fullAbs, err := filepath.Abs(full)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(rootAbs, fullAbs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("target escapes catalog: %q", name)
+		}
+		info, err := os.Lstat(fullAbs)
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("target %q must be a regular file, not a symlink", name)
+		}
+		data, err := os.ReadFile(fullAbs)
+		if err != nil {
+			return err
+		}
+		if err = json.Unmarshal(data, into); err != nil {
+			return fmt.Errorf("decode %s: %w", name, err)
+		}
+		return nil
+	}
+	var index repositorymanager.CatalogIndex
+	if err := readTarget("catalog/index.json", &index); err != nil {
+		return fmt.Errorf("read catalog index: %w", err)
+	}
+	if index.SchemaVersion != 1 {
+		return fmt.Errorf("unsupported catalog schema version %d", index.SchemaVersion)
+	}
+	if len(index.Engines)+len(index.Profiles) == 0 {
+		return errors.New("catalog must contain an engine or profile")
+	}
+	engines := make(map[string][]engine.Definition)
+	seen := make(map[string]bool)
+	for _, entry := range index.Engines {
+		key := "engine\x00" + entry.ID + "\x00" + entry.Version
+		if entry.ID == "" || entry.Version == "" || seen[key] {
+			return fmt.Errorf("missing or duplicate engine release %q %q", entry.ID, entry.Version)
+		}
+		seen[key] = true
+		var manifest repositorymanager.EngineManifest
+		if err := readTarget(entry.ManifestTarget, &manifest); err != nil {
+			return fmt.Errorf("engine %s %s: %w", entry.ID, entry.Version, err)
+		}
+		if manifest.Engine.ID != entry.ID || manifest.Engine.Version != entry.Version {
+			return fmt.Errorf("engine index entry and manifest disagree for %q %s", entry.ID, entry.Version)
+		}
+		if err := manifest.Engine.Validate(); err != nil {
+			return fmt.Errorf("engine %q: %w", entry.ID, err)
+		}
+		engines[entry.ID] = append(engines[entry.ID], manifest.Engine)
+	}
+	for _, entry := range index.Profiles {
+		key := "profile\x00" + entry.ID + "\x00" + entry.Version
+		if entry.ID == "" || entry.Version == "" || seen[key] {
+			return fmt.Errorf("missing or duplicate profile release %q %q", entry.ID, entry.Version)
+		}
+		seen[key] = true
+		var manifest repositorymanager.ProfileManifest
+		if err := readTarget(entry.ManifestTarget, &manifest); err != nil {
+			return fmt.Errorf("profile %s %s: %w", entry.ID, entry.Version, err)
+		}
+		p := manifest.Profile
+		if p.ID != entry.ID || p.Version != entry.Version {
+			return fmt.Errorf("profile index entry and manifest disagree for %q %s", entry.ID, entry.Version)
+		}
+		if err := p.Validate(); err != nil {
+			return fmt.Errorf("profile %q: %w", p.ID, err)
+		}
+		for i, rule := range p.Rules {
+			if err := profile.ValidateWorkerArguments(rule.Arguments); err != nil {
+				return fmt.Errorf("profile %q rule %d: %w", p.ID, i, err)
+			}
+		}
+		for _, req := range p.Engines {
+			candidates := engines[req.EngineID]
+			if len(candidates) == 0 {
+				continue
+			} // It may be supplied by a different trusted source or manually.
+			compatible := false
+			for _, candidate := range candidates {
+				if !req.Accepts(candidate) {
+					continue
+				}
+				providesRules := true
+				for _, rule := range p.Rules {
+					if rule.EngineID == req.EngineID {
+						if _, ok := candidate.Executables[rule.Executable]; !ok {
+							providesRules = false
+						}
+					}
+				}
+				if providesRules {
+					compatible = true
+					break
+				}
+			}
+			if !compatible {
+				return fmt.Errorf("profile %q has no catalog engine %q matching its version, capabilities, and executable requirements", p.ID, req.EngineID)
+			}
+		}
+	}
+	fmt.Printf("Catalog valid: %d engine releases, %d profile releases\n", len(index.Engines), len(index.Profiles))
+	return nil
 }
 
 func initRoot(args []string) error {
