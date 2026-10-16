@@ -64,10 +64,13 @@ func (e *FileTransactionError) Error() string {
 func (e *FileTransactionError) Unwrap() error { return e.Operation }
 
 type state struct {
-	SchemaVersion int             `json:"schemaVersion"`
-	Engines       []EngineRecord  `json:"engines"`
-	Profiles      []ProfileRecord `json:"profiles"`
+	SchemaVersion         int             `json:"schemaVersion"`
+	Engines               []EngineRecord  `json:"engines"`
+	Profiles              []ProfileRecord `json:"profiles"`
+	SessionTimeoutMinutes int             `json:"sessionTimeoutMinutes,omitempty"`
 }
+
+const DefaultSessionTimeoutMinutes = 12 * 60
 
 type Service struct {
 	mu           sync.Mutex
@@ -130,7 +133,7 @@ func OpenWithPolicy(root string, allowedRoots []string) (*Service, error) {
 		}
 		cleanRoots = append(cleanRoots, a)
 	}
-	s := &Service{root: abs, stateFile: filepath.Join(abs, "management.json"), lock: lock, allowedRoots: cleanRoots, removeAll: os.RemoveAll, data: state{SchemaVersion: 1, Engines: []EngineRecord{}, Profiles: []ProfileRecord{}}}
+	s := &Service{root: abs, stateFile: filepath.Join(abs, "management.json"), lock: lock, allowedRoots: cleanRoots, removeAll: os.RemoveAll, data: state{SchemaVersion: 1, Engines: []EngineRecord{}, Profiles: []ProfileRecord{}, SessionTimeoutMinutes: DefaultSessionTimeoutMinutes}}
 	b, err := os.ReadFile(s.stateFile)
 	if errors.Is(err, os.ErrNotExist) {
 		if err = s.recoverFilesystem(); err != nil {
@@ -161,11 +164,38 @@ func OpenWithPolicy(root string, allowedRoots []string) (*Service, error) {
 	if s.data.Profiles == nil {
 		s.data.Profiles = []ProfileRecord{}
 	}
+	if s.data.SessionTimeoutMinutes == 0 {
+		s.data.SessionTimeoutMinutes = DefaultSessionTimeoutMinutes
+	}
 	if err := s.recoverFilesystem(); err != nil {
 		lock.Unlock()
 		return nil, fmt.Errorf("recover engine installations: %w", err)
 	}
 	return s, nil
+}
+
+func (s *Service) SessionTimeout() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data.SessionTimeoutMinutes == 0 {
+		return DefaultSessionTimeoutMinutes
+	}
+	return s.data.SessionTimeoutMinutes
+}
+
+func (s *Service) SetSessionTimeout(minutes int) error {
+	if minutes < 5 || minutes > 43200 {
+		return fmt.Errorf("session timeout must be between 5 and 43200 minutes")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.data
+	next.SessionTimeoutMinutes = minutes
+	if err := s.persist(next); err != nil {
+		return err
+	}
+	s.data = next
+	return nil
 }
 
 func (s *Service) Close() error {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/catalog"
@@ -43,12 +44,17 @@ func NewWithJobServices(version string, catalogService *catalog.Service, managem
 
 func NewWithAccounts(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, accountService *auth.Service, adminToken string) http.Handler {
 	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, accounts: accountService, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
+	if managementService != nil {
+		a.sessions.setTTL(time.Duration(managementService.SessionTimeout()) * time.Minute)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.ready)
 	mux.HandleFunc("GET /api/v1/auth/session", a.getSession)
 	mux.HandleFunc("POST /api/v1/auth/session", a.createSession)
 	mux.HandleFunc("DELETE /api/v1/auth/session", a.deleteSession)
+	mux.HandleFunc("GET /api/v1/settings/session", a.getSessionSettings)
+	mux.HandleFunc("PUT /api/v1/settings/session", a.updateSessionSettings)
 	mux.HandleFunc("GET /api/v1/me", a.getMe)
 	mux.HandleFunc("POST /api/v1/me/password", a.changeMyPassword)
 	mux.HandleFunc("GET /api/v1/me/api-keys", a.listMyAPIKeys)

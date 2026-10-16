@@ -133,6 +133,63 @@ func TestManagementEndpointsRequireAdministratorToken(t *testing.T) {
 	}
 }
 
+func TestSessionTimeoutSettingIsAdminOnlyAndPersists(t *testing.T) {
+	dir := t.TempDir()
+	catalogService, err := catalog.New("0.1.0-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := management.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewWithManagement("0.1.0-dev", catalogService, manager, "secret"))
+	client := server.Client()
+	request := func(method, body string, authorized bool) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(method, server.URL+"/api/v1/settings/session", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if authorized {
+			req.Header.Set("Authorization", "Bearer secret")
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	resp := request(http.MethodGet, "", false)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized GET status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp = request(http.MethodPut, `{"sessionTimeoutMinutes":5}`, true)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("valid update status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp = request(http.MethodPut, `{"sessionTimeoutMinutes":4}`, true)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid update status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	server.Close()
+	if err = manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	manager, err = management.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if got := manager.SessionTimeout(); got != 5 {
+		t.Fatalf("persisted timeout=%d, want 5", got)
+	}
+}
+
 func TestBrowserSessionIsOpaqueHttpOnlyAndSameOriginForMutations(t *testing.T) {
 	catalogService, err := catalog.New("0.1.0-dev")
 	if err != nil {

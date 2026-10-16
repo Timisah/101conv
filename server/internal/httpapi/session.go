@@ -14,16 +14,17 @@ import (
 	"time"
 
 	"github.com/timisah/101conv/server/internal/auth"
+	"github.com/timisah/101conv/server/internal/management"
 )
 
 const (
 	adminCookie = "101conv_admin"
-	sessionTTL  = 12 * time.Hour
 )
 
 type sessionStore struct {
 	mu       sync.Mutex
 	sessions map[[32]byte]sessionRecord
+	ttl      time.Duration
 }
 
 type sessionRecord struct {
@@ -32,17 +33,19 @@ type sessionRecord struct {
 }
 
 func newSessionStore() *sessionStore {
-	return &sessionStore{sessions: make(map[[32]byte]sessionRecord)}
+	return &sessionStore{sessions: make(map[[32]byte]sessionRecord), ttl: time.Duration(management.DefaultSessionTimeoutMinutes) * time.Minute}
 }
+
+func (s *sessionStore) setTTL(ttl time.Duration) { s.mu.Lock(); s.ttl = ttl; s.mu.Unlock() }
 
 func (s *sessionStore) create(principal auth.Principal) (string, time.Time, error) {
 	var token [32]byte
 	if _, err := rand.Read(token[:]); err != nil {
 		return "", time.Time{}, err
 	}
-	expires := time.Now().Add(sessionTTL)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	expires := time.Now().Add(s.ttl)
 	for digest, session := range s.sessions {
 		if time.Now().After(session.expires) {
 			delete(s.sessions, digest)
@@ -142,7 +145,7 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	success = true
 	http.SetCookie(w, &http.Cookie{
-		Name: adminCookie, Value: token, Path: "/api/v1", Expires: expires, MaxAge: int(sessionTTL.Seconds()),
+		Name: adminCookie, Value: token, Path: "/api/v1", Expires: expires, MaxAge: int(time.Until(expires).Seconds()),
 		HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteStrictMode,
 	})
 	w.Header().Set("Cache-Control", "no-store")
@@ -157,6 +160,41 @@ func (a *API) getSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "username": p.Username, "role": p.Role, "canConvert": p.CanConvert, "canReadJobs": p.CanReadJobs})
+}
+
+func (a *API) getSessionSettings(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	minutes := management.DefaultSessionTimeoutMinutes
+	if a.management != nil {
+		minutes = a.management.SessionTimeout()
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"sessionTimeoutMinutes": minutes})
+}
+
+func (a *API) updateSessionSettings(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) {
+		return
+	}
+	var req struct {
+		SessionTimeoutMinutes int `json:"sessionTimeoutMinutes"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if req.SessionTimeoutMinutes < 5 || req.SessionTimeoutMinutes > 43200 {
+		writeAPIError(w, http.StatusUnprocessableEntity, "invalid_session_timeout", "session timeout must be between 5 minutes and 30 days")
+		return
+	}
+	if err := a.management.SetSessionTimeout(req.SessionTimeoutMinutes); err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	a.sessions.setTTL(time.Duration(req.SessionTimeoutMinutes) * time.Minute)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]int{"sessionTimeoutMinutes": req.SessionTimeoutMinutes})
 }
 
 func (a *API) deleteSession(w http.ResponseWriter, r *http.Request) {

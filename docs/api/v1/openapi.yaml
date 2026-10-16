@@ -6,6 +6,30 @@ info:
 servers:
   - url: /
 paths:
+  /api/v1/settings/session:
+    get:
+      summary: Read the instance-wide browser session lifetime
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: Current timeout in minutes }
+        '401': { description: Administrator authentication required }
+    put:
+      summary: Set the instance-wide browser session lifetime
+      description: Applies to newly created sessions. Existing sessions retain the expiry assigned at sign-in. Allowed range is 5 minutes to 30 days.
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionTimeoutMinutes]
+              properties:
+                sessionTimeoutMinutes: { type: integer, minimum: 5, maximum: 43200 }
+      responses:
+        '200': { description: Timeout saved persistently }
+        '401': { description: Administrator authentication required }
+        '422': { description: Timeout outside the allowed range }
   /api/v1/auth/session:
     get:
       summary: Check whether this browser has an active administrator or user session
