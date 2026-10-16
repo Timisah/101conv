@@ -64,7 +64,7 @@ type Catalog struct {
 	Repository           Source                `json:"repository"`
 	Engines              []engine.Definition   `json:"engines"`
 	Profiles             []profile.Definition  `json:"profiles"`
-	IncompatibleProfiles []IncompatibleProfile `json:"incompatibleProfiles,omitempty"`
+	IncompatibleProfiles []IncompatibleProfile `json:"incompatibleProfiles"`
 }
 type IncompatibleProfile struct {
 	ID      string `json:"id"`

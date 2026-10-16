@@ -10,11 +10,12 @@ type Repo = {id:string;name:string;url:string;kind:string;trust:string;enabled:b
 type Package = {id:string;version:string;name:string;engines?:any[];rules?:any[];license?:string;description?:string};
 type Catalog = {repository:Repo;engines:Package[];profiles:Package[];incompatibleProfiles:{id:string;version:string;reason:string}[]};
 type Preview = {planId:string;publisher:string;trust:string;expiresAt?:string;license?:string;dependencies?:any[];plannedChanges?:string[];repository:Repo};
-const isCatalogResponse=(value:unknown):value is Catalog=>{
-  if(!value||typeof value!=='object')return false;
+const normalizeCatalogResponse=(value:unknown):Catalog|null=>{
+  if(!value||typeof value!=='object')return null;
   const catalog=value as Partial<Catalog>;
   const validPackages=(packages:unknown):packages is Package[]=>Array.isArray(packages)&&packages.every(pkg=>pkg&&typeof pkg==='object'&&typeof pkg.id==='string'&&typeof pkg.name==='string'&&typeof pkg.version==='string');
-  return !!catalog.repository&&typeof catalog.repository==='object'&&validPackages(catalog.engines)&&validPackages(catalog.profiles)&&Array.isArray(catalog.incompatibleProfiles);
+  if(!catalog.repository||typeof catalog.repository!=='object'||!validPackages(catalog.engines)||!validPackages(catalog.profiles)||(catalog.incompatibleProfiles!==undefined&&!Array.isArray(catalog.incompatibleProfiles)))return null;
+  return {...catalog,incompatibleProfiles:catalog.incompatibleProfiles||[]} as Catalog;
 };
 
 const api = async <T,>(path:string, init:RequestInit={}):Promise<T> => {
@@ -191,7 +192,7 @@ function EnginePicker({profile,notify,refresh}:{profile:Profile;notify:(s:string
 
 function Marketplace({notify}:{notify:(s:string)=>void}){
  const {data:installedProfiles,refresh:refreshInstalledProfiles}=useData<{profiles:Profile[]}>('/profiles',{profiles:[]});const {data:installedEngines}=useData<{engines:Engine[]}>('/engines',{engines:[]});const {data:reposResp,loading,error,refresh}=useData<{repositories:Repo[]}>('/repositories',{repositories:[]});const repos=reposResp.repositories||[];const [catalogs,setCatalogs]=useState<Record<string,Catalog>>({});const [catalogLoading,setCatalogLoading]=useState(false);const [catalogError,setCatalogError]=useState('');const [busy,setBusy]=useState('');const [search,setSearch]=useState('');const [previews,setPreviews]=useState<Record<string,Preview>>({});
- useEffect(()=>{let dead=false;const sources=repos.filter(r=>r.enabled&&(r.trust==='pinned'||r.id==='101conv-official'));if(!sources.length){setCatalogLoading(false);return()=>{dead=true};}setCatalogLoading(true);setCatalogError('');Promise.all(sources.map(async r=>{try{const value=await api<unknown>('/repositories/'+r.id+'/catalog');if(!isCatalogResponse(value))throw new Error('The repository returned an invalid catalog response. Refresh the catalog or update Core.');if(!dead)setCatalogs(prev=>({...prev,[r.id]:value}));}catch(e){if(!dead){setCatalogs(prev=>{const next={...prev};delete next[r.id];return next;});setCatalogError((e as Error).message||'Could not load repository catalog.');}}})).finally(()=>{if(!dead)setCatalogLoading(false);});return()=>{dead=true};},[repos]);
+ useEffect(()=>{let dead=false;const sources=repos.filter(r=>r.enabled&&(r.trust==='pinned'||r.id==='101conv-official'));if(!sources.length){setCatalogLoading(false);return()=>{dead=true};}setCatalogLoading(true);setCatalogError('');Promise.all(sources.map(async r=>{try{const value=await api<unknown>('/repositories/'+r.id+'/catalog');const catalog=normalizeCatalogResponse(value);if(!catalog)throw new Error('The repository returned an invalid catalog response. Refresh the catalog or update Core.');if(!dead)setCatalogs(prev=>({...prev,[r.id]:catalog}));}catch(e){if(!dead){setCatalogs(prev=>{const next={...prev};delete next[r.id];return next;});setCatalogError((e as Error).message||'Could not load repository catalog.');}}})).finally(()=>{if(!dead)setCatalogLoading(false);});return()=>{dead=true};},[repos]);
  const entries=useMemo(()=>{const allowed=new Set(repos.filter(r=>r.enabled&&(r.trust==='pinned'||r.id==='101conv-official')).map(r=>r.id));return Object.entries(catalogs).filter(([rid])=>allowed.has(rid)).flatMap(([rid,c])=>c.profiles.map(p=>({repoId:rid,pkg:p,repo:c.repository,kind:'profile'})).concat(c.engines.map(p=>({repoId:rid,pkg:p,repo:c.repository,kind:'engine'}))));},[catalogs,repos]);
  const installedProfile=(item:typeof entries[number])=>item.kind==='profile'?installedProfiles.profiles?.find(x=>x.definition.id===item.pkg.id):undefined;
  const installedEngine=(item:typeof entries[number])=>item.kind==='engine'?installedEngines.engines?.find(x=>x.definition.id===item.pkg.id&&x.definition.version===item.pkg.version):undefined;

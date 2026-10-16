@@ -11,8 +11,26 @@ import (
 
 	"github.com/sorairolake/lzip-go"
 	"github.com/theupdateframework/go-tuf/v2/metadata"
+	"github.com/timisah/101conv/server/internal/engine"
+	"github.com/timisah/101conv/server/internal/profile"
 	"github.com/ulikunitz/xz"
 )
+
+func TestCatalogJSONIncludesEmptyIncompatibleProfiles(t *testing.T) {
+	catalog := Catalog{
+		Repository:           Source{ID: "test", Name: "Test", Enabled: true},
+		Engines:              []engine.Definition{},
+		Profiles:             []profile.Definition{},
+		IncompatibleProfiles: []IncompatibleProfile{},
+	}
+	raw, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"incompatibleProfiles":[]`)) {
+		t.Fatalf("empty incompatibleProfiles must be present as an array: %s", raw)
+	}
+}
 
 func TestOfficialGoCatalogManifestsValidate(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "catalog", "targets")
