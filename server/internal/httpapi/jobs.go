@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/jobs"
 )
 
@@ -20,7 +21,8 @@ func (a *API) jobsReady(w http.ResponseWriter) bool {
 }
 
 func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
-	if !a.authorized(w, r) || !a.jobsReady(w) {
+	p, ok := a.requireCapability(w, r, auth.ScopeUpload)
+	if !ok || !a.jobsReady(w) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, jobs.MaxInputBytes+(1<<20))
@@ -42,7 +44,7 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	upload, err := a.jobs.CreateUpload(r.Context(), header.Filename, file)
+	upload, err := a.jobs.CreateUploadFor(r.Context(), p.ID, p.MaxFileBytes, p.MonthlyBytes, header.Filename, file)
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -51,14 +53,15 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) submitJob(w http.ResponseWriter, r *http.Request) {
-	if !a.authorized(w, r) || !a.jobsReady(w) {
+	p, ok := a.requireCapability(w, r, auth.ScopeSubmit)
+	if !ok || !a.jobsReady(w) {
 		return
 	}
 	var req jobs.SubmitRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	job, duplicate, err := a.jobs.Submit(r.Context(), req)
+	job, duplicate, err := a.jobs.SubmitFor(r.Context(), req, p.ID, jobs.Limits{MonthlyJobs: p.MonthlyJobs})
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -72,7 +75,8 @@ func (a *API) submitJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listJobs(w http.ResponseWriter, r *http.Request) {
-	if !a.authorized(w, r) || !a.jobsReady(w) {
+	p, ok := a.requireCapability(w, r, auth.ScopeRead)
+	if !ok || !a.jobsReady(w) {
 		return
 	}
 	limit, offset := 50, 0
@@ -92,7 +96,11 @@ func (a *API) listJobs(w http.ResponseWriter, r *http.Request) {
 		}
 		offset = parsed
 	}
-	items, total, err := a.jobs.List(r.Context(), jobs.ListFilter{Status: r.URL.Query().Get("status"), Query: r.URL.Query().Get("q"), Limit: limit, Offset: offset})
+	ownerID := ""
+	if !p.IsAdmin() {
+		ownerID = p.ID
+	}
+	items, total, err := a.jobs.List(r.Context(), jobs.ListFilter{Status: r.URL.Query().Get("status"), Query: r.URL.Query().Get("q"), Limit: limit, Offset: offset, OwnerID: ownerID})
 	if err != nil {
 		if errors.Is(err, jobs.ErrInvalidInput) {
 			writeAPIError(w, http.StatusBadRequest, "invalid_query", "status must be queued, running, succeeded, failed, or cancelled")
@@ -105,10 +113,15 @@ func (a *API) listJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
-	if !a.authorized(w, r) || !a.jobsReady(w) {
+	p, ok := a.requireCapability(w, r, auth.ScopeRead)
+	if !ok || !a.jobsReady(w) {
 		return
 	}
-	detail, err := a.jobs.Detail(r.Context(), r.PathValue("id"))
+	ownerID := ""
+	if !p.IsAdmin() {
+		ownerID = p.ID
+	}
+	detail, err := a.jobs.DetailFor(r.Context(), r.PathValue("id"), ownerID)
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -117,10 +130,15 @@ func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) cancelJob(w http.ResponseWriter, r *http.Request) {
-	if !a.authorized(w, r) || !a.jobsReady(w) {
+	p, ok := a.requireCapability(w, r, auth.ScopeCancel)
+	if !ok || !a.jobsReady(w) {
 		return
 	}
-	job, err := a.jobs.Cancel(r.Context(), r.PathValue("id"))
+	ownerID := ""
+	if !p.IsAdmin() {
+		ownerID = p.ID
+	}
+	job, err := a.jobs.CancelFor(r.Context(), r.PathValue("id"), ownerID)
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -129,10 +147,15 @@ func (a *API) cancelJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) downloadJobResult(w http.ResponseWriter, r *http.Request) {
-	if !a.authorized(w, r) || !a.jobsReady(w) {
+	p, ok := a.requireCapability(w, r, auth.ScopeResult)
+	if !ok || !a.jobsReady(w) {
 		return
 	}
-	file, job, contentType, err := a.jobs.OpenResult(r.Context(), r.PathValue("id"))
+	ownerID := ""
+	if !p.IsAdmin() {
+		ownerID = p.ID
+	}
+	file, job, contentType, err := a.jobs.OpenResultFor(r.Context(), r.PathValue("id"), ownerID)
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -169,6 +192,9 @@ func writeJobError(w http.ResponseWriter, err error) {
 	case errors.Is(err, jobs.ErrTooLarge):
 		status = http.StatusRequestEntityTooLarge
 		code = "file_too_large"
+	case errors.Is(err, jobs.ErrQuotaExceeded):
+		status = http.StatusTooManyRequests
+		code = "quota_exceeded"
 	case errors.Is(err, jobs.ErrCanceled):
 		status = http.StatusConflict
 		code = "job_cancelled"

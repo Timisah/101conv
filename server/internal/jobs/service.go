@@ -83,7 +83,7 @@ func (s *Service) Migrate(ctx context.Context) error {
 CREATE TABLE IF NOT EXISTS conv_uploads (
  id TEXT PRIMARY KEY, file_name TEXT NOT NULL, extension TEXT NOT NULL,
  size_bytes BIGINT NOT NULL, sha256 TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- consumed BOOLEAN NOT NULL DEFAULT false
+ consumed BOOLEAN NOT NULL DEFAULT false, owner_id TEXT NOT NULL DEFAULT 'admin'
 );
 CREATE TABLE IF NOT EXISTS conv_jobs (
  id TEXT PRIMARY KEY, upload_id TEXT NOT NULL REFERENCES conv_uploads(id),
@@ -94,8 +94,12 @@ CREATE TABLE IF NOT EXISTS conv_jobs (
  attempt_count INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,
  lease_owner TEXT, lease_until TIMESTAMPTZ, cancel_requested BOOLEAN NOT NULL DEFAULT false,
  error TEXT, result_key TEXT, result_size BIGINT NOT NULL DEFAULT 0,
- created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ owner_id TEXT NOT NULL DEFAULT 'admin'
 );
+ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS owner_id TEXT NOT NULL DEFAULT 'admin';
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS owner_id TEXT NOT NULL DEFAULT 'admin';
+CREATE INDEX IF NOT EXISTS conv_jobs_owner_created_idx ON conv_jobs(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS conv_jobs_claim_idx ON conv_jobs(state, lease_until, created_at);
 CREATE TABLE IF NOT EXISTS conv_job_attempts (
  id BIGSERIAL PRIMARY KEY, job_id TEXT NOT NULL REFERENCES conv_jobs(id) ON DELETE CASCADE,
@@ -110,6 +114,16 @@ CREATE TABLE IF NOT EXISTS conv_job_attempts (
 }
 
 func (s *Service) CreateUpload(ctx context.Context, fileName string, input io.Reader) (view Upload, retErr error) {
+	return s.CreateUploadFor(ctx, "admin", MaxInputBytes, 0, fileName, input)
+}
+
+func (s *Service) CreateUploadFor(ctx context.Context, ownerID string, maxFileBytes, monthlyInputBytes int64, fileName string, input io.Reader) (view Upload, retErr error) {
+	if strings.TrimSpace(ownerID) == "" {
+		return Upload{}, fmt.Errorf("upload owner is required")
+	}
+	if maxFileBytes <= 0 || maxFileBytes > MaxInputBytes {
+		maxFileBytes = MaxInputBytes
+	}
 	name := filepath.Base(strings.ReplaceAll(strings.TrimSpace(fileName), `\`, "/"))
 	if name == "" || name == "." || name == string(filepath.Separator) || strings.ContainsAny(name, "\r\n\x00") || len(name) > 255 {
 		return Upload{}, fmt.Errorf("%w: invalid filename", ErrInvalidInput)
@@ -136,13 +150,13 @@ func (s *Service) CreateUpload(ctx context.Context, fileName string, input io.Re
 		}
 	}()
 	hasher := sha256.New()
-	limited := &io.LimitedReader{R: input, N: MaxInputBytes + 1}
+	limited := &io.LimitedReader{R: input, N: maxFileBytes + 1}
 	size, copyErr := io.Copy(io.MultiWriter(tmp, hasher), limited)
 	if copyErr != nil {
 		tmp.Close()
 		return Upload{}, copyErr
 	}
-	if size > MaxInputBytes {
+	if size > maxFileBytes {
 		tmp.Close()
 		return Upload{}, ErrTooLarge
 	}
@@ -162,18 +176,71 @@ func (s *Service) CreateUpload(ctx context.Context, fileName string, input io.Re
 		return Upload{}, err
 	}
 	committed = true
-	view = Upload{ID: id, FileName: name, Extension: ext, Size: size, SHA256: hex.EncodeToString(hasher.Sum(nil)), CreatedAt: time.Now().UTC()}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO conv_uploads(id,file_name,extension,size_bytes,sha256) VALUES($1,$2,$3,$4,$5)`, view.ID, view.FileName, view.Extension, view.Size, view.SHA256)
-	if err != nil {
-		if removeErr := os.Remove(final); removeErr != nil {
-			return Upload{}, errors.Join(err, fmt.Errorf("remove unrecorded upload: %w", removeErr))
+	recorded := false
+	defer func() {
+		if !recorded {
+			if cleanupErr := os.Remove(final); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+				retErr = errors.Join(retErr, fmt.Errorf("remove unrecorded upload: %w", cleanupErr))
+			}
 		}
+	}()
+	view = Upload{ID: id, FileName: name, Extension: ext, Size: size, SHA256: hex.EncodeToString(hasher.Sum(nil)), CreatedAt: time.Now().UTC()}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return Upload{}, err
 	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, ownerID); err != nil {
+		return Upload{}, err
+	}
+	if monthlyInputBytes > 0 {
+		var used int64
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(sum(size_bytes),0) FROM conv_uploads WHERE owner_id=$1 AND created_at >= date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`, ownerID).Scan(&used); err != nil {
+			return Upload{}, err
+		}
+		if used+size > monthlyInputBytes {
+			return Upload{}, ErrQuotaExceeded
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO conv_uploads(id,file_name,extension,size_bytes,sha256,owner_id) VALUES($1,$2,$3,$4,$5,$6)`, view.ID, view.FileName, view.Extension, view.Size, view.SHA256, ownerID); err != nil {
+		return Upload{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Upload{}, err
+	}
+	recorded = true
 	return view, nil
 }
 
 func (s *Service) Submit(ctx context.Context, req SubmitRequest) (Job, bool, error) {
+	return s.SubmitFor(ctx, req, "admin", Limits{})
+}
+
+type Limits struct {
+	MonthlyJobs int
+}
+
+type MonthlyUsage struct {
+	Uploads     int   `json:"uploads"`
+	InputBytes  int64 `json:"inputBytes"`
+	Conversions int   `json:"conversions"`
+}
+
+func (s *Service) MonthlyUsage(ctx context.Context, ownerID string) (MonthlyUsage, error) {
+	var usage MonthlyUsage
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(size_bytes),0) FROM conv_uploads WHERE owner_id=$1 AND created_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`, ownerID).Scan(&usage.Uploads, &usage.InputBytes); err != nil {
+		return MonthlyUsage{}, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM conv_jobs WHERE owner_id=$1 AND created_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`, ownerID).Scan(&usage.Conversions); err != nil {
+		return MonthlyUsage{}, err
+	}
+	return usage, nil
+}
+
+func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID string, limits Limits) (Job, bool, error) {
+	if strings.TrimSpace(ownerID) == "" {
+		return Job{}, false, fmt.Errorf("job owner is required")
+	}
 	if !fileIDRE.MatchString(req.UploadID) || strings.TrimSpace(req.ProfileID) == "" || !idempotencyRE.MatchString(req.IdempotencyKey) {
 		return Job{}, false, fmt.Errorf("%w: uploadId, profileId, and an 8-128 character idempotencyKey are required", ErrInvalidInput)
 	}
@@ -182,7 +249,7 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (Job, bool, err
 		return Job{}, false, fmt.Errorf("%w: targetFormat must be a file extension", ErrInvalidInput)
 	}
 	var upload Upload
-	err := s.db.QueryRowContext(ctx, `SELECT id,file_name,extension,size_bytes,sha256,created_at FROM conv_uploads WHERE id=$1`, req.UploadID).Scan(&upload.ID, &upload.FileName, &upload.Extension, &upload.Size, &upload.SHA256, &upload.CreatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id,file_name,extension,size_bytes,sha256,created_at FROM conv_uploads WHERE id=$1 AND owner_id=$2`, req.UploadID, ownerID).Scan(&upload.ID, &upload.FileName, &upload.Extension, &upload.Size, &upload.SHA256, &upload.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, false, ErrNotFound
 	}
@@ -233,11 +300,18 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (Job, bool, err
 		return Job{}, false, err
 	}
 	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, ownerID); err != nil {
+		return Job{}, false, err
+	}
 	var consumed bool
-	if err = tx.QueryRowContext(ctx, `SELECT consumed FROM conv_uploads WHERE id=$1 FOR UPDATE`, req.UploadID).Scan(&consumed); errors.Is(err, sql.ErrNoRows) {
+	var storedOwner string
+	if err = tx.QueryRowContext(ctx, `SELECT owner_id,consumed FROM conv_uploads WHERE id=$1 FOR UPDATE`, req.UploadID).Scan(&storedOwner, &consumed); errors.Is(err, sql.ErrNoRows) {
 		return Job{}, false, ErrNotFound
 	} else if err != nil {
 		return Job{}, false, err
+	}
+	if storedOwner != ownerID {
+		return Job{}, false, ErrNotFound
 	}
 	if consumed {
 		if existing, getErr := s.getByIdempotency(ctx, req.IdempotencyKey); getErr == nil && existing.requestHash == requestDigest {
@@ -245,7 +319,16 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (Job, bool, err
 		}
 		return Job{}, false, fmt.Errorf("%w: upload has already been submitted", ErrConflict)
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO conv_jobs(id,upload_id,profile_id,profile_version,source_format,target_format,execution,idempotency_key,request_hash,state,max_attempts) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10)`, id, upload.ID, req.ProfileID, profileDef.Version, upload.Extension, target, specBytes, req.IdempotencyKey, requestDigest, MaxAttempts)
+	if limits.MonthlyJobs > 0 {
+		var jobCount int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM conv_jobs j WHERE j.owner_id=$1 AND j.created_at >= date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`, ownerID).Scan(&jobCount); err != nil {
+			return Job{}, false, err
+		}
+		if jobCount >= limits.MonthlyJobs {
+			return Job{}, false, ErrQuotaExceeded
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO conv_jobs(id,upload_id,profile_id,profile_version,source_format,target_format,execution,idempotency_key,request_hash,state,max_attempts,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11)`, id, upload.ID, req.ProfileID, profileDef.Version, upload.Extension, target, specBytes, req.IdempotencyKey, requestDigest, MaxAttempts, ownerID)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -265,7 +348,7 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (Job, bool, err
 		}
 		return Job{}, false, err
 	}
-	job, err := s.Get(ctx, id)
+	job, err := s.GetFor(ctx, id, ownerID)
 	return job, false, err
 }
 
@@ -301,11 +384,15 @@ func scanJob(row rowScanner, job *Job, extra ...any) error {
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Job, error) {
+	return s.GetFor(ctx, id, "")
+}
+
+func (s *Service) GetFor(ctx context.Context, id, ownerID string) (Job, error) {
 	if !jobIDRE.MatchString(id) {
 		return Job{}, ErrNotFound
 	}
 	var job Job
-	err := scanJob(s.db.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM conv_jobs WHERE id=$1`, id), &job)
+	err := scanJob(s.db.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM conv_jobs WHERE id=$1 AND ($2='' OR owner_id=$2)`, id, ownerID), &job)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, ErrNotFound
 	}
@@ -313,10 +400,11 @@ func (s *Service) Get(ctx context.Context, id string) (Job, error) {
 }
 
 type ListFilter struct {
-	Status string
-	Query  string
-	Limit  int
-	Offset int
+	Status  string
+	Query   string
+	Limit   int
+	Offset  int
+	OwnerID string
 }
 
 func (s *Service) List(ctx context.Context, filter ListFilter) ([]Job, int, error) {
@@ -338,11 +426,11 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]Job, int, erro
 	}
 	pattern := "%" + strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(query, `\`, `\\`), `%`, `\%`), `_`, `\_`) + "%"
 	var total int
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM conv_jobs WHERE ($1='' OR state=$1) AND ($2='' OR id ILIKE $3 ESCAPE E'\\' OR profile_id ILIKE $3 ESCAPE E'\\' OR source_format ILIKE $3 ESCAPE E'\\' OR target_format ILIKE $3 ESCAPE E'\\')`, status, query, pattern).Scan(&total)
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM conv_jobs WHERE ($1='' OR state=$1) AND ($2='' OR id ILIKE $3 ESCAPE E'\\' OR profile_id ILIKE $3 ESCAPE E'\\' OR source_format ILIKE $3 ESCAPE E'\\' OR target_format ILIKE $3 ESCAPE E'\\') AND ($4='' OR owner_id=$4)`, status, query, pattern, filter.OwnerID).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+jobColumns+` FROM conv_jobs WHERE ($1='' OR state=$1) AND ($2='' OR id ILIKE $3 ESCAPE E'\\' OR profile_id ILIKE $3 ESCAPE E'\\' OR source_format ILIKE $3 ESCAPE E'\\' OR target_format ILIKE $3 ESCAPE E'\\') ORDER BY created_at DESC LIMIT $4 OFFSET $5`, status, query, pattern, filter.Limit, filter.Offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+jobColumns+` FROM conv_jobs WHERE ($1='' OR state=$1) AND ($2='' OR id ILIKE $3 ESCAPE E'\\' OR profile_id ILIKE $3 ESCAPE E'\\' OR source_format ILIKE $3 ESCAPE E'\\' OR target_format ILIKE $3 ESCAPE E'\\') AND ($6='' OR owner_id=$6) ORDER BY created_at DESC LIMIT $4 OFFSET $5`, status, query, pattern, filter.Limit, filter.Offset, filter.OwnerID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -359,7 +447,11 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]Job, int, erro
 }
 
 func (s *Service) Detail(ctx context.Context, id string) (JobDetail, error) {
-	job, err := s.Get(ctx, id)
+	return s.DetailFor(ctx, id, "")
+}
+
+func (s *Service) DetailFor(ctx context.Context, id, ownerID string) (JobDetail, error) {
+	job, err := s.GetFor(ctx, id, ownerID)
 	if err != nil {
 		return JobDetail{}, err
 	}
@@ -389,18 +481,26 @@ func (s *Service) Detail(ctx context.Context, id string) (JobDetail, error) {
 }
 
 func (s *Service) Cancel(ctx context.Context, id string) (Job, error) {
+	return s.CancelFor(ctx, id, "")
+}
+
+func (s *Service) CancelFor(ctx context.Context, id, ownerID string) (Job, error) {
 	if !jobIDRE.MatchString(id) {
 		return Job{}, ErrNotFound
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE conv_jobs SET state=CASE WHEN state='queued' THEN 'cancelled' ELSE state END,cancel_requested=CASE WHEN state='running' THEN true ELSE cancel_requested END,updated_at=now() WHERE id=$1 AND state IN ('queued','running')`, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE conv_jobs SET state=CASE WHEN state='queued' THEN 'cancelled' ELSE state END,cancel_requested=CASE WHEN state='running' THEN true ELSE cancel_requested END,updated_at=now() WHERE id=$1 AND ($2='' OR owner_id=$2) AND state IN ('queued','running')`, id, ownerID)
 	if err != nil {
 		return Job{}, err
 	}
-	return s.Get(ctx, id)
+	return s.GetFor(ctx, id, ownerID)
 }
 
 func (s *Service) OpenResult(ctx context.Context, id string) (*os.File, Job, string, error) {
-	job, err := s.Get(ctx, id)
+	return s.OpenResultFor(ctx, id, "")
+}
+
+func (s *Service) OpenResultFor(ctx context.Context, id, ownerID string) (*os.File, Job, string, error) {
+	job, err := s.GetFor(ctx, id, ownerID)
 	if err != nil {
 		return nil, Job{}, "", err
 	}

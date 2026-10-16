@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/engine"
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/profile"
@@ -117,7 +118,16 @@ func (a *API) removeEngine(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 func (a *API) listProfiles(w http.ResponseWriter, r *http.Request) {
-	if !a.authorized(w, r) {
+	p, ok := a.identity(r)
+	if !ok {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	if !p.IsAdmin() && (p.APIKey && !auth.ScopeAllows(p, auth.ScopeSubmit) || !p.APIKey && !p.CanConvert) {
+		writeAPIError(w, http.StatusForbidden, "permission_denied", "conversion permission is required")
+		return
+	}
+	if r.Method != http.MethodGet && !a.authorized(w, r) {
 		return
 	}
 	v, err := a.management.ListProfiles(r.Context())

@@ -9,6 +9,7 @@ require (
 	github.com/sorairolake/lzip-go v0.3.8
 	github.com/theupdateframework/go-tuf/v2 v2.4.2
 	github.com/ulikunitz/xz v0.5.17
+	golang.org/x/crypto v0.50.0
 )
 
 require (
@@ -20,7 +21,6 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/secure-systems-lab/go-securesystemslib v0.11.0 // indirect
 	github.com/sigstore/protobuf-specs v0.5.0 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/term v0.42.0 // indirect

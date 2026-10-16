@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/catalog"
 	"github.com/timisah/101conv/server/internal/jobs"
 	"github.com/timisah/101conv/server/internal/management"
@@ -19,7 +20,9 @@ type API struct {
 	adminToken   string
 	repositories *repositorymanager.Manager
 	jobs         *jobs.Service
+	accounts     *auth.Service
 	sessions     *sessionStore
+	loginGuard   *loginGuard
 }
 
 func New(version string, catalogService *catalog.Service) http.Handler {
@@ -35,13 +38,26 @@ func NewWithServices(version string, catalogService *catalog.Service, management
 }
 
 func NewWithJobServices(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, adminToken string) http.Handler {
-	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, adminToken: adminToken, sessions: newSessionStore()}
+	return NewWithAccounts(version, catalogService, managementService, repositoryService, jobService, nil, adminToken)
+}
+
+func NewWithAccounts(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, accountService *auth.Service, adminToken string) http.Handler {
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, accounts: accountService, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.ready)
 	mux.HandleFunc("GET /api/v1/auth/session", a.getSession)
 	mux.HandleFunc("POST /api/v1/auth/session", a.createSession)
 	mux.HandleFunc("DELETE /api/v1/auth/session", a.deleteSession)
+	mux.HandleFunc("GET /api/v1/me", a.getMe)
+	mux.HandleFunc("POST /api/v1/me/password", a.changeMyPassword)
+	mux.HandleFunc("GET /api/v1/me/api-keys", a.listMyAPIKeys)
+	mux.HandleFunc("POST /api/v1/me/api-keys", a.createMyAPIKey)
+	mux.HandleFunc("DELETE /api/v1/me/api-keys/{keyID}", a.revokeMyAPIKey)
+	mux.HandleFunc("GET /api/v1/users", a.listUsers)
+	mux.HandleFunc("POST /api/v1/users", a.createUser)
+	mux.HandleFunc("PATCH /api/v1/users/{id}", a.updateUser)
+	mux.HandleFunc("DELETE /api/v1/users/{id}", a.deleteUser)
 	mux.HandleFunc("GET /api/v1/catalogs", a.catalogs)
 	mux.HandleFunc("GET /api/v1/catalogs/101conv-official", a.officialCatalog)
 	mux.HandleFunc("GET /api/v1/engines", a.listEngines)
@@ -80,26 +96,102 @@ func NewWithJobServices(version string, catalogService *catalog.Service, managem
 }
 
 func (a *API) authorized(w http.ResponseWriter, r *http.Request) bool {
+	return a.requireAdmin(w, r)
+}
+
+func (a *API) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	if a.management == nil || a.adminToken == "" {
 		writeAPIError(w, http.StatusServiceUnavailable, "management_disabled", "management requires configured persistent storage and ENGINE_ADMIN_TOKEN")
 		return false
 	}
-	header := r.Header.Get("Authorization")
-	if strings.HasPrefix(header, "Bearer ") {
-		got := strings.TrimPrefix(header, "Bearer ")
-		if len(got) == len(a.adminToken) && subtle.ConstantTimeCompare([]byte(got), []byte(a.adminToken)) == 1 {
-			return true
-		}
-	}
-	if a.sessions != nil && a.sessions.valid(r) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOriginRequest(r) {
+	p, method, ok := a.identityWithMethod(r)
+	if ok && p.IsAdmin() {
+		if method == "session" && r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOriginRequest(r) {
 			writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
 			return false
 		}
 		return true
 	}
-	writeAPIError(w, http.StatusUnauthorized, "unauthorized", "administrator session required")
+	if ok {
+		writeAPIError(w, http.StatusForbidden, "forbidden", "administrator permission required")
+	} else {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "administrator session required")
+	}
 	return false
+}
+
+func (a *API) identity(r *http.Request) (auth.Principal, bool) {
+	p, _, ok := a.identityWithMethod(r)
+	return p, ok
+}
+
+func (a *API) identityWithMethod(r *http.Request) (auth.Principal, string, bool) {
+	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
+		got := strings.TrimPrefix(header, "Bearer ")
+		if a.adminToken != "" && len(got) == len(a.adminToken) && subtle.ConstantTimeCompare([]byte(got), []byte(a.adminToken)) == 1 {
+			return auth.AdminPrincipal(), "bearer", true
+		}
+		if a.accounts != nil {
+			p, err := a.accounts.AuthenticateAPIKey(r.Context(), got)
+			if err == nil {
+				return p, "bearer", true
+			}
+		}
+		return auth.Principal{}, "", false
+	}
+	if a.sessions == nil {
+		return auth.Principal{}, "", false
+	}
+	p, ok := a.sessions.principal(r)
+	if !ok {
+		return auth.Principal{}, "", false
+	}
+	if p.Role != auth.RoleAdmin && a.accounts != nil {
+		fresh, err := a.accounts.Principal(r.Context(), p.ID)
+		if err != nil {
+			return auth.Principal{}, "", false
+		}
+		p = fresh
+	}
+	return p, "session", true
+}
+
+func (a *API) requireCapability(w http.ResponseWriter, r *http.Request, scope string) (auth.Principal, bool) {
+	if a.jobs == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "jobs_unavailable", "job storage is not configured")
+		return auth.Principal{}, false
+	}
+	p, method, ok := a.identityWithMethod(r)
+	if !ok {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return auth.Principal{}, false
+	}
+	if method == "session" && r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOriginRequest(r) {
+		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
+		return auth.Principal{}, false
+	}
+	if p.IsAdmin() {
+		return p, true
+	}
+	allowed := false
+	if p.APIKey {
+		allowed = auth.ScopeAllows(p, scope)
+		if scope == auth.ScopeUpload || scope == auth.ScopeSubmit || scope == auth.ScopeCancel {
+			allowed = allowed && p.CanConvert
+		}
+		if scope == auth.ScopeRead || scope == auth.ScopeResult {
+			allowed = allowed && p.CanReadJobs
+		}
+	} else if scope == auth.ScopeUpload || scope == auth.ScopeSubmit || scope == auth.ScopeCancel {
+		allowed = p.CanConvert
+	} else if scope == auth.ScopeRead || scope == auth.ScopeResult {
+		allowed = p.CanReadJobs
+	}
+	if !allowed {
+		writeAPIError(w, http.StatusForbidden, "permission_denied", "this account or API key does not have the required permission")
+		return auth.Principal{}, false
+	}
+	return p, true
 }
 
 func writeAPIError(w http.ResponseWriter, status int, code, message string) {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/catalog"
 	"github.com/timisah/101conv/server/internal/httpapi"
 	"github.com/timisah/101conv/server/internal/jobs"
@@ -74,6 +75,7 @@ func main() {
 	}
 	var db *sql.DB
 	var jobService *jobs.Service
+	var accountService *auth.Service
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
 		db, err = openDatabase(dsn)
 		if err != nil {
@@ -91,11 +93,21 @@ func main() {
 			_ = managementService.Close()
 			log.Fatalf("initialize job service: %v", err)
 		}
+		accountService, err = auth.NewService(db)
+		if err == nil {
+			err = accountService.Migrate(context.Background())
+		}
+		if err != nil {
+			_ = db.Close()
+			_ = repositoryService.Close()
+			_ = managementService.Close()
+			log.Fatalf("initialize account service: %v", err)
+		}
 	}
 
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           httpapi.NewWithJobServices(version, catalogService, managementService, repositoryService, jobService, os.Getenv("ENGINE_ADMIN_TOKEN")),
+		Handler:           httpapi.NewWithAccounts(version, catalogService, managementService, repositoryService, jobService, accountService, os.Getenv("ENGINE_ADMIN_TOKEN")),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

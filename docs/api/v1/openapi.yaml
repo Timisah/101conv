@@ -2,36 +2,154 @@ openapi: 3.1.0
 info:
   title: 101Conv API
   version: 1.0.0
-  description: Authenticated, asynchronous conversion jobs.
+  description: Authenticated 101conv management and conversion API. Regular users authenticate with account sessions or scoped API keys.
 servers:
   - url: /
 paths:
   /api/v1/auth/session:
     get:
-      summary: Check whether this browser has an administrator session
+      summary: Check whether this browser has an active administrator or user session
       responses:
         '200': { description: Session state; no-store response }
     post:
-      summary: Create an HttpOnly administrator session
-      description: Exchanges the configured administrator passphrase for an opaque server-side session. The passphrase is never returned.
+      summary: Create an HttpOnly administrator or user session
+      description: Send only password for the legacy administrator passphrase, or username and password for a local user account. The returned opaque cookie is server-side and HttpOnly.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [password]
-              properties: { password: { type: string, writeOnly: true } }
+              properties:
+                username: { type: string }
+                password: { type: string, writeOnly: true }
       responses:
         '201': { description: Session cookie set with HttpOnly and SameSite Strict attributes }
-        '401': { description: Invalid passphrase }
-        '503': { description: Administrator management is not configured }
+        '401': { description: Invalid username or password }
+        '503': { description: Authentication or management storage is not configured }
     delete:
-      summary: End the current administrator session
+      summary: End the current session
       security: [{ adminSession: [] }]
       responses:
         '204': { description: Session revoked and cookie cleared }
-        '401': { description: Administrator session required }
+        '401': { description: Session required }
+  /api/v1/me:
+    get:
+      summary: Read the current account and monthly usage
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: Current identity, permissions, quotas, and (for users) current-month usage }
+        '401': { description: Authentication required }
+  /api/v1/me/password:
+    post:
+      summary: Change the signed-in user's password
+      security: [{ adminSession: [] }]
+      description: Requires an interactive user session, current password, and a new password of at least 12 characters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, writeOnly: true }
+                newPassword: { type: string, minLength: 12, maxLength: 256, writeOnly: true }
+      responses:
+        '204': { description: Password changed }
+        '401': { description: Current password is incorrect }
+  /api/v1/me/api-keys:
+    get:
+      summary: List the current user's active API keys
+      security: [{ adminSession: [] }]
+      responses:
+        '200': { description: Key names, scopes, creation time, and last use; key material is never returned }
+    post:
+      summary: Create a scoped API key for the current user
+      security: [{ adminSession: [] }]
+      description: Requires an interactive user session. The raw token is returned once; store it in the external service's secret store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scopes]
+              properties:
+                name: { type: string, maxLength: 80 }
+                scopes:
+                  type: array
+                  uniqueItems: true
+                  items: { type: string, enum: [conversion:upload, conversion:submit, jobs:read, jobs:cancel, results:download] }
+      responses:
+        '201': { description: New key, including its one-time raw token }
+        '400': { description: Invalid scope or scope exceeds account permission }
+  /api/v1/me/api-keys/{keyID}:
+    delete:
+      summary: Revoke one of the current user's API keys
+      security: [{ adminSession: [] }]
+      parameters:
+        - { in: path, name: keyID, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Key revoked immediately }
+        '404': { description: Key not found for this user }
+  /api/v1/users:
+    get:
+      summary: List user accounts (administrator only)
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: User permissions and quota settings; password hashes and API key material are not returned }
+    post:
+      summary: Create a regular user account (administrator only)
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, canConvert, canReadJobs, maxFileBytes]
+              properties:
+                username: { type: string, minLength: 3, maxLength: 64 }
+                password: { type: string, minLength: 12, maxLength: 256, writeOnly: true }
+                canConvert: { type: boolean }
+                canReadJobs: { type: boolean }
+                maxFileBytes: { type: integer, minimum: 1, maximum: 104857600 }
+                monthlyJobs: { type: integer, minimum: 0, description: Zero means unlimited }
+                monthlyBytes: { type: integer, minimum: 0, description: Zero means unlimited; bytes are reserved at upload }
+      responses:
+        '201': { description: User created; initial password is not retained in plaintext }
+        '409': { description: Username already exists }
+  /api/v1/users/{id}:
+    patch:
+      summary: Change a user's permissions or quotas (administrator only)
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: boolean }
+                canConvert: { type: boolean }
+                canReadJobs: { type: boolean }
+                maxFileBytes: { type: integer, minimum: 1, maximum: 104857600 }
+                monthlyJobs: { type: integer, minimum: 0 }
+                monthlyBytes: { type: integer, minimum: 0 }
+                password: { type: string, minLength: 12, maxLength: 256, writeOnly: true, description: Optional administrator password reset }
+      responses:
+        '200': { description: Updated user account }
+        '404': { description: User not found }
+    delete:
+      summary: Disable a user and revoke their API keys (administrator only)
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Account disabled; jobs and audit data remain stored }
   /api/v1/repositories:
     get:
       summary: List configured repository sources and trust state
@@ -227,8 +345,8 @@ paths:
   /api/v1/profiles:
     get:
       summary: List profile catalogs and installed profiles
-      description: Administrator session required.
-      security: [{ adminSession: [] }]
+      description: Administrator, converting user, or API key with conversion:submit scope.
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       responses:
         '200': { description: Catalog sources and installed profile summaries }
         '403': { description: Administrator access required }
@@ -298,7 +416,7 @@ paths:
     post:
       summary: Upload one input file for asynchronous conversion
       description: The returned uploadId can be submitted once to create a job. Maximum input size is 100 MiB.
-      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       requestBody:
         required: true
         content:
@@ -315,12 +433,13 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Upload' }
         '400': { description: Invalid or empty upload }
-        '401': { description: Administrator bearer token required }
-        '413': { description: Input exceeds 100 MiB }
+        '401': { description: Authentication required }
+        '413': { description: Input exceeds per-account or 100 MiB instance limit }
+        '429': { description: Monthly uploaded input-data quota exceeded }
   /api/v1/jobs:
     get:
       summary: List durable jobs with optional status and text filters
-      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       parameters:
         - { in: query, name: status, schema: { type: string, enum: [queued, running, succeeded, failed, cancelled] } }
         - { in: query, name: q, schema: { type: string, maxLength: 120 } }
@@ -333,7 +452,7 @@ paths:
     post:
       summary: Submit an uploaded file for conversion by an installed profile
       description: Clients select a profile and target format; the Core resolves an enabled profile to an installed engine and a fixed argv template.
-      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       requestBody:
         required: true
         content:
@@ -363,7 +482,7 @@ paths:
       - $ref: '#/components/parameters/JobId'
     get:
       summary: Get job status
-      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       responses:
         '200':
           description: Current job state
@@ -377,7 +496,7 @@ paths:
       - $ref: '#/components/parameters/JobId'
     post:
       summary: Request job cancellation
-      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       responses:
         '200':
           description: Cancellation requested
@@ -391,7 +510,7 @@ paths:
       - $ref: '#/components/parameters/JobId'
     get:
       summary: Download a completed result
-      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       responses:
         '200':
           description: Converted output file
@@ -405,6 +524,11 @@ components:
     engineAdmin:
       type: http
       scheme: bearer
+      description: Global ENGINE_ADMIN_TOKEN. Administrator access bypasses regular-user limits; keep server-side.
+    userAPIKey:
+      type: http
+      scheme: bearer
+      description: Per-user token beginning 101c_. Access is limited to the key's scopes, account permissions, and quotas.
     adminSession:
       type: apiKey
       in: cookie
