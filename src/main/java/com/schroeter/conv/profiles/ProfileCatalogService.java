@@ -5,6 +5,8 @@ import static com.schroeter.conv.profiles.ProfileCatalogModels.*;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -49,10 +51,8 @@ public class ProfileCatalogService {
     private final ConverterRegistry registry;
     private final String builtInCatalogUrl;
     private final String applicationVersion;
-    private final HttpClient http = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .followRedirects(HttpClient.Redirect.NEVER)
-            .build();
+    private final boolean proxyConfigured;
+    private final HttpClient http;
 
     public ProfileCatalogService(
             @Value("${app.data-dir:./data/101conv}") String dataDir,
@@ -65,6 +65,12 @@ public class ProfileCatalogService {
         this.builtInCatalogUrl = builtInCatalogUrl.trim();
         String implementationVersion = ProfileCatalogService.class.getPackage().getImplementationVersion();
         this.applicationVersion = implementationVersion == null || implementationVersion.isBlank() ? "0.0.1-SNAPSHOT" : implementationVersion;
+        ProxySelector proxySelector = configuredProxySelector();
+        this.proxyConfigured = proxySelector != null;
+        HttpClient.Builder client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15))
+                .followRedirects(HttpClient.Redirect.NEVER);
+        if (proxySelector != null) client.proxy(proxySelector);
+        this.http = client.build();
     }
 
     public synchronized List<Source> sources() {
@@ -255,7 +261,11 @@ public class ProfileCatalogService {
                     || (uri.getPort() != -1 && uri.getPort() != 443) || uri.getFragment() != null) throw new IllegalArgumentException("Profile sources and packages must use public HTTPS URLs on port 443.");
             String h = host.toLowerCase(Locale.ROOT);
             if (h.equals("localhost") || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) throw new IllegalArgumentException("Private network URLs are not allowed.");
-            for (InetAddress address : InetAddress.getAllByName(host)) if (!isPublicAddress(address)) throw new IllegalArgumentException("Private or reserved network URLs are not allowed.");
+            if (!proxyConfigured || isAddressLiteral(host)) {
+                for (InetAddress address : InetAddress.getAllByName(host)) {
+                    if (!isPublicAddress(address)) throw new IllegalArgumentException("Private or reserved network URLs are not allowed.");
+                }
+            }
             return uri;
         } catch (IOException | IllegalArgumentException e) {
             if (e instanceof IllegalArgumentException iae) throw iae;
@@ -374,6 +384,31 @@ public class ProfileCatalogService {
         if (os.contains("linux") && Set.of("amd64", "x86_64", "x64").contains(arch)) return "linux-amd64";
         if (os.contains("linux") && Set.of("aarch64", "arm64").contains(arch)) return "linux-arm64";
         return "unsupported";
+    }
+
+    private static ProxySelector configuredProxySelector() {
+        String raw = firstNonBlank(System.getenv("HTTPS_PROXY"), System.getenv("https_proxy"),
+                System.getenv("HTTP_PROXY"), System.getenv("http_proxy"));
+        if (raw == null) return null;
+        try {
+            URI proxy = URI.create(raw.trim());
+            if (proxy.getHost() == null || proxy.getUserInfo() != null || (proxy.getPort() != -1 && proxy.getPort() <= 0)) {
+                return null;
+            }
+            int port = proxy.getPort() < 0 ? 80 : proxy.getPort();
+            return ProxySelector.of(new InetSocketAddress(proxy.getHost(), port));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static boolean isAddressLiteral(String host) {
+        return host.indexOf(':') >= 0 || host.matches("[0-9.]+");
+    }
+
+    private static String firstNonBlank(String... candidates) {
+        for (String candidate : candidates) if (candidate != null && !candidate.isBlank()) return candidate;
+        return null;
     }
 
     private static void writeAtomic(Path target, byte[] bytes) throws IOException {

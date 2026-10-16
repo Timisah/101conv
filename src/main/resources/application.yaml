@@ -45,6 +45,8 @@ app:
   upload-dir: uploads
   conversion-defaults-file: conversion-defaults.properties
   converter-config-dir: converter-configs
+  profiles:
+    catalog-url: ${APP_PROFILES_CATALOG_URL:https://raw.githubusercontent.com/Timisah/101conv/main/catalog/index.json}
   user-config-file: src/main/resources/static/user-config.properties
   auth:
     legacy-db-base-path: data/convdb
