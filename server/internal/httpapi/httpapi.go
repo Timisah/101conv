@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/timisah/101conv/server/internal/catalog"
+	"github.com/timisah/101conv/server/internal/jobs"
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/repositorymanager"
 )
@@ -17,6 +18,7 @@ type API struct {
 	management   *management.Service
 	adminToken   string
 	repositories *repositorymanager.Manager
+	jobs         *jobs.Service
 }
 
 func New(version string, catalogService *catalog.Service) http.Handler {
@@ -28,7 +30,11 @@ func NewWithManagement(version string, catalogService *catalog.Service, manageme
 }
 
 func NewWithServices(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, adminToken string) http.Handler {
-	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, adminToken: adminToken}
+	return NewWithJobServices(version, catalogService, managementService, repositoryService, nil, adminToken)
+}
+
+func NewWithJobServices(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, adminToken string) http.Handler {
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, adminToken: adminToken}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.ready)
@@ -59,6 +65,11 @@ func NewWithServices(version string, catalogService *catalog.Service, management
 	mux.HandleFunc("PUT /api/v1/repositories/{id}/profiles/{profileID}", a.updateRepositoryProfile)
 	mux.HandleFunc("GET /api/v1/repositories/{id}/engines/{engineID}/{version}/preview", a.previewRepositoryEngine)
 	mux.HandleFunc("POST /api/v1/repositories/{id}/engines/{engineID}/{version}/install", a.installRepositoryEngine)
+	mux.HandleFunc("POST /api/v1/uploads", a.uploadFile)
+	mux.HandleFunc("POST /api/v1/jobs", a.submitJob)
+	mux.HandleFunc("GET /api/v1/jobs/{id}", a.getJob)
+	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", a.cancelJob)
+	mux.HandleFunc("GET /api/v1/jobs/{id}/result", a.downloadJobResult)
 	return mux
 }
 

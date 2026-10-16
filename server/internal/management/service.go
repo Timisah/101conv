@@ -1117,6 +1117,71 @@ func (s *Service) ResolveProfile(id string) ([]engine.Installation, error) {
 	return resolved, err
 }
 
+// ResolveConversion selects an enabled profile rule and its currently pinned
+// engine installation. Clients supply formats, never executable paths or argv.
+func (s *Service) ResolveConversion(profileID, sourceFormat, targetFormat string) (profile.Definition, profile.ConversionRule, engine.Definition, engine.Installation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx := profileIndex(s.data.Profiles, profileID)
+	if idx < 0 {
+		return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, ErrNotFound
+	}
+	p := s.data.Profiles[idx]
+	if !p.State.Enabled {
+		return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, fmt.Errorf("profile %q is disabled: %w", profileID, ErrConflict)
+	}
+	if err := p.Definition.Validate(); err != nil {
+		return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, fmt.Errorf("installed profile is invalid: %w", err)
+	}
+	sourceFormat = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(sourceFormat)), ".")
+	targetFormat = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(targetFormat)), ".")
+	var selected *profile.ConversionRule
+	for i := range p.Definition.Rules {
+		rule := &p.Definition.Rules[i]
+		matches := false
+		for _, ext := range rule.Sources {
+			if strings.EqualFold(strings.TrimPrefix(ext, "."), sourceFormat) {
+				for _, out := range rule.Targets {
+					if strings.EqualFold(strings.TrimPrefix(out, "."), targetFormat) {
+						matches = true
+						break
+					}
+				}
+			}
+		}
+		if matches {
+			if selected != nil {
+				return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, fmt.Errorf("profile %q has ambiguous rules for %s to %s: %w", profileID, sourceFormat, targetFormat, ErrConflict)
+			}
+			selected = rule
+		}
+	}
+	if selected == nil {
+		return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, fmt.Errorf("profile %q does not support %s to %s", profileID, sourceFormat, targetFormat)
+	}
+	resolved, _, err := resolveWithPins(p.Definition, s.data.Engines, p.State.ResolvedEngines)
+	if err != nil {
+		return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, err
+	}
+	for i, requirement := range p.Definition.Engines {
+		if requirement.EngineID != selected.EngineID {
+			continue
+		}
+		for _, record := range s.data.Engines {
+			if record.Installation.EngineID == resolved[i].EngineID && record.Installation.Version == resolved[i].Version {
+				if !record.Installation.Managed {
+					return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, fmt.Errorf("worker requires a managed engine installation")
+				}
+				if record.Installation.ExecutablePaths[selected.Executable] == "" || record.Definition.Executables[selected.Executable] == "" {
+					return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, fmt.Errorf("profile executable is not part of the managed engine")
+				}
+				return p.Definition, *selected, record.Definition, record.Installation, nil
+			}
+		}
+	}
+	return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, fmt.Errorf("profile engine %q is not resolved", selected.EngineID)
+}
+
 func resolve(d profile.Definition, engines []EngineRecord) ([]engine.Installation, error) {
 	resolved, _, err := resolveWithPins(d, engines, nil)
 	return resolved, err

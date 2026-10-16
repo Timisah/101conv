@@ -248,80 +248,98 @@ paths:
         '201': { description: Installed profile summary }
         '400': { description: Package, checksum, or compatibility validation failed }
         '403': { description: Administrator access required }
-  /api/v1/jobs:
+  /api/v1/uploads:
     post:
-      summary: Submit a conversion job
-      security:
-        - sessionCookie: []
-      parameters:
-        - in: header
-          name: Idempotency-Key
-          required: false
-          schema: { type: string, maxLength: 200 }
+      summary: Upload one input file for asynchronous conversion
+      description: The returned uploadId can be submitted once to create a job. Maximum input size is 100 MiB.
+      security: [{ engineAdmin: [] }]
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
-              required: [file, sourceFormat, targetFormat]
+              required: [file]
               properties:
                 file: { type: string, format: binary }
-                sourceFormat: { type: string }
-                targetFormat: { type: string }
-                converterId: { type: string }
-                option_quality: { type: string, description: 'Option fields use the option_<key> prefix.' }
       responses:
-        '202':
-          description: Job accepted (or the existing result of an identical idempotent request).
+        '201':
+          description: Input stored and fingerprinted
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Job' }
+              schema: { $ref: '#/components/schemas/Upload' }
+        '400': { description: Invalid or empty upload }
+        '401': { description: Administrator bearer token required }
+        '413': { description: Input exceeds 100 MiB }
+  /api/v1/jobs:
+    post:
+      summary: Submit an uploaded file for conversion by an installed profile
+      description: Clients select a profile and target format; the Core resolves an enabled profile to an installed engine and a fixed argv template.
+      security: [{ engineAdmin: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uploadId, profileId, targetFormat, idempotencyKey]
+              properties:
+                uploadId: { type: string, format: uuid }
+                profileId: { type: string }
+                targetFormat: { type: string, pattern: '^[a-z0-9]{1,12}$' }
+                idempotencyKey: { type: string, minLength: 8, maxLength: 128 }
+      responses:
+        '202':
+          description: Job accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobSubmission' }
+        '200': { description: Existing job returned for an identical idempotent request }
         '400': { description: Invalid request }
-        '401': { description: Authentication required }
-        '409': { description: Idempotency key conflicts with a different request }
-        '413': { description: Upload exceeds the configured request limit }
+        '401': { description: Administrator bearer token required }
+        '404': { description: Upload or profile not found }
+        '409': { description: Idempotency key conflicts or upload is already consumed }
         '422': { description: Conversion is unsupported }
   /api/v1/jobs/{id}:
     parameters:
       - $ref: '#/components/parameters/JobId'
     get:
       summary: Get job status
-      security: [{ sessionCookie: [] }]
+      security: [{ engineAdmin: [] }]
       responses:
         '200':
           description: Current job state
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Job' }
-        '401': { description: Authentication required }
+              schema: { $ref: '#/components/schemas/JobDetail' }
+        '401': { description: Administrator bearer token required }
         '404': { description: Job not found }
   /api/v1/jobs/{id}/cancel:
     parameters:
       - $ref: '#/components/parameters/JobId'
     post:
       summary: Request job cancellation
-      security: [{ sessionCookie: [] }]
+      security: [{ engineAdmin: [] }]
       responses:
         '200':
-          description: Updated job state
+          description: Cancellation requested
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Job' }
-        '401': { description: Authentication required }
+        '401': { description: Administrator bearer token required }
         '404': { description: Job not found }
   /api/v1/jobs/{id}/result:
     parameters:
       - $ref: '#/components/parameters/JobId'
     get:
       summary: Download a completed result
-      security: [{ sessionCookie: [] }]
+      security: [{ engineAdmin: [] }]
       responses:
         '200':
           description: Converted output file
           content:
             application/octet-stream: { schema: { type: string, format: binary } }
-        '401': { description: Authentication required }
+        '401': { description: Administrator bearer token required }
         '404': { description: Job or result not found }
         '409': { description: Job has not succeeded }
 components:
@@ -340,22 +358,45 @@ components:
       required: true
       schema: { type: string, format: uuid }
   schemas:
-    Job:
+    Upload:
       type: object
-      required: [id, state, sourceName, sourceFormat, targetFormat, converterId, attempt, createdAt]
+      required: [id, fileName, extension, size, sha256, createdAt]
       properties:
         id: { type: string, format: uuid }
-        state: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELED] }
-        sourceName: { type: string }
+        fileName: { type: string }
+        extension: { type: string }
+        size: { type: integer, minimum: 1, maximum: 104857600 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        createdAt: { type: string, format: date-time }
+    JobSubmission:
+      type: object
+      required: [job, duplicate]
+      properties:
+        job: { $ref: '#/components/schemas/Job' }
+        duplicate: { type: boolean }
+    Job:
+      type: object
+      required: [id, profileId, profileVersion, sourceFormat, targetFormat, state, progress, attempt, maxAttempts, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        profileId: { type: string }
+        profileVersion: { type: string }
         sourceFormat: { type: string }
         targetFormat: { type: string }
-        converterId: { type: string }
+        state: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
         attempt: { type: integer, minimum: 0 }
-        progress: { type: [integer, 'null'], minimum: 0, maximum: 100 }
+        maxAttempts: { type: integer, minimum: 1 }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        error: { type: string }
+        outputSize: { type: integer }
         createdAt: { type: string, format: date-time }
-        startedAt: { type: [string, 'null'], format: date-time }
-        finishedAt: { type: [string, 'null'], format: date-time }
-        errorCode: { type: [string, 'null'] }
-        errorMessage: { type: [string, 'null'] }
-        cancellationRequested: { type: boolean }
-        resultUrl: { type: [string, 'null'], format: uri-reference }
+        updatedAt: { type: string, format: date-time }
+    JobDetail:
+      type: object
+      required: [job, attempts]
+      properties:
+        job: { $ref: '#/components/schemas/Job' }
+        attempts:
+          type: array
+          items:
+            type: object

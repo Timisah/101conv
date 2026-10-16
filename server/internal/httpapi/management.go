@@ -94,6 +94,17 @@ func (a *API) removeEngine(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) {
 		return
 	}
+	if a.jobs != nil {
+		inUse, err := a.jobs.EngineHasActiveJobs(r.Context(), r.PathValue("id"), r.PathValue("version"))
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "job_storage_error", "could not verify active jobs before engine removal")
+			return
+		}
+		if inUse {
+			writeAPIError(w, http.StatusConflict, "engine_in_use", "engine version is referenced by queued or running jobs")
+			return
+		}
+	}
 	resolve := r.URL.Query().Get("resolveDependencies") == "true"
 	err := a.management.RemoveEngine(r.Context(), r.PathValue("id"), r.PathValue("version"), resolve)
 	if err != nil {
