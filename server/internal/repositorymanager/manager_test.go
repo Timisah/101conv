@@ -737,6 +737,16 @@ func TestUnsignedOfficialApprovalPersistsAndCanBeRevoked(t *testing.T) {
 
 func TestUnsignedOfficialCatalogCanBeBrowsedButNotInstalled(t *testing.T) {
 	targets := makeCatalog(t, nil)
+	// Labels can briefly differ while a branch-based CDN refreshes adjacent
+	// metadata files. IDs and versions must match; display names come from the
+	// manifests so a stale index label cannot hide the whole catalog.
+	var index CatalogIndex
+	if err := json.Unmarshal(targets["catalog/index.json"], &index); err != nil {
+		t.Fatal(err)
+	}
+	index.Engines[0].Name = "Stale engine label"
+	index.Profiles[0].Name = "Stale profile label"
+	targets["catalog/index.json"], _ = json.Marshal(index)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/catalog/targets/") {
 			http.NotFound(w, r)
@@ -758,6 +768,9 @@ func TestUnsignedOfficialCatalogCanBeBrowsedButNotInstalled(t *testing.T) {
 	}
 	if len(catalog.Engines) != 1 || len(catalog.Profiles) != 2 {
 		t.Fatalf("unexpected browse result: engines=%d profiles=%d", len(catalog.Engines), len(catalog.Profiles))
+	}
+	if catalog.Engines[0].Name != "FFmpeg" || catalog.Profiles[0].Name != "Video One" {
+		t.Fatalf("catalog did not use manifest display names: engine=%q profile=%q", catalog.Engines[0].Name, catalog.Profiles[0].Name)
 	}
 
 	root := t.TempDir()

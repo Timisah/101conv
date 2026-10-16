@@ -529,8 +529,8 @@ func loadUnsignedView(ctx context.Context, source Source, base, appVersion strin
 			return verifiedView{}, fmt.Errorf("decode engine %q manifest: %w", entry.ID, e)
 		}
 		d := manifest.Engine
-		if d.ID != entry.ID || d.Version != entry.Version || d.Name != entry.Name {
-			return verifiedView{}, fmt.Errorf("catalog entry and engine manifest disagree for %q", entry.ID)
+		if d.ID != entry.ID || d.Version != entry.Version {
+			return verifiedView{}, fmt.Errorf("catalog entry identity/version and engine manifest disagree for %q", entry.ID)
 		}
 		if e = d.Validate(); e != nil {
 			return verifiedView{}, e
@@ -550,8 +550,8 @@ func loadUnsignedView(ctx context.Context, source Source, base, appVersion strin
 			return verifiedView{}, fmt.Errorf("decode profile %q manifest: %w", entry.ID, e)
 		}
 		d := manifest.Profile
-		if d.ID != entry.ID || d.Version != entry.Version || d.Name != entry.Name {
-			return verifiedView{}, fmt.Errorf("catalog entry and profile manifest disagree for %q", entry.ID)
+		if d.ID != entry.ID || d.Version != entry.Version {
+			return verifiedView{}, fmt.Errorf("catalog entry identity/version and profile manifest disagree for %q", entry.ID)
 		}
 		if e = d.Validate(); e != nil {
 			return verifiedView{}, e
@@ -644,8 +644,8 @@ func (m *Manager) loadViewLocked(ctx context.Context, s Source) (verifiedView, e
 			return verifiedView{}, e
 		}
 		d := manifest.Engine
-		if d.ID != entry.ID || d.Version != entry.Version || d.Name != entry.Name {
-			return verifiedView{}, fmt.Errorf("catalog entry and engine manifest disagree for %q", entry.ID)
+		if d.ID != entry.ID || d.Version != entry.Version {
+			return verifiedView{}, fmt.Errorf("catalog entry identity/version and engine manifest disagree for %q", entry.ID)
 		}
 		if e = d.Validate(); e != nil {
 			return verifiedView{}, e
@@ -704,8 +704,8 @@ func (m *Manager) loadViewLocked(ctx context.Context, s Source) (verifiedView, e
 			return verifiedView{}, e
 		}
 		d := manifest.Profile
-		if d.ID != entry.ID || d.Version != entry.Version || d.Name != entry.Name {
-			return verifiedView{}, fmt.Errorf("catalog entry and profile manifest disagree for %q", entry.ID)
+		if d.ID != entry.ID || d.Version != entry.Version {
+			return verifiedView{}, fmt.Errorf("catalog entry identity/version and profile manifest disagree for %q", entry.ID)
 		}
 		if e = d.Validate(); e != nil {
 			return verifiedView{}, e
