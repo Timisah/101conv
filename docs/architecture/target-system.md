@@ -6,13 +6,13 @@
 
 101conv should let a person select files and an output capability without learning converter command lines. The same conversion capability should be available to the web client, API clients, and later automation. File contents and conversion execution stay on the operator's infrastructure by default.
 
-Start with a **modular monolith**, not a fleet of services. Keep explicit boundaries between the HTTP/API layer, conversion and job domain, persistence, storage, catalog, and worker execution. Keep the UI as a client of the public API. Preserve Java 21 and Spring Boot during the first stages because they are already the starter's working stack; revisit that choice only if a measured requirement justifies a rewrite.
+Build a **modular monolith**, not a fleet of services. Keep explicit boundaries between the HTTP/API layer, conversion and job domain, persistence, storage, catalog, and worker execution. The UI is a client of the public API. The replacement backend is Go: its single static executable keeps deployment small, while its standard HTTP and process APIs make the service and constrained worker straightforward to ship. The existing Java application is a behavioral reference during migration, not a runtime dependency or architectural constraint.
 
 The intended deployment is one Compose project with Core, Worker, and PostgreSQL. Do not add Redis or a separate message broker for the first release: PostgreSQL is the durable job queue and source of truth. Core and Worker can begin as two runtime roles in the same codebase. Use named volumes for database state and managed files. Keep the Worker unprivileged, without Docker socket access, and with explicit CPU, memory, process, and disk limits.
 
 ## Current baseline
 
-The supplied archive contains a Spring Boot application with a static web UI, authentication, upload/history APIs, H2 persistence, and a JSON-configured converter registry. It is a useful feature reference, not the required final architecture.
+The current checkout contains a Spring Boot application with a static web UI, authentication, upload/history APIs, H2 persistence, and a JSON-configured converter registry. It is a useful feature reference, not the required final architecture. The Go replacement will be built alongside it until the new critical paths are validated, then deployment will move over deliberately.
 
 The current upload path performs conversion before returning the HTTP response. Conversion configuration can supply child-process commands; the current runner waits without a deadline and reads all process output into memory. Persistence models conversion sessions and uploads, but has no durable conversion-job lifecycle. The API routes are not versioned. The current password-session cookie is marked `HttpOnly` but sets `Secure` to false. These are migration targets and need a security review before production exposure.
 
@@ -21,7 +21,7 @@ The supplied test originally failed during Spring test bootstrap because `Applic
 ## Domain boundaries
 
 - **Identity and access:** users, administrator bootstrap, browser sessions, scoped API credentials, and authorization policy.
-- **Capabilities and catalog:** format/capability discovery, converter manifests, compatibility, dependency and license metadata, trust state, and installation policy. A fresh install contains no third-party engines or profiles.
+- **Capabilities and catalog:** format/capability discovery, converter manifests, compatibility, dependency and license metadata, trust state, and installation policy. A fresh install has the built-in, version-aware **101conv Official Catalog** source already configured, while no third-party engine or profile is installed. Catalog indexes and individual profiles declare supported 101conv versions; incompatible entries cannot be installed.
 - **Jobs:** validated requests, idempotency, state transitions, progress, attempts, cancellation, priority, concurrency, and history.
 - **Storage:** immutable source artifacts, per-attempt work directories, completed outputs, retention, and backup/restore.
 - **Worker execution:** claim work, stage inputs, invoke an installed converter through a typed adapter, collect bounded results, and report completion.
@@ -70,22 +70,21 @@ Do not send file content, filenames, conversion options, or usage telemetry to a
 
 ## Migration plan
 
-1. **Foundation and contracts:** fix the test bootstrap mismatch; add an architecture decision record for PostgreSQL and storage layout; define job/capability/error contracts and OpenAPI; identify legacy API behavior to preserve. Audit auth bootstrap, cookie flags, CSRF, authorization, and default database configuration before making the UI/API production-facing.
-2. **Persistent job vertical slice:** introduce schema migrations and durable Job/Attempt records. Submit one supported conversion as a job, return immediately, read state, and download the completed artifact. Keep a single local Worker role and a DB-backed queue; test restart recovery and idempotent submissions.
+1. **Replacement foundation:** establish the Go module, runtime configuration, HTTP health contract, catalog source/version compatibility contract, and OpenAPI. Document the PostgreSQL and storage layout and identify legacy behavior to preserve. Audit auth bootstrap, cookie flags, CSRF, authorization, and default database configuration before making the replacement UI/API production-facing.
+2. **Persistent job vertical slice:** add PostgreSQL migrations and durable Job/Attempt records. Submit one supported conversion as a job, return immediately, read state, and download the completed artifact. Keep a single local Worker role and a DB-backed queue; test restart recovery and idempotent submissions.
 3. **Safe execution boundary:** replace direct converter calls in request handlers with a typed worker adapter and process runner. Add deadline, cancellation, output/log limits, per-attempt workspaces, strict output validation, and resource controls. Keep converter installation disabled unless an administrator installs a verified manifest.
 4. **Compatibility and UI:** route the existing upload UI through v1 jobs, show progress and understandable errors, and retain legacy routes as adapters during migration. Preserve history and ownership semantics.
 5. **Deployment and operations:** publish Compose for Core, Worker, and PostgreSQL with health checks, unprivileged containers, named volumes, backup/restore, and an empty converter catalog by default. Verify clean install, upgrade, offline conversion, and data recovery.
 6. **Catalog and automation:** add signed/versioned repository indexes, dependency and license display, reviewed installation, then scheduling and folder monitoring. Add these only after the job lifecycle and recovery behavior are stable.
 
-### First implementation slice
+### Migration status
 
-The initial code slice adds durable JPA job records, `/api/v1/jobs` submit/status/cancel/result endpoints, an owner-scoped session check, idempotent submission, one scheduled worker, bounded child-process execution, managed input/output paths, and an OpenAPI contract. Legacy routes remain available. Tests cover end-to-end submission through result download and owner isolation, plus converter process timeout and output bounds.
-
-This is a local-development milestone, not the full durable deployment target: the checked-in default still uses H2 with schema auto-update, and the worker runs in the web process. Tests cover cancellation of a running process, but not process restart recovery. The next reliability step is a versioned schema on PostgreSQL with restart/lease recovery tests and a separately constrained Worker deployment. A real OS/container sandbox with CPU, memory, PID, disk, filesystem, and network controls also remains deployment work.
+The current Java application contains the first reference implementation for profiles and jobs, but it is not the target runtime. The Go replacement starts with independently runnable health and catalog compatibility foundations. It does not replace the production Compose deployment until PostgreSQL-backed jobs, worker isolation, migration/import behavior, and a usable UI have passed functional checks.
 
 ### Main risks and decisions
 
 - PostgreSQL adds one service to the default Compose deployment, but provides durable concurrent job leasing without another broker. Reassess only if the supported single-node workflow proves embedded persistence materially simpler without losing recovery guarantees.
+- Replacing Java with Go is a deliberate rewrite: preserve observable product behavior and data import paths, not implementation details. Keep the existing application available until the replacement demonstrates migration, recovery, and conversion parity.
 - Moving from H2 and filesystem paths into versioned PostgreSQL/storage schemas needs an explicit importer and backup plan. Do not discard existing sessions, history, or files during migration.
 - Process isolation reduces blast radius but is not a complete sandbox by itself. Network, filesystem, CPU, memory, PID, and disk limits must be enforced by the deployment boundary as well as validated in application code.
 - Existing clients may depend on synchronous responses and legacy identifiers. Keep adapters until actual UI and API usage is migrated.
