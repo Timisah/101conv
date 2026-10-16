@@ -2,6 +2,8 @@
 
 The root `compose.yaml` is the production deployment. It builds and runs the React/Nginx web app, Go Core, restricted Go Worker, and PostgreSQL in the same stack. The web app is published on port `5656` by default; only Nginx exposes a host port. The Core API remains private behind Nginx.
 
+The Compose file intentionally omits Docker's `no-new-privileges` setting because the target Ubuntu host uses snap-packaged Docker, which returned `operation not permitted` when executing the PostgreSQL entrypoint with that option enabled. The Core, Worker, and web containers still run as unprivileged users with the existing capability, filesystem, network, and resource restrictions.
+
 ## Update an existing Git stack
 
 Use the existing Portainer stack. Keep its repository, branch, and stack name; do not add a second stack. Java stacks already use Compose path `compose.yaml`. Prior Go stacks using `compose.go.yaml` can keep that path because it remains a compatibility symlink to the same root Compose file.

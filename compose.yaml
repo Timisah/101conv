@@ -1,5 +1,10 @@
 name: 101conv-go
 
+# no-new-privileges is intentionally omitted: on this Ubuntu host's
+# snap-packaged Docker it prevents even container entrypoints from executing.
+# Keep the remaining isolation controls (non-root app users, dropped
+# capabilities, read-only filesystems, internal worker network, and limits).
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -18,8 +23,6 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
 
   core:
     build:
@@ -61,8 +64,6 @@ services:
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
     cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
     pids_limit: 128
     mem_limit: 768m
     cpus: 1.5
@@ -93,8 +94,6 @@ services:
       - /var/cache/nginx:rw,nosuid,nodev,noexec,size=16m,uid=101,gid=101,mode=0755
       - /var/run:rw,nosuid,nodev,noexec,size=2m,uid=101,gid=101,mode=0755
     cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
     pids_limit: 64
     mem_limit: 128m
     cpus: 0.5
@@ -143,8 +142,6 @@ services:
       - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
       - /work:rw,nosuid,nodev,noexec,size=1g,mode=0700,uid=65532,gid=65532
     cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
     pids_limit: 64
     mem_limit: 1g
     cpus: 1.0

@@ -65,7 +65,7 @@ services:
 YAML
 docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" up -d
 worker_container="$(docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" ps -q worker)"
-docker inspect "$worker_container" | python3 -c 'import json,sys; c=json.load(sys.stdin)[0]; h=c["HostConfig"]; n=c["NetworkSettings"]["Networks"]; m={x["Destination"]:x for x in c["Mounts"]}; assert h["ReadonlyRootfs"] is True; assert "ALL" in h["CapDrop"]; assert any("no-new-privileges" in x for x in h["SecurityOpt"]); assert h["PidsLimit"] <= 64; assert 0 < h["Memory"] <= 1073741824; assert 0 < h["NanoCpus"] <= 1000000000; assert len(n)==1 and next(iter(n)).endswith("_worker-db"); assert m["/var/lib/101conv/engines"]["RW"] is False; assert m["/var/lib/101conv/uploads"]["RW"] is False; assert m["/var/lib/101conv/results"]["RW"] is True'
+docker inspect "$worker_container" | python3 -c 'import json,sys; c=json.load(sys.stdin)[0]; h=c["HostConfig"]; n=c["NetworkSettings"]["Networks"]; m={x["Destination"]:x for x in c["Mounts"]}; assert h["ReadonlyRootfs"] is True; assert "ALL" in h["CapDrop"]; assert h["PidsLimit"] <= 64; assert 0 < h["Memory"] <= 1073741824; assert 0 < h["NanoCpus"] <= 1000000000; assert len(n)==1 and next(iter(n)).endswith("_worker-db"); assert m["/var/lib/101conv/engines"]["RW"] is False; assert m["/var/lib/101conv/uploads"]["RW"] is False; assert m["/var/lib/101conv/results"]["RW"] is True'
 
 base="http://127.0.0.1:$PORT"
 auth=(-H "Authorization: Bearer $ENGINE_ADMIN_TOKEN")
