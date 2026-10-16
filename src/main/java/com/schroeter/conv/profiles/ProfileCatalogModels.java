@@ -13,7 +13,7 @@ public final class ProfileCatalogModels {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Entry(String id, String version, String name, String description, String manifestUrl,
-            String minimumAppVersion, String maximumAppVersionExclusive) {}
+            String minimumAppVersion, String maximumAppVersionExclusive, List<String> supportedExtensions) {}
 
     public record CatalogResponse(List<Entry> profiles, int incompatibleProfiles, String applicationVersion) {}
 

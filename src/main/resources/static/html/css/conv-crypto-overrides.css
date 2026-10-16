@@ -51,6 +51,8 @@ input,select,textarea { background: #101b18 !important; color: var(--conv-paper)
 .catalog-version { margin-top:14px; color:#82958a; font-size:11px; text-align:right; }
 .catalog-profile { padding:14px 0 0; }
 .catalog-profile>div { min-width:0; }
+.catalog-profile .catalog-formats { margin-top:7px; color:#c4d2c8; }
+.catalog-formats strong { color:var(--conv-lime); font-size:10px; letter-spacing:.04em; margin-right:5px; }
 .profile-item { justify-content:flex-start; padding:17px 0; border-bottom:1px solid var(--conv-line); }
 .profile-mark { flex:none; display:grid; place-items:center; width:38px; height:38px; border-radius:11px; color:var(--conv-lime); background:#2a3a30; font-weight:750; }
 .profile-copy { min-width:0; flex:1; }
