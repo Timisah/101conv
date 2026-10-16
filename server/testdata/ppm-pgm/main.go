@@ -38,6 +38,11 @@ func main() {
 				fatal("invalid output byte count")
 			}
 			outputBytes = n
+		case "--quality":
+			quality, err := strconv.Atoi(value)
+			if err != nil || quality < 1 || quality > 100 {
+				fatal("invalid quality")
+			}
 		default:
 			fatal("unknown argument")
 		}

@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,16 +29,22 @@ const (
 var safeSegment = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
 
 type Invocation struct {
-	JobID                  string
-	Attempt                int
-	InputID                string
-	EngineID               string
-	EngineVersion          string
-	ExecutableRelativePath string
-	Arguments              []string
-	TargetExtension        string
-	ExpectedInputSHA256    string
-	ExpectedInputSize      int64
+	JobID                       string
+	Attempt                     int
+	InputID                     string
+	EngineID                    string
+	EngineVersion               string
+	ExecutableRelativePath      string
+	Arguments                   []string
+	CompressionArguments        []string
+	TargetSizeBytes             int64
+	ProbeExecutableRelativePath string
+	AudioBitrateKbps            int
+	MinimumVideoKbps            int
+	RequireSmaller              bool
+	TargetExtension             string
+	ExpectedInputSHA256         string
+	ExpectedInputSize           int64
 }
 
 type Result struct {
@@ -64,8 +72,11 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	if !safeSegment.MatchString(in.JobID) || !safeSegment.MatchString(in.InputID) || !safeSegment.MatchString(in.EngineID) || !safeSegment.MatchString(in.EngineVersion) || in.Attempt < 1 || in.Attempt > 1000000 {
 		return Result{}, fmt.Errorf("invalid worker invocation identity")
 	}
-	if !safeExtension(in.TargetExtension) || !safeRelative(in.ExecutableRelativePath) || len(in.Arguments) == 0 || len(in.Arguments) > 128 {
+	if !safeExtension(in.TargetExtension) || !safeRelative(in.ExecutableRelativePath) || len(in.Arguments) == 0 || len(in.Arguments) > 128 || len(in.CompressionArguments) > 64 {
 		return Result{}, fmt.Errorf("invalid worker invocation definition")
+	}
+	if in.TargetSizeBytes > 0 && (!safeRelative(in.ProbeExecutableRelativePath) || in.AudioBitrateKbps < 1 || in.MinimumVideoKbps < 1) {
+		return Result{}, fmt.Errorf("invalid compression target-size settings")
 	}
 	engineRoot, err := filepath.EvalSymlinks(r.EngineRoot)
 	if err != nil {
@@ -122,25 +133,35 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 		}
 	}()
 	outputPath := filepath.Join(work, "output."+in.TargetExtension)
-	args := make([]string, len(in.Arguments))
-	seenSource, seenTarget := false, false
-	for i, arg := range in.Arguments {
+	compressionArgs, err := resolveCompressionArguments(parent, engineRoot, work, inputPath, in)
+	if err != nil {
+		return Result{}, err
+	}
+	args := make([]string, 0, len(in.Arguments)+len(compressionArgs))
+	seenSource, seenTarget, seenCompressionSlot := false, false, false
+	for _, arg := range in.Arguments {
 		switch arg {
 		case "{source}":
-			args[i] = inputPath
+			args = append(args, inputPath)
 			seenSource = true
 		case "{target}":
-			args[i] = outputPath
+			args = append(args, outputPath)
 			seenTarget = true
+		case "{compression.args}":
+			args = append(args, compressionArgs...)
+			seenCompressionSlot = true
 		default:
 			if strings.ContainsAny(arg, "{}") || strings.ContainsRune(arg, '\x00') {
 				return Result{}, fmt.Errorf("unsafe converter argument")
 			}
-			args[i] = arg
+			args = append(args, arg)
 		}
 	}
 	if !seenSource || !seenTarget {
 		return Result{}, fmt.Errorf("converter arguments must include source and target placeholders")
+	}
+	if len(in.CompressionArguments) > 0 && !seenCompressionSlot {
+		return Result{}, fmt.Errorf("compression arguments require a {compression.args} marker")
 	}
 	timeout := r.Timeout
 	if timeout <= 0 {
@@ -191,6 +212,12 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	if !outputInfo.Mode().IsRegular() || outputInfo.Mode()&os.ModeSymlink != 0 || outputInfo.Size() <= 0 || outputInfo.Size() > maxOutput {
 		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("converter output failed type or size validation")
 	}
+	if in.TargetSizeBytes > 0 && outputInfo.Size() > in.TargetSizeBytes {
+		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("converter output exceeded the requested target size")
+	}
+	if in.RequireSmaller && outputInfo.Size() >= inputInfo.Size() {
+		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("compression did not reduce the input size")
+	}
 	resultKey := fmt.Sprintf("%s-%d.bin", in.JobID, in.Attempt)
 	resultPath := filepath.Join(r.ResultRoot, resultKey)
 	if err = os.MkdirAll(r.ResultRoot, 0700); err != nil {
@@ -200,6 +227,89 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 		return Result{}, err
 	}
 	return Result{ResultKey: resultKey, Size: outputInfo.Size(), ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, nil
+}
+
+func resolveCompressionArguments(parent context.Context, engineRoot, work, inputPath string, in Invocation) ([]string, error) {
+	if len(in.CompressionArguments) == 0 {
+		return nil, nil
+	}
+	values := map[string]string{}
+	if in.TargetSizeBytes > 0 {
+		executable := filepath.Join(engineRoot, in.EngineID, in.EngineVersion, filepath.FromSlash(in.ProbeExecutableRelativePath))
+		if err := rejectSymlinkPath(engineRoot, executable); err != nil {
+			return nil, fmt.Errorf("resolve media probe: %w", err)
+		}
+		info, err := os.Lstat(executable)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0111 == 0 {
+			return nil, fmt.Errorf("compression probe executable is unavailable")
+		}
+		probeCtx, cancel := context.WithTimeout(parent, 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(probeCtx, executable, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", inputPath)
+		cmd.Dir = work
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work, "LANG=C.UTF-8"}
+		out, stderr := &boundedBuffer{}, &boundedBuffer{}
+		cmd.Stdout, cmd.Stderr = out, stderr
+		if err = cmd.Run(); err != nil {
+			if probeCtx.Err() != nil {
+				return nil, fmt.Errorf("media probe timed out")
+			}
+			return nil, fmt.Errorf("could not inspect media duration: %s", strings.TrimSpace(stderr.String()))
+		}
+		duration, err := strconv.ParseFloat(strings.TrimSpace(out.String()), 64)
+		if err != nil || duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+			return nil, fmt.Errorf("media probe returned an invalid duration")
+		}
+		// Reserve 10%% of the requested budget for container metadata and
+		// muxing overhead; the final artifact is still checked against the cap.
+		budget := in.TargetSizeBytes
+		if in.RequireSmaller && budget > in.ExpectedInputSize {
+			budget = in.ExpectedInputSize
+		}
+		totalKbps := int64(math.Floor(float64(budget) * 8 / duration / 1000 * 0.90))
+		usesVideo, usesAudio := false, false
+		for _, arg := range in.CompressionArguments {
+			usesVideo = usesVideo || strings.Contains(arg, "{compression.videoKbps}") || strings.Contains(arg, "{compression.bufferKbps}")
+			usesAudio = usesAudio || strings.Contains(arg, "{compression.audioKbps}")
+		}
+		if usesVideo {
+			audioKbps := int64(in.AudioBitrateKbps)
+			videoKbps := totalKbps - audioKbps
+			if videoKbps < int64(in.MinimumVideoKbps) {
+				return nil, fmt.Errorf("target size is too small for this media duration")
+			}
+			values["{compression.videoKbps}"] = strconv.FormatInt(videoKbps, 10)
+			values["{compression.bufferKbps}"] = strconv.FormatInt(videoKbps*2, 10)
+			if usesAudio {
+				values["{compression.audioKbps}"] = strconv.FormatInt(audioKbps, 10)
+			}
+		} else if usesAudio {
+			audioKbps := totalKbps
+			if audioKbps > 320 {
+				audioKbps = 320
+			}
+			if audioKbps < 32 {
+				return nil, fmt.Errorf("target size is too small for this media duration")
+			}
+			values["{compression.audioKbps}"] = strconv.FormatInt(audioKbps, 10)
+		}
+	}
+	result := make([]string, len(in.CompressionArguments))
+	for i, arg := range in.CompressionArguments {
+		if strings.ContainsRune(arg, '\x00') {
+			return nil, fmt.Errorf("unsafe compression argument")
+		}
+		for token, value := range values {
+			if strings.Contains(arg, token) {
+				arg = strings.ReplaceAll(arg, token, value)
+			}
+		}
+		if strings.ContainsAny(arg, "{}") {
+			return nil, fmt.Errorf("compression argument requires a target-size setting")
+		}
+		result[i] = arg
+	}
+	return result, nil
 }
 
 type boundedBuffer struct{ data []byte }

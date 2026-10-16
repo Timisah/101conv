@@ -163,7 +163,7 @@ func (w *Worker) runClaim(parent context.Context, c claimedJob) {
 			}
 		}
 	}()
-	inv := worker.Invocation{JobID: c.ID, Attempt: c.Attempt, InputID: c.UploadID, EngineID: c.Spec.EngineID, EngineVersion: c.Spec.EngineVersion, ExecutableRelativePath: c.Spec.ExecutableRelativePath, Arguments: c.Spec.Arguments, TargetExtension: c.Spec.TargetExtension, ExpectedInputSHA256: c.InputSHA256, ExpectedInputSize: c.InputSize}
+	inv := worker.Invocation{JobID: c.ID, Attempt: c.Attempt, InputID: c.UploadID, EngineID: c.Spec.EngineID, EngineVersion: c.Spec.EngineVersion, ExecutableRelativePath: c.Spec.ExecutableRelativePath, Arguments: c.Spec.Arguments, CompressionArguments: c.Spec.CompressionArguments, TargetSizeBytes: c.Spec.TargetSizeBytes, ProbeExecutableRelativePath: c.Spec.ProbeExecutableRelativePath, AudioBitrateKbps: c.Spec.AudioBitrateKbps, MinimumVideoKbps: c.Spec.MinimumVideoKbps, RequireSmaller: c.Spec.RequireSmaller, TargetExtension: c.Spec.TargetExtension, ExpectedInputSHA256: c.InputSHA256, ExpectedInputSize: c.InputSize}
 	result, runErr := w.runner.Run(ctx, inv)
 	cancel()
 	<-done

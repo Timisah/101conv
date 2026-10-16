@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -89,6 +91,7 @@ CREATE TABLE IF NOT EXISTS conv_jobs (
  id TEXT PRIMARY KEY, upload_id TEXT NOT NULL REFERENCES conv_uploads(id),
  profile_id TEXT NOT NULL, profile_version TEXT NOT NULL,
  source_format TEXT NOT NULL, target_format TEXT NOT NULL,
+ mode TEXT NOT NULL DEFAULT 'convert',
  execution JSONB NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL,
  state TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0,
  attempt_count INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,
@@ -99,6 +102,7 @@ CREATE TABLE IF NOT EXISTS conv_jobs (
 );
 ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS owner_id TEXT NOT NULL DEFAULT 'admin';
 ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS owner_id TEXT NOT NULL DEFAULT 'admin';
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'convert';
 CREATE INDEX IF NOT EXISTS conv_jobs_owner_created_idx ON conv_jobs(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS conv_jobs_claim_idx ON conv_jobs(state, lease_until, created_at);
 CREATE TABLE IF NOT EXISTS conv_job_attempts (
@@ -248,6 +252,16 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	if !formatRE.MatchString(target) {
 		return Job{}, false, fmt.Errorf("%w: targetFormat must be a file extension", ErrInvalidInput)
 	}
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		mode = "convert"
+	}
+	if mode != "convert" && mode != "compress" {
+		return Job{}, false, fmt.Errorf("%w: mode must be convert or compress", ErrInvalidInput)
+	}
+	if mode == "convert" && len(req.Options) != 0 {
+		return Job{}, false, fmt.Errorf("%w: options are only accepted for compression jobs", ErrInvalidInput)
+	}
 	var upload Upload
 	err := s.db.QueryRowContext(ctx, `SELECT id,file_name,extension,size_bytes,sha256,created_at FROM conv_uploads WHERE id=$1 AND owner_id=$2`, req.UploadID, ownerID).Scan(&upload.ID, &upload.FileName, &upload.Extension, &upload.Size, &upload.SHA256, &upload.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -266,20 +280,45 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	if installation.EngineID != rule.EngineID {
 		return Job{}, false, fmt.Errorf("resolved engine does not match the selected profile rule")
 	}
+	var compressionArguments []string
+	var targetSizeBytes int64
+	var probeRelative string
+	var audioBitrateKbps, minimumVideoKbps int
+	if mode == "compress" {
+		if profileDef.Compression == nil || len(rule.CompressionArguments) == 0 {
+			return Job{}, false, fmt.Errorf("%w: profile does not provide compression for %s to %s", ErrUnsupported, upload.Extension, target)
+		}
+		var optionValues map[string]string
+		optionValues, targetSizeBytes, err = validateCompressionOptions(*profileDef.Compression, req.Options)
+		if err != nil {
+			return Job{}, false, err
+		}
+		compressionArguments, err = expandCompressionOptions(rule.CompressionArguments, optionValues)
+		if err != nil {
+			return Job{}, false, err
+		}
+		if targetSizeBytes > 0 {
+			probeRelative = engineDef.Executables[profileDef.Compression.ProbeExecutable]
+			if !safeExecutableRelative(probeRelative) {
+				return Job{}, false, fmt.Errorf("%w: compression probe executable is unavailable", ErrUnsupported)
+			}
+			audioBitrateKbps, minimumVideoKbps = profileDef.Compression.AudioBitrateKbps, profileDef.Compression.MinimumVideoKbps
+		}
+	}
 	rel := engineDef.Executables[rule.Executable]
-	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, `\`) || filepath.Clean(rel) != rel || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+	if !safeExecutableRelative(rel) {
 		return Job{}, false, fmt.Errorf("profile executable mapping is unsafe")
 	}
 	args, err := validateArguments(rule.Arguments)
 	if err != nil {
 		return Job{}, false, err
 	}
-	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target}
+	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && profileDef.Compression != nil && profileDef.Compression.RequireSmaller}
 	specBytes, err := json.Marshal(spec)
 	if err != nil {
 		return Job{}, false, err
 	}
-	requestDigest, err := digestRequest(req.UploadID, req.ProfileID+"@"+profileDef.Version, upload.Extension, target, specBytes)
+	requestDigest, err := digestRequest(req.UploadID, req.ProfileID+"@"+profileDef.Version+"#"+mode, upload.Extension, target, specBytes)
 	if err != nil {
 		return Job{}, false, err
 	}
@@ -328,7 +367,7 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			return Job{}, false, ErrQuotaExceeded
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO conv_jobs(id,upload_id,profile_id,profile_version,source_format,target_format,execution,idempotency_key,request_hash,state,max_attempts,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11)`, id, upload.ID, req.ProfileID, profileDef.Version, upload.Extension, target, specBytes, req.IdempotencyKey, requestDigest, MaxAttempts, ownerID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO conv_jobs(id,upload_id,profile_id,profile_version,source_format,target_format,mode,execution,idempotency_key,request_hash,state,max_attempts,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12)`, id, upload.ID, req.ProfileID, profileDef.Version, upload.Extension, target, mode, specBytes, req.IdempotencyKey, requestDigest, MaxAttempts, ownerID)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -359,6 +398,93 @@ func validateArguments(arguments []string) ([]string, error) {
 	return append([]string(nil), arguments...), nil
 }
 
+func safeExecutableRelative(rel string) bool {
+	return rel != "" && !filepath.IsAbs(rel) && !strings.Contains(rel, `\`) && filepath.Clean(rel) == rel && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func validateCompressionOptions(config profile.CompressionConfig, requested map[string]string) (map[string]string, int64, error) {
+	definitions := make(map[string]profile.OptionDefinition, len(config.Options))
+	for _, option := range config.Options {
+		definitions[option.Key] = option
+	}
+	for key := range requested {
+		if _, ok := definitions[key]; !ok {
+			return nil, 0, fmt.Errorf("%w: unknown compression option %q", ErrInvalidInput, key)
+		}
+	}
+	values := make(map[string]string, len(config.Options))
+	var targetBytes int64
+	for _, option := range config.Options {
+		value := option.Default
+		if supplied, ok := requested[option.Key]; ok {
+			value = strings.TrimSpace(supplied)
+		}
+		switch option.Type {
+		case "number":
+			number, err := strconv.ParseFloat(value, 64)
+			if option.Min == nil || option.Max == nil {
+				return nil, 0, fmt.Errorf("%w: profile has invalid numeric option metadata", ErrInvalidInput)
+			}
+			if err != nil || math.IsNaN(number) || math.IsInf(number, 0) || number < *option.Min || number > *option.Max {
+				return nil, 0, fmt.Errorf("%w: option %q must be between %v and %v", ErrInvalidInput, option.Key, *option.Min, *option.Max)
+			}
+			if option.Step != nil && math.Mod(number-*option.Min, *option.Step) > 1e-9 {
+				return nil, 0, fmt.Errorf("%w: option %q does not match its allowed step", ErrInvalidInput, option.Key)
+			}
+			if option.TargetSizeMB {
+				bytes := number * 1024 * 1024
+				if bytes < 1 || bytes > float64(math.MaxInt64) {
+					return nil, 0, fmt.Errorf("%w: invalid target size", ErrInvalidInput)
+				}
+				targetBytes = int64(math.Floor(bytes))
+			}
+			value = strconv.FormatFloat(number, 'f', -1, 64)
+		case "select":
+			found := false
+			for _, choice := range option.Choices {
+				if value == choice {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, 0, fmt.Errorf("%w: invalid value for option %q", ErrInvalidInput, option.Key)
+			}
+		default:
+			return nil, 0, fmt.Errorf("%w: unsupported compression option type", ErrInvalidInput)
+		}
+		if strings.ContainsRune(value, '\x00') {
+			return nil, 0, fmt.Errorf("%w: invalid option value", ErrInvalidInput)
+		}
+		values[option.Key] = value
+	}
+	return values, targetBytes, nil
+}
+
+func expandCompressionOptions(arguments []string, values map[string]string) ([]string, error) {
+	result := make([]string, len(arguments))
+	for i, arg := range arguments {
+		if strings.HasPrefix(arg, "{option:") && strings.HasSuffix(arg, "}") {
+			key := strings.TrimSuffix(strings.TrimPrefix(arg, "{option:"), "}")
+			value, ok := values[key]
+			if !ok {
+				return nil, fmt.Errorf("%w: missing compression option %q", ErrInvalidInput, key)
+			}
+			result[i] = value
+			continue
+		}
+		unwrapped := arg
+		for _, token := range []string{"{compression.videoKbps}", "{compression.audioKbps}", "{compression.bufferKbps}"} {
+			unwrapped = strings.ReplaceAll(unwrapped, token, "0")
+		}
+		if strings.ContainsAny(unwrapped, "{}") {
+			return nil, fmt.Errorf("%w: unsupported compression argument placeholder", ErrInvalidInput)
+		}
+		result[i] = arg
+	}
+	return result, nil
+}
+
 type idemRecord struct {
 	job         Job
 	requestHash string
@@ -373,12 +499,12 @@ func (s *Service) getByIdempotency(ctx context.Context, key string) (idemRecord,
 	return r, err
 }
 
-const jobColumns = `id,profile_id,profile_version,source_format,target_format,state,progress,attempt_count,max_attempts,COALESCE(error,''),result_size,created_at,updated_at`
+const jobColumns = `id,profile_id,profile_version,source_format,target_format,mode,state,progress,attempt_count,max_attempts,COALESCE(error,''),result_size,created_at,updated_at`
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanJob(row rowScanner, job *Job, extra ...any) error {
-	args := []any{&job.ID, &job.ProfileID, &job.ProfileVer, &job.SourceFormat, &job.TargetFormat, &job.State, &job.Progress, &job.Attempt, &job.MaxAttempts, &job.Error, &job.OutputSize, &job.CreatedAt, &job.UpdatedAt}
+	args := []any{&job.ID, &job.ProfileID, &job.ProfileVer, &job.SourceFormat, &job.TargetFormat, &job.Mode, &job.State, &job.Progress, &job.Attempt, &job.MaxAttempts, &job.Error, &job.OutputSize, &job.CreatedAt, &job.UpdatedAt}
 	args = append(args, extra...)
 	return row.Scan(args...)
 }

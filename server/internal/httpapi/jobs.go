@@ -53,6 +53,14 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) submitJob(w http.ResponseWriter, r *http.Request) {
+	a.submitJobMode(w, r, "")
+}
+
+func (a *API) submitCompressionJob(w http.ResponseWriter, r *http.Request) {
+	a.submitJobMode(w, r, "compress")
+}
+
+func (a *API) submitJobMode(w http.ResponseWriter, r *http.Request, forcedMode string) {
 	p, ok := a.requireCapability(w, r, auth.ScopeSubmit)
 	if !ok || !a.jobsReady(w) {
 		return
@@ -60,6 +68,19 @@ func (a *API) submitJob(w http.ResponseWriter, r *http.Request) {
 	var req jobs.SubmitRequest
 	if !decodeBody(w, r, &req) {
 		return
+	}
+	if forcedMode != "" {
+		if req.Mode != "" && req.Mode != forcedMode {
+			writeAPIError(w, http.StatusBadRequest, "invalid_input", "compression endpoint only accepts compression jobs")
+			return
+		}
+		req.Mode = forcedMode
+	} else {
+		if req.Mode != "" && req.Mode != "convert" {
+			writeAPIError(w, http.StatusBadRequest, "invalid_input", "use the compression endpoint for compression jobs")
+			return
+		}
+		req.Mode = "convert"
 	}
 	job, duplicate, err := a.jobs.SubmitFor(r.Context(), req, p.ID, jobs.Limits{MonthlyJobs: p.MonthlyJobs})
 	if err != nil {
@@ -164,7 +185,11 @@ func (a *API) downloadJobResult(w http.ResponseWriter, r *http.Request) {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	filename := fmt.Sprintf("converted-%s.%s", job.ID, job.TargetFormat)
+	prefix := "converted"
+	if job.Mode == "compress" {
+		prefix = "compressed"
+	}
+	filename := fmt.Sprintf("%s-%s.%s", prefix, job.ID, job.TargetFormat)
 	contentDisposition := mime.FormatMediaType("attachment", map[string]string{"filename": filename})
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", contentDisposition)

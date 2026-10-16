@@ -7,6 +7,7 @@ The public port remains configurable with `PORT`, default `5656`. It publishes N
 ## Experiences
 
 - Convert is the homepage. It supports drag/drop and regular file selection, up to 20 files in a batch, up to the backend 100 MiB per file, detected file extensions, only enabled profile/target combinations that support every selected input, upload and asynchronous job submission, active progress, cancellation from history, and result downloads.
+- Compress is a separate workspace backed by durable `compress` jobs. It uses profile-declared controls, defaults to the original extension when supported, allows another compatible output extension, and offers FFmpeg audio/video target-size compression plus JPEG XL quality controls.
 - Jobs & history is backed by the durable PostgreSQL job table. It filters by status and searches profile, extensions, and job ID. Status is refreshed every five seconds. There is no retry API, so the UI does not show a retry button.
 - Installed converters separates profiles and engines. It displays profile-supported extensions, versions, dependency/capability summaries, enabled state, allows profile enable/disable and removal, lets an administrator choose among installed compatible engine versions, and confirms engine removal.
 - Marketplace browses the public GitHub-hosted Official catalog before its TUF root is provisioned. An administrator can explicitly approve unsigned installs in Administration; cards and confirmation dialogs label this state, and the UI explains that hashes do not authenticate the publisher. Trusted TUF catalogs retain the verified preview/install flow. Untrusted community catalogs remain excluded from browsing.
@@ -21,7 +22,7 @@ The administrator creates regular accounts and sets `canConvert`, `canReadJobs`,
 
 ## Backend limits reflected in the UI
 
-Profiles expose fixed argument arrays, not per-job options, so the conversion workspace does not invent options. Batch conversion submits one durable job per file. Jobs cannot be retried through the current API. The API does not expose a dedicated Worker health check, storage controls, or update preview for engine packages; these are shown as unavailable. Engine updates can be installed as separately versioned compatible installations but the UI does not promise an upgrade workflow without an engine-update plan endpoint.
+Profiles expose fixed conversion argument arrays and declarative compression options, validated server-side before jobs are queued. A profile places compression flags with the `{compression.args}` marker, allowing its author to keep engine-specific output argument ordering valid. Batch operations submit one durable job per file. Jobs cannot be retried through the current API. The API does not expose a dedicated Worker health check, storage controls, or update preview for engine packages; these are shown as unavailable. Engine updates can be installed as separately versioned compatible installations but the UI does not promise an upgrade workflow without an engine-update plan endpoint. Target-size compression uses a duration-based bitrate estimate; jobs fail instead of returning a result above the requested cap.
 
 ## API additions
 
@@ -30,6 +31,7 @@ Profiles expose fixed argument arrays, not per-job options, so the conversion wo
 - `GET|POST /api/v1/users`, `PATCH|DELETE /api/v1/users/{id}` are administrator-only. DELETE disables the user and revokes keys while retaining job history.
 - User API keys are accepted as bearer credentials for scoped conversion and job routes. `ENGINE_ADMIN_TOKEN` remains the all-powerful global administrator credential.
 - `GET /api/v1/jobs?status=&q=&limit=&offset=` lists durable jobs for history. Search wildcard characters are escaped; status and pagination are bounded.
+- `POST /api/v1/compressions` accepts the same upload/profile/idempotency fields as job submission, plus profile-declared string option values, and stores the job with `mode: compress`.
 - Existing versioned management, repository, upload, status, cancel, and download endpoints remain the frontend's business-logic source.
 - Nginx proxies `/api/`, `/healthz`, and `/readyz`. OpenAPI documents bearer and browser-session authentication.
 

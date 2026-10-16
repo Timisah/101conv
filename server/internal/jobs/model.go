@@ -27,6 +27,7 @@ type Job struct {
 	ProfileVer   string    `json:"profileVersion"`
 	SourceFormat string    `json:"sourceFormat"`
 	TargetFormat string    `json:"targetFormat"`
+	Mode         string    `json:"mode"`
 	State        State     `json:"state"`
 	Progress     int       `json:"progress"`
 	Attempt      int       `json:"attempt"`
@@ -49,20 +50,28 @@ type Attempt struct {
 }
 
 type SubmitRequest struct {
-	UploadID       string `json:"uploadId"`
-	ProfileID      string `json:"profileId"`
-	TargetFormat   string `json:"targetFormat"`
-	IdempotencyKey string `json:"idempotencyKey"`
+	UploadID       string            `json:"uploadId"`
+	ProfileID      string            `json:"profileId"`
+	TargetFormat   string            `json:"targetFormat"`
+	Mode           string            `json:"mode,omitempty"`
+	Options        map[string]string `json:"options,omitempty"`
+	IdempotencyKey string            `json:"idempotencyKey"`
 }
 
 type ExecutionSpec struct {
-	EngineID               string   `json:"engineId"`
-	EngineVersion          string   `json:"engineVersion"`
-	ExecutableName         string   `json:"executableName"`
-	ExecutableRelativePath string   `json:"executableRelativePath"`
-	Arguments              []string `json:"arguments"`
-	SourceExtension        string   `json:"sourceExtension"`
-	TargetExtension        string   `json:"targetExtension"`
+	EngineID                    string   `json:"engineId"`
+	EngineVersion               string   `json:"engineVersion"`
+	ExecutableName              string   `json:"executableName"`
+	ExecutableRelativePath      string   `json:"executableRelativePath"`
+	Arguments                   []string `json:"arguments"`
+	SourceExtension             string   `json:"sourceExtension"`
+	TargetExtension             string   `json:"targetExtension"`
+	CompressionArguments        []string `json:"compressionArguments,omitempty"`
+	TargetSizeBytes             int64    `json:"targetSizeBytes,omitempty"`
+	ProbeExecutableRelativePath string   `json:"probeExecutableRelativePath,omitempty"`
+	AudioBitrateKbps            int      `json:"audioBitrateKbps,omitempty"`
+	MinimumVideoKbps            int      `json:"minimumVideoKbps,omitempty"`
+	RequireSmaller              bool     `json:"requireSmallerOutput,omitempty"`
 }
 
 type JobDetail struct {

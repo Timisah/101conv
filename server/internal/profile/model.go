@@ -5,6 +5,8 @@ package profile
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/timisah/101conv/server/internal/engine"
@@ -23,6 +25,30 @@ type Definition struct {
 	Priority                   int                 `json:"priority,omitempty"`
 	Engines                    []EngineRequirement `json:"engines"`
 	Rules                      []ConversionRule    `json:"rules"`
+	Compression                *CompressionConfig  `json:"compression,omitempty"`
+}
+
+// CompressionConfig describes controls that a profile deliberately exposes in
+// the compression workflow. Values are still validated against this schema by
+// Core, while converter-specific argument expansion remains in the Worker.
+type CompressionConfig struct {
+	Options          []OptionDefinition `json:"options"`
+	ProbeExecutable  string             `json:"probeExecutable,omitempty"`
+	AudioBitrateKbps int                `json:"audioBitrateKbps,omitempty"`
+	MinimumVideoKbps int                `json:"minimumVideoKbps,omitempty"`
+	RequireSmaller   bool               `json:"requireSmallerOutput,omitempty"`
+}
+
+type OptionDefinition struct {
+	Key          string   `json:"key"`
+	Label        string   `json:"label"`
+	Type         string   `json:"type"` // number or select
+	Default      string   `json:"default"`
+	Min          *float64 `json:"min,omitempty"`
+	Max          *float64 `json:"max,omitempty"`
+	Step         *float64 `json:"step,omitempty"`
+	Choices      []string `json:"choices,omitempty"`
+	TargetSizeMB bool     `json:"targetSizeMb,omitempty"`
 }
 
 type EngineRequirement struct {
@@ -38,6 +64,11 @@ type ConversionRule struct {
 	Targets    []string `json:"targets"`
 	// Arguments are argv tokens, never a shell command string.
 	Arguments []string `json:"arguments"`
+	// CompressionArguments replace the {compression.args} marker when this rule
+	// is selected in compression mode. Supported tokens are declared option
+	// placeholders and {compression.videoKbps}, {compression.audioKbps}, and
+	// {compression.bufferKbps}.
+	CompressionArguments []string `json:"compressionArguments,omitempty"`
 }
 
 // Installation represents user state for a profile. It is independent of both
@@ -149,8 +180,157 @@ func (d Definition) Validate() error {
 				pairs[key] = i
 			}
 		}
+		if len(rule.CompressionArguments) > 0 {
+			if err := d.ValidateCompressionArguments(rule.CompressionArguments); err != nil {
+				return fmt.Errorf("rule %d compression arguments: %w", i, err)
+			}
+		}
+		compressionSlots := 0
+		for _, arg := range rule.Arguments {
+			if arg == "{compression.args}" {
+				compressionSlots++
+			}
+		}
+		if compressionSlots != 0 && (compressionSlots != 1 || len(rule.CompressionArguments) == 0) {
+			return fmt.Errorf("rule %d must use exactly one {compression.args} marker when compression arguments are declared", i)
+		}
+		if len(rule.CompressionArguments) > 0 && compressionSlots != 1 {
+			return fmt.Errorf("rule %d compression arguments require one {compression.args} marker", i)
+		}
+	}
+	if err := d.ValidateCompression(); err != nil {
+		return err
 	}
 	return nil
+}
+
+func (d Definition) ValidateCompression() error {
+	if d.Compression == nil {
+		for _, rule := range d.Rules {
+			if len(rule.CompressionArguments) != 0 {
+				return fmt.Errorf("compression arguments require a compression configuration")
+			}
+		}
+		return nil
+	}
+	c := d.Compression
+	if len(c.Options) == 0 || len(c.Options) > 16 {
+		return fmt.Errorf("compression must define between 1 and 16 options")
+	}
+	if c.ProbeExecutable != "" && strings.TrimSpace(c.ProbeExecutable) != c.ProbeExecutable {
+		return fmt.Errorf("compression probe executable is invalid")
+	}
+	if c.AudioBitrateKbps < 0 || c.AudioBitrateKbps > 512 || c.MinimumVideoKbps < 0 || c.MinimumVideoKbps > 10000 {
+		return fmt.Errorf("compression bitrate settings are invalid")
+	}
+	seen := map[string]bool{}
+	hasTargetSize := false
+	for _, option := range c.Options {
+		if !safeOptionKey(option.Key) || strings.TrimSpace(option.Label) == "" || seen[option.Key] {
+			return fmt.Errorf("compression option key and label must be valid and unique")
+		}
+		seen[option.Key] = true
+		hasTargetSize = hasTargetSize || option.TargetSizeMB
+		switch option.Type {
+		case "number":
+			if option.Min == nil || option.Max == nil || *option.Min > *option.Max {
+				return fmt.Errorf("compression option %q requires a valid numeric range", option.Key)
+			}
+			if option.Step != nil && *option.Step <= 0 {
+				return fmt.Errorf("compression option %q has an invalid step", option.Key)
+			}
+			defaultValue, err := parseOptionNumber(option.Default)
+			if err != nil || defaultValue < *option.Min || defaultValue > *option.Max {
+				return fmt.Errorf("compression option %q has an invalid default", option.Key)
+			}
+			if option.Step != nil && math.Mod(defaultValue-*option.Min, *option.Step) > 1e-9 {
+				return fmt.Errorf("compression option %q default does not follow its step", option.Key)
+			}
+		case "select":
+			if len(option.Choices) == 0 || len(option.Choices) > 128 {
+				return fmt.Errorf("compression option %q requires choices", option.Key)
+			}
+			found := false
+			for _, choice := range option.Choices {
+				if choice == option.Default {
+					found = true
+				}
+				if len(choice) == 0 || len(choice) > 128 || strings.ContainsRune(choice, '\x00') {
+					return fmt.Errorf("compression option %q has an invalid choice", option.Key)
+				}
+			}
+			if !found {
+				return fmt.Errorf("compression option %q default must be one of its choices", option.Key)
+			}
+		default:
+			return fmt.Errorf("compression option %q uses unsupported type %q", option.Key, option.Type)
+		}
+		if option.TargetSizeMB && (option.Type != "number" || c.ProbeExecutable == "" || c.AudioBitrateKbps == 0 || c.MinimumVideoKbps == 0) {
+			return fmt.Errorf("target-size option %q requires a probe executable and bitrate settings", option.Key)
+		}
+	}
+	usesTargetSize := false
+	for _, rule := range d.Rules {
+		if len(rule.CompressionArguments) == 0 {
+			continue
+		}
+		for _, arg := range rule.CompressionArguments {
+			usesTargetSize = usesTargetSize || strings.Contains(arg, "{compression.videoKbps}") || strings.Contains(arg, "{compression.audioKbps}") || strings.Contains(arg, "{compression.bufferKbps}")
+			if strings.HasPrefix(arg, "{option:") && strings.HasSuffix(arg, "}") {
+				key := strings.TrimSuffix(strings.TrimPrefix(arg, "{option:"), "}")
+				if !seen[key] {
+					return fmt.Errorf("compression argument references undeclared option %q", key)
+				}
+			} else {
+				unwrapped := arg
+				for _, token := range []string{"{compression.videoKbps}", "{compression.audioKbps}", "{compression.bufferKbps}"} {
+					unwrapped = strings.ReplaceAll(unwrapped, token, "0")
+				}
+				if strings.ContainsAny(unwrapped, "{}") || strings.ContainsRune(unwrapped, '\x00') {
+					return fmt.Errorf("compression argument contains unsupported placeholder or NUL")
+				}
+			}
+		}
+	}
+	if hasTargetSize && !usesTargetSize {
+		return fmt.Errorf("target-size option must be used by a compression rule")
+	}
+	if usesTargetSize && !hasTargetSize {
+		return fmt.Errorf("compression target-size placeholders require a target-size option")
+	}
+	return nil
+}
+
+func (d Definition) ValidateCompressionArguments(arguments []string) error {
+	if len(arguments) == 0 || len(arguments) > 64 {
+		return fmt.Errorf("argument list must contain between 1 and 64 tokens")
+	}
+	for _, arg := range arguments {
+		if len(arg) > 4096 || strings.ContainsRune(arg, '\x00') {
+			return fmt.Errorf("argument is too long or contains NUL")
+		}
+	}
+	return nil
+}
+
+func safeOptionKey(key string) bool {
+	if len(key) == 0 || len(key) > 64 {
+		return false
+	}
+	for _, r := range key {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func parseOptionNumber(value string) (float64, error) {
+	number, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(number) || math.IsInf(number, 0) {
+		return 0, fmt.Errorf("invalid number")
+	}
+	return number, nil
 }
 
 // ValidateWorkerArguments checks the version-1 repository profile argument
@@ -170,9 +350,10 @@ func ValidateWorkerArguments(arguments []string) error {
 			seenSource = true
 		case "{target}":
 			seenTarget = true
+		case "{compression.args}":
 		default:
 			if strings.ContainsAny(arg, "{}") {
-				return fmt.Errorf("only standalone {source} and {target} placeholders are supported")
+				return fmt.Errorf("only standalone {source}, {target}, and {compression.args} placeholders are supported")
 			}
 		}
 	}

@@ -88,6 +88,7 @@ func NewWithAccounts(version string, catalogService *catalog.Service, management
 	mux.HandleFunc("POST /api/v1/repositories/{id}/engines/{engineID}/{version}/install", a.installRepositoryEngine)
 	mux.HandleFunc("POST /api/v1/uploads", a.uploadFile)
 	mux.HandleFunc("POST /api/v1/jobs", a.submitJob)
+	mux.HandleFunc("POST /api/v1/compressions", a.submitCompressionJob)
 	mux.HandleFunc("GET /api/v1/jobs", a.listJobs)
 	mux.HandleFunc("GET /api/v1/jobs/{id}", a.getJob)
 	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", a.cancelJob)

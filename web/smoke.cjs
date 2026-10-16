@@ -9,13 +9,14 @@ const assert = require('node:assert/strict');
   async function admin(path, method, body) { const response = await fetch(base+'/api/v1'+path,{method,headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN,'Content-Type':'application/json'},body:JSON.stringify(body)}); if(!response.ok)throw new Error('Fixture setup failed: '+response.status+' '+await response.text()); return response; }
   await admin('/engines/install','POST',{definition:{schemaVersion:1,id:'ppm-pgm',version:'1.0.0',name:'PPM to PGM test converter',platform:'linux-amd64',capabilities:['image.ppm.decode','image.pgm.encode'],executables:{'ppm-pgm':'ppm-pgm'}},sourceDirectory:'/var/lib/101conv/imports'});
   await admin('/profiles','POST',{definition:{schemaVersion:1,id:'ppm-pgm-grayscale',version:'1.0.0',name:'PPM to grayscale PGM',description:'Convert ASCII PPM into portable grayscale images.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','--output','{target}']}]}});
+  await admin('/profiles','POST',{definition:{schemaVersion:1,id:'ppm-pgm-compress',version:'1.0.0',name:'PPM Image Compressor',description:'Compress a PPM image to grayscale PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],compression:{options:[{key:'quality',label:'Quality',type:'number',default:'85',min:1,max:100,step:1}]},rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','{compression.args}','--output','{target}'],compressionArguments:['--quality','{option:quality}']}]}});
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     const apiResponses=[];page.on('response',async response=>{if(/\/api\/v1\/(jobs|uploads)/.test(response.url()))apiResponses.push({url:response.url(),status:response.status(),body:(await response.text().catch(()=>'' )).slice(0,400)});});
     await page.goto(base, { waitUntil: 'networkidle' });
-    await page.getByLabel('Administrator passphrase').fill(process.env.ENGINE_ADMIN_TOKEN);
+    await page.getByLabel('Password').fill(process.env.ENGINE_ADMIN_TOKEN);
     await page.getByRole('button', { name: /Sign in securely/ }).click();
     await page.getByRole('heading', { name: 'What are we converting?' }).waitFor();
     assert.equal(await page.locator('body').innerText().then(t => t.includes(process.env.ENGINE_ADMIN_TOKEN)), false, 'admin token must not appear in UI');
@@ -43,11 +44,26 @@ const assert = require('node:assert/strict');
     assert.match(result, /^P2\n2 1\n255\n/);
     assert.match(result, /\b76\s+150\s/);
 
+    await page.goto(base + '/compress', { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { name: 'Make files smaller' }).waitFor();
+    await page.locator('input[type=file]').setInputFiles({ name: 'compress-me.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm });
+    await page.getByLabel('Compression profile').selectOption('ppm-pgm-compress');
+    await page.getByLabel('Output format').selectOption('pgm');
+    await page.getByRole('button', { name: /Compress 1 file/ }).click();
+    await page.getByText('Compression queued. Track it in Jobs & history.').waitFor({ timeout: 10000 });
+    await page.getByRole('link', { name: 'Jobs & history' }).click();
+    await page.getByLabel('Search jobs').fill('ppm-pgm-compress');
+    await page.getByLabel('Filter jobs by status').selectOption('');
+    const compressedRow = page.locator('tr').filter({ hasText: 'ppm-pgm-compress' });
+    await compressedRow.waitFor({ timeout: 15000 });
+    await compressedRow.getByText(/^Compression ·/).waitFor();
+    try { await compressedRow.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 }); } catch (error) { console.error('compression job diagnostic', (await compressedRow.innerText()).slice(0,1000)); throw error; }
+
     const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
     const mobilePage = await mobile.newPage();
     mobilePage.on('pageerror', error => errors.push(error.message));
     await mobilePage.goto(base + '/convert', { waitUntil: 'networkidle' });
-    await mobilePage.getByLabel('Administrator passphrase').fill(process.env.ENGINE_ADMIN_TOKEN);
+    await mobilePage.getByLabel('Password').fill(process.env.ENGINE_ADMIN_TOKEN);
     await mobilePage.getByRole('button', { name: /Sign in securely/ }).click();
     await mobilePage.getByRole('heading', { name: 'What are we converting?' }).waitFor();
     assert.equal(await mobilePage.locator('.mobile-nav').isVisible(), true, 'mobile navigation is visible');
@@ -57,7 +73,7 @@ const assert = require('node:assert/strict');
     await mobile.close();
     await context.close();
     assert.deepEqual(errors, [], 'no uncaught browser errors');
-    console.log('Browser verified login, real file upload, job tracking, PGM result download, and mobile navigation.');
+    console.log('Browser verified login, conversion and compression, job history, result download, and mobile navigation.');
   } finally {
     await browser.close();
   }

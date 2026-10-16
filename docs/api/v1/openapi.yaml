@@ -491,6 +491,31 @@ paths:
               schema: { $ref: '#/components/schemas/JobDetail' }
         '401': { description: Administrator bearer token required }
         '404': { description: Job not found }
+  /api/v1/compressions:
+    post:
+      summary: Submit a compression job using a profile-declared compression mode
+      description: The selected installed profile validates every option and resolves the converter argv. The target format may match the source format to preserve it, or use another format supported by the profile. Results are rejected if they exceed a declared target size.
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uploadId, profileId, targetFormat, idempotencyKey]
+              properties:
+                uploadId: { type: string, format: uuid }
+                profileId: { type: string }
+                targetFormat: { type: string, pattern: '^[a-z0-9]{1,12}$' }
+                idempotencyKey: { type: string, minLength: 8, maxLength: 128 }
+                options: { type: object, additionalProperties: { type: string } }
+      responses:
+        '202': { description: Compression job accepted; response uses JobSubmission }
+        '400': { description: Invalid or out-of-range profile option }
+        '401': { description: Authentication required }
+        '404': { description: Upload or profile not found }
+        '409': { description: Idempotency key conflicts or upload is already consumed }
+        '422': { description: Profile does not support compression for this source and target pair }
   /api/v1/jobs/{id}/cancel:
     parameters:
       - $ref: '#/components/parameters/JobId'
@@ -558,13 +583,14 @@ components:
         duplicate: { type: boolean }
     Job:
       type: object
-      required: [id, profileId, profileVersion, sourceFormat, targetFormat, state, progress, attempt, maxAttempts, createdAt, updatedAt]
+      required: [id, profileId, profileVersion, sourceFormat, targetFormat, mode, state, progress, attempt, maxAttempts, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         profileId: { type: string }
         profileVersion: { type: string }
         sourceFormat: { type: string }
         targetFormat: { type: string }
+        mode: { type: string, enum: [convert, compress] }
         state: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
         attempt: { type: integer, minimum: 0 }
         maxAttempts: { type: integer, minimum: 1 }

@@ -35,16 +35,21 @@ func TestPostgresOwnerIsolationAndQuotas(t *testing.T) {
 	if err = os.WriteFile(executable, []byte("test fixture"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	probeExecutable := filepath.Join(imports, "ffprobe")
+	if err = os.WriteFile(probeExecutable, []byte("test probe fixture"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	manager, err := management.OpenWithPolicy(filepath.Join(root, "state"), []string{imports})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	definition := engine.Definition{SchemaVersion: 1, ID: "test-engine", Version: "1.0.0", Name: "Test Engine", Platform: runtime.GOOS + "-" + runtime.GOARCH, Executables: map[string]string{"tool": "tool"}}
+	definition := engine.Definition{SchemaVersion: 1, ID: "test-engine", Version: "1.0.0", Name: "Test Engine", Platform: runtime.GOOS + "-" + runtime.GOARCH, Executables: map[string]string{"tool": "tool", "ffprobe": "ffprobe"}}
 	if _, err = manager.InstallEngine(context.Background(), definition, imports); err != nil {
 		t.Fatal(err)
 	}
-	p := profile.Definition{SchemaVersion: 1, ID: "test-profile", Version: "1.0.0", Name: "Test Profile", Engines: []profile.EngineRequirement{{EngineID: "test-engine", Versions: engine.VersionRange{Minimum: "1.0.0"}}}, Rules: []profile.ConversionRule{{EngineID: "test-engine", Executable: "tool", Sources: []string{"png"}, Targets: []string{"jpg"}, Arguments: []string{"{source}", "{target}"}}}}
+	min, max, step := 1.0, 8.0, 1.0
+	p := profile.Definition{SchemaVersion: 1, ID: "test-profile", Version: "1.0.0", Name: "Test Profile", Engines: []profile.EngineRequirement{{EngineID: "test-engine", Versions: engine.VersionRange{Minimum: "1.0.0"}}}, Compression: &profile.CompressionConfig{Options: []profile.OptionDefinition{{Key: "targetSizeMb", Label: "Target size", Type: "number", Default: "2", Min: &min, Max: &max, Step: &step, TargetSizeMB: true}}, ProbeExecutable: "ffprobe", AudioBitrateKbps: 128, MinimumVideoKbps: 64}, Rules: []profile.ConversionRule{{EngineID: "test-engine", Executable: "tool", Sources: []string{"png"}, Targets: []string{"jpg"}, Arguments: []string{"{source}", "{compression.args}", "{target}"}, CompressionArguments: []string{"-b:a", "{compression.audioKbps}k"}}}}
 	if _, err = manager.InstallProfile(context.Background(), p, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +76,10 @@ func TestPostgresOwnerIsolationAndQuotas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	compressionUpload, err := service.CreateUploadFor(ctx, "user-two", 100, 25, "compressed.png", bytes.NewReader([]byte("compress me")))
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := func(upload string, key string) SubmitRequest {
 		return SubmitRequest{UploadID: upload, ProfileID: "test-profile", TargetFormat: "jpg", IdempotencyKey: key}
 	}
@@ -82,6 +91,16 @@ func TestPostgresOwnerIsolationAndQuotas(t *testing.T) {
 	}
 	if _, _, err = service.SubmitFor(ctx, request(other.ID, "user-two-key-0001"), "user-two", Limits{MonthlyJobs: 1}); err != nil {
 		t.Fatal(err)
+	}
+	compressionRequest := request(compressionUpload.ID, "user-two-compress-001")
+	compressionRequest.Mode = "compress"
+	compressionRequest.Options = map[string]string{"targetSizeMb": "2"}
+	compressedJob, _, err := service.SubmitFor(ctx, compressionRequest, "user-two", Limits{MonthlyJobs: 2})
+	if err != nil {
+		t.Fatalf("compression job submission failed: %v", err)
+	}
+	if compressedJob.Mode != "compress" {
+		t.Fatalf("compression job mode=%q", compressedJob.Mode)
 	}
 	if _, _, err = service.SubmitFor(ctx, request(other.ID, "user-three-key-0001"), "user-three", Limits{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-account upload access error=%v", err)
