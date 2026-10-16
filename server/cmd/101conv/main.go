@@ -8,6 +8,7 @@ import (
 
 	"github.com/timisah/101conv/server/internal/catalog"
 	"github.com/timisah/101conv/server/internal/httpapi"
+	"github.com/timisah/101conv/server/internal/management"
 )
 
 var buildVersion = "0.1.0-dev"
@@ -19,10 +20,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("load built-in catalog: %v", err)
 	}
+	managementService, err := management.Open(env("DATA_PATH", "./data"))
+	if err != nil {
+		log.Fatalf("open management storage: %v", err)
+	}
 
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           httpapi.New(version, catalogService),
+		Handler:           httpapi.NewWithManagement(version, catalogService, managementService, os.Getenv("ENGINE_ADMIN_TOKEN")),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	log.Printf("101conv %s listening on :%s", version, port)
