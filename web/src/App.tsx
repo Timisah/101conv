@@ -49,6 +49,7 @@ const uploadWithProgress = <T,>(file:File,onProgress:(percent:number)=>void):Pro
 const json=(value:unknown)=>JSON.stringify(value);
 const ext=(name:string)=>name.includes('.')?name.split('.').pop()!.toLowerCase():'';
 const supportsMapping=(p:Profile,source:string,target?:string,compression=false)=>p.definition.rules.some(r=>(!compression||r.compressionArguments?.length)&&r.sources.some(x=>x.toLowerCase().replace(/^\./,'')===source)&&(!target||r.targets.some(x=>x.toLowerCase().replace(/^\./,'')===target)));
+const hasCompatiblePreference=(preferences:PreferenceMapping[],mode:'convert'|'compress',profileID:string,source:string,target:string)=>preferences.some(row=>row.mode===mode&&row.sourceFormat===source&&row.targetFormat===target&&row.alternatives.some(choice=>choice.id===profileID));
 function automaticProfileLabel(sources:string[],target:string,preferences:PreferenceMapping[]){
  if(!sources.length||!target)return 'Automatic · use saved preferences';
  const mappings=Array.from(new Set(sources)).map(source=>preferences.find(row=>row.sourceFormat===source&&row.targetFormat===target));
@@ -146,8 +147,8 @@ function Convert({notify}:{notify:(s:string)=>void}){
  const addFiles=(incoming:FileList|File[])=>{const next=Array.from(incoming);setFiles(prev=>[...prev,...next].slice(0,20));};
  const sources=useMemo(()=>files.map(f=>ext(f.name)),[files]);
  const available=useMemo(()=>profiles.filter(p=>p.definition.type!=='compression'&&p.state.enabled),[profiles]);
- const compatible=useMemo(()=>available.filter(p=>sources.length&&sources.every(s=>supportsMapping(p,s,target||undefined))),[available,sources,target]);
- const targets=useMemo(()=>Array.from(new Set(available.flatMap(p=>p.definition.rules.flatMap(r=>r.targets.map(x=>x.toLowerCase().replace(/^\./,'')))))).filter(t=>sources.length&&sources.every(s=>available.some(p=>supportsMapping(p,s,t)))).sort(),[available,sources]);
+ const compatible=useMemo(()=>available.filter(p=>sources.length&&target&&sources.every(s=>supportsMapping(p,s,target)&&hasCompatiblePreference(preferenceData.preferences,'convert',p.definition.id,s,target))),[available,sources,target,preferenceData.preferences]);
+ const targets=useMemo(()=>Array.from(new Set(available.flatMap(p=>p.definition.rules.flatMap(r=>r.targets.map(x=>x.toLowerCase().replace(/^\./,'')))))).filter(t=>sources.length&&sources.every(s=>available.some(p=>supportsMapping(p,s,t)&&hasCompatiblePreference(preferenceData.preferences,'convert',p.definition.id,s,t)))).sort(),[available,sources,preferenceData.preferences]);
  const profile=compatible.find(p=>p.definition.id===selected);
  useEffect(()=>{if(selected&&!profile)setSelected('');},[selected,profile?.definition.id]);
  useEffect(()=>{if(target&&!targets.includes(target))setTarget('');},[target,targets.join(',')]);
@@ -197,8 +198,8 @@ function Compressor({notify}:{notify:(s:string)=>void}){
  const addFiles=(incoming:FileList|File[])=>{const next=Array.from(incoming);setFiles(prev=>[...prev,...next].slice(0,20));};
  const sources=useMemo(()=>files.map(f=>ext(f.name)),[files]);
  const available=useMemo(()=>profiles.filter(p=>p.definition.type!=='conversion'&&p.state.enabled&&p.definition.compression?.options?.length),[profiles]);
- const compatible=useMemo(()=>available.filter(p=>sources.length&&sources.every(s=>supportsMapping(p,s,target||undefined,true))),[available,sources,target]);
- const targets=useMemo(()=>Array.from(new Set(available.flatMap(p=>p.definition.rules.flatMap(r=>r.targets.map(x=>x.toLowerCase().replace(/^\./,'')))))).filter(t=>sources.length&&sources.every(s=>available.some(p=>supportsMapping(p,s,t,true)))).sort(),[available,sources]);
+ const compatible=useMemo(()=>available.filter(p=>sources.length&&target&&sources.every(s=>supportsMapping(p,s,target,true)&&hasCompatiblePreference(preferenceData.preferences,'compress',p.definition.id,s,target))),[available,sources,target,preferenceData.preferences]);
+ const targets=useMemo(()=>Array.from(new Set(available.flatMap(p=>p.definition.rules.flatMap(r=>r.targets.map(x=>x.toLowerCase().replace(/^\./,'')))))).filter(t=>sources.length&&sources.every(s=>available.some(p=>supportsMapping(p,s,t,true)&&hasCompatiblePreference(preferenceData.preferences,'compress',p.definition.id,s,t)))).sort(),[available,sources,preferenceData.preferences]);
  const profile=compatible.find(p=>p.definition.id===selected);
  useEffect(()=>{if(selected&&!profile)setSelected('');},[selected,profile?.definition.id]);
  useEffect(()=>{if(!target||!targets.includes(target)){const same=sources.length&&sources.every(s=>s===sources[0])?sources[0]:'';setTarget(same&&targets.includes(same)?same:'');}},[targets.join(','),sources.join(','),target]);
