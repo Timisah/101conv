@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
   await admin('/engines/install','POST',{definition:{schemaVersion:1,id:'ppm-pgm',version:'1.0.0',name:'PPM to PGM test converter',platform:'linux-amd64',capabilities:['image.ppm.decode','image.pgm.encode'],executables:{'ppm-pgm':'ppm-pgm'}},sourceDirectory:'/var/lib/101conv/imports'});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-grayscale',version:'1.0.0',name:'PPM to grayscale PGM',description:'Convert ASCII PPM into portable grayscale images.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','--output','{target}']}]}});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'compression',id:'ppm-pgm-compress',version:'1.0.0',name:'PPM Image Compressor',description:'Compress a PPM image to grayscale PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],compression:{options:[{key:'quality',label:'Quality',type:'number',default:'85',min:1,max:100,step:1}]},rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','{compression.args}','--output','{target}'],compressionArguments:['--quality','{option:quality}']}]}});
+  await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'pnm-pgm-alternate',version:'1.0.0',name:'PNM to grayscale PGM',description:'Convert portable anymap images to PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['pnm'],targets:['pgm'],arguments:['--input','{source}','--output','{target}']}]}});
   const ppm = Buffer.from('P3\n2 1\n255\n255 0 0 0 255 0\n');
   const uploadForm = new FormData(); uploadForm.append('file', new Blob([ppm]), 'mode-check.ppm');
   const uploadResponse = await fetch(base+'/api/v1/uploads',{method:'POST',headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN},body:uploadForm});
@@ -29,6 +30,18 @@ const assert = require('node:assert/strict');
     await page.getByRole('button', { name: /Sign in securely/ }).click();
     await page.getByRole('heading', { name: 'What are we converting?' }).waitFor();
     assert.equal(await page.locator('body').innerText().then(t => t.includes(process.env.ENGINE_ADMIN_TOKEN)), false, 'admin token must not appear in UI');
+
+    await page.getByRole('link', { name: 'Profile defaults' }).click();
+    await page.getByRole('heading', { name: 'Profile defaults' }).waitFor();
+    await Promise.all([page.waitForResponse(r=>r.url().includes('/profile-preferences/global/convert/ppm/pgm')&&r.request().method()==='PUT'),page.getByLabel('Default convert profile for ppm to pgm').selectOption('ppm-pgm-grayscale')]);
+    await page.getByRole('link', { name: 'Account & API keys' }).click();
+    await page.getByRole('heading', { name: 'Account & API keys' }).waitFor();
+    await Promise.all([page.waitForResponse(r=>r.url().includes('/profile-preferences/me/convert/ppm/pgm')&&r.request().method()==='PUT'),page.getByLabel('convert profile for ppm to pgm').selectOption('ppm-pgm-grayscale')]);
+    let preference = await page.evaluate(async()=>fetch('/api/v1/profile-preferences?mode=convert').then(r=>r.json()));
+    assert.equal(preference.preferences.find(x=>x.sourceFormat==='ppm'&&x.targetFormat==='pgm').effectiveSource,'personal preference');
+    await Promise.all([page.waitForResponse(r=>r.url().includes('/profile-preferences/me/convert/ppm/pgm')&&r.request().method()==='DELETE'),page.getByLabel('convert profile for ppm to pgm').selectOption('')]);
+    preference = await page.evaluate(async()=>fetch('/api/v1/profile-preferences?mode=convert').then(r=>r.json()));
+    assert.equal(preference.preferences.find(x=>x.sourceFormat==='ppm'&&x.targetFormat==='pgm').effectiveSource,'administrator default');
 
     const converterNav = page.getByRole('navigation', { name: 'Converter navigation' });
     await converterNav.getByRole('link', { name: 'Profiles' }).click();
@@ -51,11 +64,13 @@ const assert = require('node:assert/strict');
     await page.goto(base + '/convert', { waitUntil: 'networkidle' });
     await page.getByRole('heading', { name: 'What are we converting?' }).waitFor();
 
-    await page.locator('input[type=file]').setInputFiles({ name: 'sample.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm });
+    await page.locator('input[type=file]').setInputFiles([{ name: 'sample.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm }, { name: 'sample.pnm', mimeType: 'image/x-portable-anymap', buffer: ppm }]);
+    await page.getByText('sample.pnm', { exact: true }).waitFor();
     await page.getByLabel('Convert to').selectOption('pgm');
-    const convert = page.getByRole('button', { name: /Convert 1 file/ });
+    assert.match(await page.locator('#profile-select option:checked').textContent(), /resolve each format mapping/, 'mixed batch uses independent profile mappings');
+    const convert = page.getByRole('button', { name: /Convert 2 files/ });
     await convert.click();
-    await page.getByRole('status').filter({ hasText: 'Conversion queued' }).waitFor({ timeout: 10000 }).catch(() => {});
+    await page.getByRole('status').filter({ hasText: '2 conversions queued' }).waitFor({ timeout: 10000 });
     if (!await page.evaluate(()=>localStorage.getItem('101conv-job-ids'))) console.error('submit diagnostic',JSON.stringify({body:(await page.locator('body').innerText()).slice(0,1000),apiResponses}));
     await page.getByRole('link', { name: 'Jobs & history' }).click();
     await page.getByLabel('Search jobs').fill('ppm-pgm-grayscale');
@@ -72,12 +87,21 @@ const assert = require('node:assert/strict');
     const result = await fs.readFile(path, 'utf8');
     assert.match(result, /^P2\n2 1\n255\n/);
     assert.match(result, /\b76\s+150\s/);
+    await page.getByLabel('Search jobs').fill('pnm-pgm-alternate');
+    const alternateRow = page.locator('tr').filter({ hasText: 'pnm-pgm-alternate' });
+    await alternateRow.waitFor({ timeout: 15000 });
+    await alternateRow.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 });
 
     await page.goto(base + '/compress', { waitUntil: 'networkidle' });
     await page.getByRole('heading', { name: 'Make files smaller' }).waitFor();
     await page.locator('input[type=file]').setInputFiles({ name: 'compress-me.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm });
-    await page.getByLabel('Compression profile').selectOption('ppm-pgm-compress');
+    try { await page.getByText('compress-me.ppm', { exact: true }).waitFor({ timeout: 5000 }); }
+    catch (error) { console.error('compression file input diagnostic', JSON.stringify({body:(await page.locator('body').innerText()).slice(0,1800),inputs:await page.locator('input[type=file]').evaluateAll(nodes=>nodes.map(node=>({multiple:node.multiple,files:[...node.files].map(file=>file.name)}))),url:page.url()})); throw error; }
+    await page.getByLabel('Output format').waitFor({ state: 'visible' });
+    assert.equal(await page.getByLabel('Output format').isEnabled(), true, 'supported compression outputs appear after file selection');
     await page.getByLabel('Output format').selectOption('pgm');
+    assert.match(await page.locator('#compress-profile option:checked').textContent(), /PPM Image Compressor \(automatic fallback\)/, 'automatic compression selection names its compatible fallback');
+    await page.getByLabel('Profile for this job').selectOption('ppm-pgm-compress');
     await page.getByRole('button', { name: /Compress 1 file/ }).click();
     await page.getByText('Compression queued. Track it in Jobs & history.').waitFor({ timeout: 10000 });
     await page.getByRole('link', { name: 'Jobs & history' }).click();
@@ -97,12 +121,18 @@ const assert = require('node:assert/strict');
     await mobilePage.getByRole('heading', { name: 'What are we converting?' }).waitFor();
     assert.equal(await mobilePage.locator('.mobile-nav').isVisible(), true, 'mobile navigation is visible');
     assert.equal(await mobilePage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'mobile page has no horizontal overflow');
+    await mobilePage.goto(base + '/profile-defaults', { waitUntil: 'networkidle' });
+    await mobilePage.getByRole('heading', { name: 'Profile defaults' }).waitFor();
+    assert.equal(await mobilePage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'mobile profile defaults have no horizontal overflow');
+    await mobilePage.goto(base + '/account', { waitUntil: 'networkidle' });
+    await mobilePage.getByRole('heading', { name: 'Preferences' }).waitFor();
+    assert.equal(await mobilePage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'mobile account preferences have no horizontal overflow');
     await mobilePage.getByRole('link', { name: 'Jobs' }).click();
     await mobilePage.getByRole('heading', { name: 'Jobs & history' }).waitFor();
     await mobile.close();
     await context.close();
     assert.deepEqual(errors, [], 'no uncaught browser errors');
-    console.log('Browser verified login, conversion and compression, job history, result download, and mobile navigation.');
+    console.log('Browser verified profile preferences, mixed-format conversion batches, compression, history, result download, and mobile layouts.');
   } finally {
     await browser.close();
   }

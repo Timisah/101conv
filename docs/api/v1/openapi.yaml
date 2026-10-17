@@ -552,7 +552,7 @@ paths:
         '401': { description: Administrator session required }
     post:
       summary: Submit an uploaded file for conversion by an installed profile
-      description: Clients select a profile and target format; the Core resolves an enabled profile to an installed engine and a fixed argv template.
+      description: Clients may select a profile explicitly. When profileId is omitted, the Core resolves personal preferences, administrator defaults, then a deterministic compatible fallback.
       security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       requestBody:
         required: true
@@ -560,7 +560,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [uploadId, profileId, targetFormat, idempotencyKey]
+              required: [uploadId, targetFormat, idempotencyKey]
               properties:
                 uploadId: { type: string, format: uuid }
                 profileId: { type: string }
@@ -603,7 +603,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [uploadId, profileId, targetFormat, idempotencyKey]
+              required: [uploadId, targetFormat, idempotencyKey]
               properties:
                 uploadId: { type: string, format: uuid }
                 profileId: { type: string }
@@ -617,6 +617,78 @@ paths:
         '404': { description: Upload or profile not found }
         '409': { description: Idempotency key conflicts or upload is already consumed }
         '422': { description: Profile does not support compression for this source and target pair }
+  /api/v1/profile-preferences:
+    get:
+      summary: List this account's effective profile mappings
+      description: Returns exact source and target format mappings with personal preference, administrator default, compatible alternatives, and the effective resolution source. A stale saved preference is retained but excluded from execution.
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters:
+        - { in: query, name: mode, schema: { type: string, enum: [convert, compress] } }
+      responses:
+        '200': { description: Effective mappings and currently enabled compatible alternatives }
+        '401': { description: Authentication required }
+        '403': { description: Conversion or compression capability required }
+  /api/v1/profile-preferences/me/{mode}/{source}/{target}:
+    parameters:
+      - { in: path, name: mode, required: true, schema: { type: string, enum: [convert, compress] } }
+      - { in: path, name: source, required: true, schema: { type: string, pattern: '^[a-z0-9]{1,12}$' } }
+      - { in: path, name: target, required: true, schema: { type: string, pattern: '^[a-z0-9]{1,12}$' } }
+    put:
+      summary: Set a personal preferred profile for an exact mapping
+      security: [{ userAPIKey: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profileId]
+              properties:
+                profileId: { type: string }
+      responses:
+        '200': { description: Preference saved }
+        '403': { description: Mode permission is missing }
+        '422': { description: Profile is disabled, incompatible, or unauthorized }
+    delete:
+      summary: Reset this mapping to inherit the administrator default
+      security: [{ userAPIKey: [] }, { adminSession: [] }]
+      responses:
+        '204': { description: Personal override removed; other mappings are unchanged }
+        '403': { description: Mode permission is missing }
+  /api/v1/profile-preferences/global:
+    get:
+      summary: List administrator defaults and compatible alternatives
+      security: [{ adminSession: [] }]
+      parameters:
+        - { in: query, name: mode, schema: { type: string, enum: [convert, compress] } }
+      responses:
+        '200': { description: Searchable exact-format mapping data for administration }
+        '401': { description: Administrator session required }
+  /api/v1/profile-preferences/global/{mode}/{source}/{target}:
+    parameters:
+      - { in: path, name: mode, required: true, schema: { type: string, enum: [convert, compress] } }
+      - { in: path, name: source, required: true, schema: { type: string, pattern: '^[a-z0-9]{1,12}$' } }
+      - { in: path, name: target, required: true, schema: { type: string, pattern: '^[a-z0-9]{1,12}$' } }
+    put:
+      summary: Set the administrator's default profile for a mapping
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profileId]
+              properties:
+                profileId: { type: string }
+      responses:
+        '200': { description: Default saved and audited }
+        '422': { description: Profile is disabled, incompatible, or unavailable }
+    delete:
+      summary: Clear an administrator default and use deterministic automatic fallback
+      security: [{ adminSession: [] }]
+      responses:
+        '204': { description: Default cleared and audited }
   /api/v1/jobs/{id}/cancel:
     parameters:
       - $ref: '#/components/parameters/JobId'

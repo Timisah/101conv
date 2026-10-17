@@ -112,6 +112,27 @@ func TestPostgresUserSessionAndScopedAPIKeyAuthorization(t *testing.T) {
 		}
 		return resp.StatusCode
 	}
+	preferenceUser, err := accounts.CreateUser(ctx, auth.NewUser{Username: "pref-" + id[:12], Password: "preference integration password", RoleID: "converter", Quotas: &auth.Quotas{MaxFileBytes: auth.QuotaLimit{Mode: "unlimited"}, MonthlyJobs: auth.QuotaLimit{Mode: "unlimited"}, MonthlyBytes: auth.QuotaLimit{Mode: "unlimited"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = db.Exec(`DELETE FROM conv_users WHERE id=$1`, preferenceUser.ID) }()
+	preferenceKey, err := accounts.CreateAPIKey(ctx, preferenceUser.ID, "conversion preferences", []string{auth.ScopeUpload, auth.ScopeSubmit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := call(http.DefaultClient, http.MethodGet, "/api/v1/profile-preferences?mode=convert", preferenceKey.Token, ""); got != http.StatusOK {
+		t.Fatalf("conversion API key could not read preferences: %d", got)
+	}
+	if got := call(http.DefaultClient, http.MethodGet, "/api/v1/profile-preferences?mode=compress", preferenceKey.Token, ""); got != http.StatusForbidden {
+		t.Fatalf("conversion-only API key read compression preferences: %d", got)
+	}
+	if got := call(http.DefaultClient, http.MethodPut, "/api/v1/profile-preferences/me/convert/png/jpg", preferenceKey.Token, `{"profileId":"not-installed"}`); got != http.StatusUnprocessableEntity {
+		t.Fatalf("API key invalid profile preference status=%d", got)
+	}
+	if got := call(http.DefaultClient, http.MethodGet, "/api/v1/profile-preferences/global", preferenceKey.Token, ""); got != http.StatusForbidden {
+		t.Fatalf("user API key accessed global defaults: %d", got)
+	}
 	if got := call(http.DefaultClient, http.MethodGet, "/api/v1/jobs", key.Token, ""); got != http.StatusOK {
 		t.Fatalf("key with jobs:read status=%d", got)
 	}

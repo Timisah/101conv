@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -112,9 +113,226 @@ CREATE TABLE IF NOT EXISTS conv_job_attempts (
  exit_code INTEGER, stdout TEXT NOT NULL DEFAULT '', stderr TEXT NOT NULL DEFAULT '', error TEXT,
  UNIQUE(job_id, attempt_number)
 );
+CREATE TABLE IF NOT EXISTS conv_profile_preferences (
+ scope TEXT NOT NULL CHECK (scope IN ('global','user')),
+ owner_id TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL CHECK (mode IN ('convert','compress')),
+ source_format TEXT NOT NULL, target_format TEXT NOT NULL, profile_id TEXT NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(scope,owner_id,mode,source_format,target_format),
+ CHECK ((scope='global' AND owner_id='') OR (scope='user' AND owner_id<>''))
+);
 `
 	_, err := s.db.ExecContext(ctx, schema)
 	return err
+}
+
+func normalizePreference(mode, source, target string) (string, string, string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	source = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(source)), ".")
+	target = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(target)), ".")
+	if (mode != "convert" && mode != "compress") || !formatRE.MatchString(source) || !formatRE.MatchString(target) {
+		return "", "", "", fmt.Errorf("%w: valid mode and source/target file formats are required", ErrInvalidInput)
+	}
+	return mode, source, target, nil
+}
+
+func (s *Service) storedPreference(ctx context.Context, scope, ownerID, mode, source, target string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT profile_id FROM conv_profile_preferences WHERE scope=$1 AND owner_id=$2 AND mode=$3 AND source_format=$4 AND target_format=$5`, scope, ownerID, mode, source, target).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+func (s *Service) compatibleProfile(profileID, mode, source, target string) bool {
+	d, _, _, _, err := s.management.ResolveConversion(profileID, source, target)
+	return err == nil && d.SupportsMode(mode)
+}
+
+// ResolvePreferredProfile resolves user overrides, administrator defaults, and
+// finally a stable profile-ID ordered fallback. Temporarily unavailable saved
+// preferences remain stored and are reconsidered on every future resolution.
+func (s *Service) ResolvePreferredProfile(ctx context.Context, ownerID, mode, source, target string) (string, string, error) {
+	mode, source, target, err := normalizePreference(mode, source, target)
+	if err != nil {
+		return "", "", err
+	}
+	if ownerID != "" {
+		if id, e := s.storedPreference(ctx, "user", ownerID, mode, source, target); e != nil {
+			return "", "", e
+		} else if id != "" && s.compatibleProfile(id, mode, source, target) {
+			return id, "personal preference", nil
+		}
+	}
+	if id, e := s.storedPreference(ctx, "global", "", mode, source, target); e != nil {
+		return "", "", e
+	} else if id != "" && s.compatibleProfile(id, mode, source, target) {
+		return id, "administrator default", nil
+	}
+
+	records, err := s.management.ListProfiles(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	ids := make([]string, 0, len(records))
+	for _, rec := range records {
+		if rec.Definition.SupportsMode(mode) && s.compatibleProfile(rec.Definition.ID, mode, source, target) {
+			ids = append(ids, rec.Definition.ID)
+		}
+	}
+	sort.Strings(ids)
+	if len(ids) == 0 {
+		return "", "", fmt.Errorf("%w: no enabled compatible %s profile is available for %s to %s", ErrUnsupported, mode, source, target)
+	}
+	return ids[0], "automatic fallback", nil
+}
+
+func (s *Service) SetProfilePreference(ctx context.Context, ownerID, mode, source, target, profileID string, global bool) error {
+	mode, source, target, err := normalizePreference(mode, source, target)
+	if err != nil {
+		return err
+	}
+	profileID = strings.TrimSpace(profileID)
+	if ownerID == "" || profileID == "" {
+		return fmt.Errorf("%w: owner and profile are required", ErrInvalidInput)
+	}
+	if !s.compatibleProfile(profileID, mode, source, target) {
+		return fmt.Errorf("%w: profile is disabled, incompatible, unavailable, or does not support this mapping", ErrUnsupported)
+	}
+	scope, keyOwner := "user", ownerID
+	if global {
+		scope, keyOwner = "global", ""
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO conv_profile_preferences(scope,owner_id,mode,source_format,target_format,profile_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(scope,owner_id,mode,source_format,target_format) DO UPDATE SET profile_id=EXCLUDED.profile_id,updated_at=now()`, scope, keyOwner, mode, source, target, profileID)
+	return err
+}
+
+func (s *Service) DeleteProfilePreference(ctx context.Context, ownerID, mode, source, target string, global bool) error {
+	mode, source, target, err := normalizePreference(mode, source, target)
+	if err != nil {
+		return err
+	}
+	scope, keyOwner := "user", ownerID
+	if global {
+		scope, keyOwner = "global", ""
+	}
+	if keyOwner == "" {
+		return fmt.Errorf("%w: owner is required", ErrInvalidInput)
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM conv_profile_preferences WHERE scope=$1 AND owner_id=$2 AND mode=$3 AND source_format=$4 AND target_format=$5`, scope, keyOwner, mode, source, target)
+	return err
+}
+
+func (s *Service) ListProfilePreferences(ctx context.Context, ownerID, mode string) ([]PreferenceMapping, error) {
+	if mode != "" {
+		mode = strings.ToLower(strings.TrimSpace(mode))
+		if mode != "convert" && mode != "compress" {
+			return nil, fmt.Errorf("%w: invalid preference mode", ErrInvalidInput)
+		}
+	}
+	records, err := s.management.ListProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	type mappingKey struct{ mode, source, target string }
+	keys := map[mappingKey]bool{}
+	for _, rec := range records {
+		for _, rule := range rec.Definition.Rules {
+			for _, src := range rule.Sources {
+				for _, dst := range rule.Targets {
+					for _, candidateMode := range []string{"convert", "compress"} {
+						if (mode == "" || mode == candidateMode) && rec.Definition.SupportsMode(candidateMode) {
+							keys[mappingKey{candidateMode, strings.TrimPrefix(strings.ToLower(src), "."), strings.TrimPrefix(strings.ToLower(dst), ".")}] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT mode,source_format,target_format FROM conv_profile_preferences WHERE (scope='global' OR (scope='user' AND owner_id=$1)) AND ($2='' OR mode=$2)`, ownerID, mode)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var k mappingKey
+		if err = rows.Scan(&k.mode, &k.source, &k.target); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		keys[k] = true
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	ordered := make([]mappingKey, 0, len(keys))
+	for k := range keys {
+		ordered = append(ordered, k)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		a, b := ordered[i], ordered[j]
+		if a.mode != b.mode {
+			return a.mode < b.mode
+		}
+		if a.source != b.source {
+			return a.source < b.source
+		}
+		return a.target < b.target
+	})
+	out := make([]PreferenceMapping, 0, len(ordered))
+	for _, k := range ordered {
+		globalID, e := s.storedPreference(ctx, "global", "", k.mode, k.source, k.target)
+		if e != nil {
+			return nil, e
+		}
+		userID := ""
+		if ownerID != "" {
+			userID, e = s.storedPreference(ctx, "user", ownerID, k.mode, k.source, k.target)
+			if e != nil {
+				return nil, e
+			}
+		}
+		m := PreferenceMapping{Mode: k.mode, SourceFormat: k.source, TargetFormat: k.target, GlobalProfileID: globalID, UserProfileID: userID, Alternatives: []ProfileChoice{}}
+		for _, rec := range records {
+			d := rec.Definition
+			if !d.SupportsMode(k.mode) || !s.compatibleProfile(d.ID, k.mode, k.source, k.target) {
+				continue
+			}
+			m.Alternatives = append(m.Alternatives, ProfileChoice{ID: d.ID, Name: d.Name, Version: d.Version})
+		}
+		sort.Slice(m.Alternatives, func(i, j int) bool { return m.Alternatives[i].ID < m.Alternatives[j].ID })
+		m.GlobalAvailable = containsProfileChoice(m.Alternatives, globalID)
+		m.UserAvailable = containsProfileChoice(m.Alternatives, userID)
+		switch {
+		case userID != "" && m.UserAvailable:
+			m.EffectiveProfile = userID
+			m.EffectiveSource = "personal preference"
+		case globalID != "" && m.GlobalAvailable:
+			m.EffectiveProfile = globalID
+			m.EffectiveSource = "administrator default"
+		case len(m.Alternatives) > 0:
+			m.EffectiveProfile = m.Alternatives[0].ID
+			m.EffectiveSource = "automatic fallback"
+		default:
+			m.EffectiveSource = "unavailable"
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func containsProfileChoice(choices []ProfileChoice, id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, c := range choices {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) CreateUpload(ctx context.Context, fileName string, input io.Reader) (view Upload, retErr error) {
@@ -245,8 +463,8 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	if strings.TrimSpace(ownerID) == "" {
 		return Job{}, false, fmt.Errorf("job owner is required")
 	}
-	if !fileIDRE.MatchString(req.UploadID) || strings.TrimSpace(req.ProfileID) == "" || !idempotencyRE.MatchString(req.IdempotencyKey) {
-		return Job{}, false, fmt.Errorf("%w: uploadId, profileId, and an 8-128 character idempotencyKey are required", ErrInvalidInput)
+	if !fileIDRE.MatchString(req.UploadID) || !idempotencyRE.MatchString(req.IdempotencyKey) {
+		return Job{}, false, fmt.Errorf("%w: uploadId and an 8-128 character idempotencyKey are required", ErrInvalidInput)
 	}
 	target := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(req.TargetFormat)), ".")
 	if !formatRE.MatchString(target) {
@@ -269,6 +487,13 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	}
 	if err != nil {
 		return Job{}, false, err
+	}
+	if req.ProfileID == "" {
+		var err error
+		req.ProfileID, _, err = s.ResolvePreferredProfile(ctx, ownerID, mode, upload.Extension, target)
+		if err != nil {
+			return Job{}, false, err
+		}
 	}
 	profileDef, rule, engineDef, installation, err := s.management.ResolveConversion(req.ProfileID, upload.Extension, target)
 	if err != nil {

@@ -58,6 +58,35 @@ type SubmitRequest struct {
 	IdempotencyKey string            `json:"idempotencyKey"`
 }
 
+// ProfilePreference is an exact format mapping. ProfileID may be retained even
+// while the referenced profile is temporarily unavailable; resolution never
+// executes it until the management service confirms compatibility.
+type ProfilePreference struct {
+	Mode         string `json:"mode"`
+	SourceFormat string `json:"sourceFormat"`
+	TargetFormat string `json:"targetFormat"`
+	ProfileID    string `json:"profileId"`
+}
+
+type ProfileChoice struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type PreferenceMapping struct {
+	Mode             string          `json:"mode"`
+	SourceFormat     string          `json:"sourceFormat"`
+	TargetFormat     string          `json:"targetFormat"`
+	GlobalProfileID  string          `json:"globalProfileId,omitempty"`
+	UserProfileID    string          `json:"userProfileId,omitempty"`
+	EffectiveProfile string          `json:"effectiveProfileId,omitempty"`
+	EffectiveSource  string          `json:"effectiveSource"`
+	GlobalAvailable  bool            `json:"globalAvailable"`
+	UserAvailable    bool            `json:"userAvailable"`
+	Alternatives     []ProfileChoice `json:"alternatives"`
+}
+
 type ExecutionSpec struct {
 	EngineID                    string   `json:"engineId"`
 	EngineVersion               string   `json:"engineVersion"`

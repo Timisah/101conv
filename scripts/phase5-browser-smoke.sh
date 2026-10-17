@@ -41,7 +41,8 @@ proxy_cert_mount=()
 if [[ -n "${CODEX_PROXY_CERT:-}" && -r "$CODEX_PROXY_CERT" ]]; then
   proxy_cert_mount=(-v "$CODEX_PROXY_CERT:/tmp/proxy-ca.pem:ro")
 fi
-docker run --rm --user "$(id -u):$(id -g)" -e GOMODCACHE=/go/pkg/mod -e GOCACHE=/tmp/go-cache -v /tmp/101conv-gomod-cache:/go/pkg/mod -v "$repo_root/server:/src" -v "$tmp_root:/out" "${proxy_cert_mount[@]}" -w /src golang:1.27.2-alpine sh -c '
+docker run --rm --user "$(id -u):$(id -g)" -e GOMODCACHE=/go/pkg/mod -e GOCACHE=/out/go-cache -e GOTMPDIR=/out/go-tmp -v /tmp/101conv-gomod-cache:/go/pkg/mod -v "$repo_root/server:/src" -v "$tmp_root:/out" "${proxy_cert_mount[@]}" -w /src golang:1.27.2-alpine sh -c '
+  mkdir -p "$GOTMPDIR"
   if [ -f /tmp/proxy-ca.pem ]; then cat /etc/ssl/certs/ca-certificates.crt /tmp/proxy-ca.pem >/tmp/trust.pem; export SSL_CERT_FILE=/tmp/trust.pem; fi
   CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/101conv ./cmd/101conv
   CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/go-data/imports/ppm-pgm ./testdata/ppm-pgm
