@@ -6,6 +6,84 @@ info:
 servers:
   - url: /
 paths:
+  /api/v1/setup/status:
+    get:
+      summary: Check whether first-run setup is claimed and complete
+      responses:
+        '200': { description: Setup state; no credentials or storage secrets returned }
+        '503': { description: PostgreSQL setup state is unavailable }
+  /api/v1/setup/claim:
+    post:
+      summary: Atomically create the first administrator account
+      description: Available only before the instance is claimed. Requires same-origin request and the administrator bootstrap passphrase (ENGINE_ADMIN_TOKEN, at least 24 characters). Rate limited. No fixed default password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bootstrapToken, username, password]
+              properties:
+                bootstrapToken: { type: string, writeOnly: true }
+                username: { type: string, minLength: 3, maxLength: 64 }
+                password: { type: string, minLength: 12, maxLength: 256, writeOnly: true }
+      responses:
+        '201': { description: Administrator created and HttpOnly session set }
+        '401': { description: Bootstrap secret rejected }
+        '409': { description: Another administrator already claimed setup }
+        '422': { description: Username or password invalid }
+  /api/v1/setup/readiness:
+    get:
+      summary: Check container-visible storage and installed converters during setup
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: Writable mount checks, installed engine/profile counts and Worker workspace limit }
+  /api/v1/setup/complete:
+    post:
+      summary: Mark first-run setup complete after storage checks
+      security: [{ adminSession: [] }]
+      responses:
+        '204': { description: Setup completed }
+        '403': { description: Initial account session required }
+        '503': { description: Application storage not writable }
+  /api/v1/storage:
+    get:
+      summary: Get storage measurements, retention setting and cleanup history
+      description: File byte totals are PostgreSQL-recorded estimates; capacity is measured from Core mounts. Worker scratch usage is not measured.
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: Storage overview and retention state }
+  /api/v1/storage/cleanup/preview:
+    get:
+      summary: Preview unsubmitted upload cleanup before saving or applying
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      parameters:
+        - { name: days, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 3650 } }
+      responses:
+        '200': { description: Estimated candidates and bytes plus short-lived preview token }
+  /api/v1/storage/retention:
+    put:
+      summary: Set manual or age-based cleanup of unsubmitted uploads
+      description: A non-null age requires a matching recent cleanup preview. Null means manual cleanup only. Submitted originals and results are never removed by this policy.
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: Saved policy }
+        '409': { description: Preview is stale or missing }
+  /api/v1/storage/cleanup:
+    post:
+      summary: Delete up to 100 eligible unsubmitted uploads
+      description: Requires a fresh preview token. Durable claim flags make interrupted runs resumable.
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: Actual deletion count and reclaimed bytes }
+        '409': { description: Preview is stale or missing }
+        '500': { description: Cleanup interrupted; pending claims can be retried }
+  /api/v1/operations:
+    get:
+      summary: Inspect Core conversion readiness and operational issues
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: Worker heartbeat, database, storage, engine/profile and repository status, jobs and leases }
   /api/v1/settings/session:
     get:
       summary: Read the instance-wide browser session lifetime

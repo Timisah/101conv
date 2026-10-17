@@ -223,6 +223,12 @@ CREATE TABLE IF NOT EXISTS conv_audit_events (
  details JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS conv_audit_events_created_idx ON conv_audit_events(created_at DESC);
+CREATE TABLE IF NOT EXISTS conv_instance_setup (
+ id INTEGER PRIMARY KEY CHECK (id=1), completed BOOLEAN NOT NULL DEFAULT false,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO conv_instance_setup(id,completed)
+SELECT 1,EXISTS(SELECT 1 FROM conv_users) ON CONFLICT (id) DO NOTHING;
 `)
 	return err
 }

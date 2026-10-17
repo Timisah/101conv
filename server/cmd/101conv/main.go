@@ -112,6 +112,9 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if jobService != nil {
+		go jobService.RunRetention(ctx)
+	}
 	serveErr := make(chan error, 1)
 	go func() { log.Printf("101conv %s listening on :%s", version, port); serveErr <- server.ListenAndServe() }()
 	select {

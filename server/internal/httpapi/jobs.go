@@ -26,26 +26,31 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, jobs.MaxInputBytes+(1<<20))
-	if err := r.ParseMultipartForm(8 << 20); err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			writeAPIError(w, http.StatusRequestEntityTooLarge, "file_too_large", "upload exceeds the configured input limit")
-		} else {
-			writeAPIError(w, http.StatusBadRequest, "invalid_upload", "expected multipart form field 'file'")
+	if r.ContentLength > 0 {
+		free, err := a.jobs.UploadFreeBytes()
+		if err == nil && free < uint64(r.ContentLength)+16<<20 {
+			writeAPIError(w, http.StatusInsufficientStorage, "insufficient_storage", "uploads mount has too little free space for this file")
+			return
 		}
+	}
+	reader, err := r.MultipartReader()
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_upload", "expected a multipart upload")
 		return
 	}
-	if r.MultipartForm != nil {
-		defer r.MultipartForm.RemoveAll()
-	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
+	part, err := reader.NextPart()
+	if err != nil || part.FormName() != "file" || part.FileName() == "" {
 		writeAPIError(w, http.StatusBadRequest, "invalid_upload", "multipart form field 'file' is required")
 		return
 	}
-	defer file.Close()
-	upload, err := a.jobs.CreateUploadFor(r.Context(), p.ID, p.MaxFileBytes, p.Quotas.MonthlyBytes.Value, header.Filename, file)
+	defer part.Close()
+	upload, err := a.jobs.CreateUploadFor(r.Context(), p.ID, p.MaxFileBytes, p.Quotas.MonthlyBytes.Value, part.FileName(), part)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "file_too_large", "upload exceeds the configured input limit")
+			return
+		}
 		writeJobError(w, err)
 		return
 	}
@@ -224,6 +229,9 @@ func writeJobError(w http.ResponseWriter, err error) {
 	case errors.Is(err, jobs.ErrQuotaExceeded):
 		status = http.StatusTooManyRequests
 		code = "quota_exceeded"
+	case errors.Is(err, jobs.ErrInsufficientStorage):
+		status = http.StatusInsufficientStorage
+		code = "insufficient_storage"
 	case errors.Is(err, jobs.ErrCanceled):
 		status = http.StatusConflict
 		code = "job_cancelled"

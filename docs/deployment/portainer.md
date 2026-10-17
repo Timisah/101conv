@@ -28,9 +28,15 @@ sudo mkdir -p /mnt/storage/apps/101conv/data/go-data/engines
 sudo chown -R 65532:65532 /mnt/storage/apps/101conv/data/go-data
 ```
 
+Run these commands on the Docker host, using your actual path. If the bind is an NFS mount with root squashing, set ownership on the NFS server instead. The browser can test whether its mounted directory is writable, but it cannot change host mounts or permissions.
+
 Set `DATA_PATH=/mnt/storage/apps/101conv/data` in Portainer. For an existing install, use its real data path and preserve all existing directories and named volumes. Never point `GO_DATA_PATH` at a directory containing unrelated application data.
 
 After redeployment, visit `http://<docker-host>:5656/` (or the configured `PORT`). The Compose build disables cached layers for application and web images so the built files correspond to the selected Git commit. Portainer must build Compose services from the Git repository; a running stack does not update until Portainer pulls and redeploys a commit.
+
+For a fresh instance, use a random `ENGINE_ADMIN_TOKEN` of at least 24 characters. The browser asks for that bootstrap passphrase to claim the initial administrator account. Keep the value private: the original token login remains valid for compatibility after setup. If a previous deployment already has accounts, onboarding is marked complete during migration and they continue to sign in. If a previous token-only deployment has no accounts, its existing token can claim the initial account; the existing data remains untouched. The setup review checks only container-visible paths; it cannot create Docker mounts or change ownership on your Ubuntu host.
+
+New local installs can instead use [`scripts/install.sh`](../../scripts/install.sh), which creates `.env` and the data path. Existing Portainer stacks should keep their current environment table and stack identity. Review [backup and isolated restore instructions](backup.md) before upgrades; the backup destination must be outside live storage.
 
 ## Data and migration boundary
 

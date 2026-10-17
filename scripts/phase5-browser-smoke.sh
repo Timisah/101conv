@@ -32,7 +32,11 @@ cleanup() {
     docker run --rm --user 65532:65532 --volume "$GO_DATA_PATH:/cleanup" --entrypoint /bin/sh postgres:17-alpine -c 'find /cleanup -mindepth 1 -delete' >/dev/null 2>&1 || true
   fi
   docker image rm -f "$SMOKE_IMAGE" "$WEB_IMAGE" "$BROWSER_IMAGE" >/dev/null 2>&1 || true
-  rm -rf "$tmp_root"
+  if [[ "$status" -ne 0 && "${SMOKE_KEEP_FAILED:-0}" == 1 ]]; then
+    echo "Failed smoke test files retained at $tmp_root" >&2
+  else
+    rm -rf "$tmp_root"
+  fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -107,6 +111,12 @@ const assert = require('node:assert/strict');
 })().catch(error => { console.error(error); process.exit(1); });
 NODE
 docker run --rm --shm-size=1g --network "${COMPOSE_PROJECT_NAME}_web-core" -e SMOKE_BASE=http://web:5656 -e ENGINE_ADMIN_TOKEN -e CHROMIUM_PATH=/usr/bin/chromium -e NO_PROXY=web,core,localhost,127.0.0.1 -e no_proxy=web,core,localhost,127.0.0.1 -v "$repo_root/web/node_modules:/app/node_modules:ro" -v "$repo_root/web/smoke.cjs:/app/smoke.cjs:ro" -w /app "$BROWSER_IMAGE" node smoke.cjs
+if [[ "${SMOKE_BACKUP_TEST:-0}" == 1 ]]; then
+  "$repo_root/scripts/backup.sh" "$tmp_root/backups" "$COMPOSE_PROJECT_NAME"
+  backup_dir="$(find "$tmp_root/backups" -mindepth 1 -maxdepth 1 -type d -name '101conv-backup-*' -print -quit)"
+  [[ -n "$backup_dir" ]]
+  "$repo_root/scripts/test-restore.sh" "$backup_dir"
+fi
 docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" restart postgres core worker
 for _ in $(seq 1 60); do
   health="$(docker inspect --format '{{.State.Health.Status}}' "$core_container" 2>/dev/null || true)"

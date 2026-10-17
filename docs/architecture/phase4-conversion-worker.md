@@ -31,8 +31,8 @@ The test suite includes a real, self-contained PPM P3 to PGM P2 converter in `se
 - The default scratch image contains no dynamic libraries. Many FFmpeg/ImageMagick distributions need a curated runtime image and allowlisted shared libraries; do not assume arbitrary installed binaries will execute in this image.
 - CPU and memory cgroups plus PID/disk bounds are configured at the Worker container, but no syscall profile, seccomp profile beyond Docker defaults, or per-job cgroup exists. This is process isolation, not a complete hostile-code sandbox.
 - The Worker has no public egress; its database is reachable only on the internal worker network. Compose isolation was tested locally, but Portainer/Swarm translation and host kernel enforcement need verification on the deployment host.
-- Jobs are scoped to their account owner, uploads are one-use, and there is no retention/garbage-collection policy yet. Result and upload disk usage requires operational monitoring and cleanup policy.
+- Jobs are scoped to their account owner and uploads are one-use. The current bounded retention policy removes only abandoned uploads never submitted to a job. Submitted originals and results remain indefinitely; broader lifecycle policy and exact disk accounting remain follow-ups.
 - Progress is lease/heartbeat progress rather than converter-reported percent. Retry policy covers worker loss/interruption and is intentionally bounded.
 - The API returns bounded stdout/stderr in attempt details, but it has no structured converter-specific diagnostic mapping yet.
 
-Next steps include backup/restore, retention and cleanup policy, engine-specific runtime packaging, richer progress/diagnostics, and a production container hardening review. Repository trust and signing remain separate from converter sandboxing.
+Next steps include automated backup scheduling, submitted-file retention policy, engine-specific runtime packaging, richer diagnostics, and a production container hardening review. Repository trust and signing remain separate from converter sandboxing.

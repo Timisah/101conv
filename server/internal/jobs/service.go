@@ -46,8 +46,18 @@ type Service struct {
 	resultRoot string
 }
 
-func (s *Service) UploadRoot() string { return s.uploadRoot }
-func (s *Service) ResultRoot() string { return s.resultRoot }
+func (s *Service) UploadRoot() string               { return s.uploadRoot }
+func (s *Service) ResultRoot() string               { return s.resultRoot }
+func (s *Service) UploadFreeBytes() (uint64, error) { return freeBytes(s.uploadRoot) }
+func (s *Service) ResultFreeBytes() (uint64, error) { return freeBytes(s.resultRoot) }
+
+func freeBytes(path string) (uint64, error) {
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(path, &fs); err != nil {
+		return 0, err
+	}
+	return fs.Bavail * uint64(fs.Bsize), nil
+}
 
 // EngineHasActiveJobs prevents the management API from removing a managed
 // binary version while queued or running jobs still hold that exact resolution.
@@ -106,6 +116,7 @@ ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS owner_id TEXT NOT NULL DEFAULT 'a
 ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'convert';
 CREATE INDEX IF NOT EXISTS conv_jobs_owner_created_idx ON conv_jobs(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS conv_jobs_claim_idx ON conv_jobs(state, lease_until, created_at);
+CREATE INDEX IF NOT EXISTS conv_jobs_upload_idx ON conv_jobs(upload_id);
 CREATE TABLE IF NOT EXISTS conv_job_attempts (
  id BIGSERIAL PRIMARY KEY, job_id TEXT NOT NULL REFERENCES conv_jobs(id) ON DELETE CASCADE,
  attempt_number INTEGER NOT NULL, state TEXT NOT NULL, lease_owner TEXT NOT NULL,
@@ -120,6 +131,22 @@ CREATE TABLE IF NOT EXISTS conv_profile_preferences (
  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  PRIMARY KEY(scope,owner_id,mode,source_format,target_format),
  CHECK ((scope='global' AND owner_id='') OR (scope='user' AND owner_id<>''))
+);
+ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS cleanup_pending BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS cleanup_claim_until TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS conv_uploads_abandoned_idx ON conv_uploads(created_at,id) WHERE NOT consumed;
+CREATE TABLE IF NOT EXISTS conv_storage_settings (
+ id INTEGER PRIMARY KEY CHECK (id=1), abandoned_upload_days INTEGER CHECK (abandoned_upload_days BETWEEN 1 AND 3650)
+);
+INSERT INTO conv_storage_settings(id) VALUES(1) ON CONFLICT (id) DO NOTHING;
+CREATE TABLE IF NOT EXISTS conv_cleanup_events (
+ id BIGSERIAL PRIMARY KEY, category TEXT NOT NULL, owner_id TEXT NOT NULL, file_id TEXT NOT NULL,
+ bytes_reclaimed BIGINT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS conv_cleanup_events_created_idx ON conv_cleanup_events(created_at DESC);
+CREATE TABLE IF NOT EXISTS conv_worker_heartbeats (
+ worker_id TEXT PRIMARY KEY, started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ last_seen TIMESTAMPTZ NOT NULL DEFAULT now(), last_activity TIMESTAMPTZ
 );
 `
 	_, err := s.db.ExecContext(ctx, schema)
@@ -376,6 +403,9 @@ func (s *Service) CreateUploadFor(ctx context.Context, ownerID string, maxFileBy
 	size, copyErr := io.Copy(io.MultiWriter(tmp, hasher), limited)
 	if copyErr != nil {
 		tmp.Close()
+		if errors.Is(copyErr, syscall.ENOSPC) {
+			return Upload{}, ErrInsufficientStorage
+		}
 		return Upload{}, copyErr
 	}
 	if size > maxFileBytes {
@@ -481,12 +511,15 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		return Job{}, false, fmt.Errorf("%w: options are only accepted for compression jobs", ErrInvalidInput)
 	}
 	var upload Upload
-	err := s.db.QueryRowContext(ctx, `SELECT id,file_name,extension,size_bytes,sha256,created_at FROM conv_uploads WHERE id=$1 AND owner_id=$2`, req.UploadID, ownerID).Scan(&upload.ID, &upload.FileName, &upload.Extension, &upload.Size, &upload.SHA256, &upload.CreatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id,file_name,extension,size_bytes,sha256,created_at FROM conv_uploads WHERE id=$1 AND owner_id=$2 AND NOT cleanup_pending`, req.UploadID, ownerID).Scan(&upload.ID, &upload.FileName, &upload.Extension, &upload.Size, &upload.SHA256, &upload.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, false, ErrNotFound
 	}
 	if err != nil {
 		return Job{}, false, err
+	}
+	if free, capacityErr := s.ResultFreeBytes(); capacityErr == nil && free < uint64(upload.Size*2+16<<20) {
+		return Job{}, false, fmt.Errorf("%w: results mount needs at least %d bytes free for this job", ErrInsufficientStorage, upload.Size*2+16<<20)
 	}
 	if req.ProfileID == "" {
 		var err error
@@ -570,15 +603,18 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, ownerID); err != nil {
 		return Job{}, false, err
 	}
-	var consumed bool
+	var consumed, cleanupPending bool
 	var storedOwner string
-	if err = tx.QueryRowContext(ctx, `SELECT owner_id,consumed FROM conv_uploads WHERE id=$1 FOR UPDATE`, req.UploadID).Scan(&storedOwner, &consumed); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, `SELECT owner_id,consumed,cleanup_pending FROM conv_uploads WHERE id=$1 FOR UPDATE`, req.UploadID).Scan(&storedOwner, &consumed, &cleanupPending); errors.Is(err, sql.ErrNoRows) {
 		return Job{}, false, ErrNotFound
 	} else if err != nil {
 		return Job{}, false, err
 	}
 	if storedOwner != ownerID {
 		return Job{}, false, ErrNotFound
+	}
+	if cleanupPending {
+		return Job{}, false, fmt.Errorf("%w: upload is being cleaned up", ErrConflict)
 	}
 	if consumed {
 		if existing, getErr := s.getByIdempotency(ctx, req.IdempotencyKey); getErr == nil && existing.requestHash == requestDigest {

@@ -23,4 +23,4 @@ The API exposes roles, groups, memberships, user permission overrides, and `limi
 
 ## Remaining work
 
-The access policy is a coarse global permission model; profile-by-profile grants, API-key expiry, multi-factor identity, and delegated bulk operations are not implemented. Browser sessions are process-local and do not survive Core restart. Audit records are retained in PostgreSQL, but the UI does not yet provide an audit browser/export. Storage retention, backup/restore, and deployment-host verification of all container isolation controls remain operational follow-ups.
+Profile-by-profile grants, API-key expiry, and multi-factor identity are not implemented. Browser sessions are process-local and do not survive Core restart. Audit records are retained in PostgreSQL, but the UI does not yet provide an audit browser/export. The Storage view currently covers estimates and abandoned-upload retention; full lifecycle policy remains a follow-up. Full backup and isolated restore tools exist, while scheduling and production restore orchestration do not. Container isolation still requires verification on each deployment host.

@@ -58,6 +58,23 @@ func NewWorker(db *sql.DB, runner worker.Runner, config WorkerConfig) (*Worker, 
 }
 
 func (w *Worker) Run(ctx context.Context) error {
+	if err := w.recordWorkerHeartbeat(ctx, false); err != nil {
+		return err
+	}
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	defer stopHeartbeat()
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				_ = w.recordWorkerHeartbeat(heartbeatCtx, false)
+			}
+		}
+	}()
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -75,7 +92,14 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 		}
 		w.runClaim(ctx, *claim)
+		_ = w.recordWorkerHeartbeat(ctx, true)
 	}
+}
+
+func (w *Worker) recordWorkerHeartbeat(ctx context.Context, activity bool) error {
+	_, err := w.db.ExecContext(ctx, `INSERT INTO conv_worker_heartbeats(worker_id,last_seen,last_activity) VALUES($1,now(),CASE WHEN $2 THEN now() ELSE NULL END)
+	ON CONFLICT(worker_id) DO UPDATE SET last_seen=now(),last_activity=CASE WHEN $2 THEN now() ELSE conv_worker_heartbeats.last_activity END`, w.config.ID, activity)
+	return err
 }
 
 func (w *Worker) claim(ctx context.Context) (*claimedJob, error) {
@@ -109,7 +133,7 @@ func (w *Worker) claim(ctx context.Context) (*claimedJob, error) {
 	if err = json.Unmarshal(raw, &c.Spec); err != nil {
 		return nil, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE conv_jobs SET state='running',attempt_count=$2,lease_owner=$3,lease_until=now()+($4 * interval '1 millisecond'),progress=5,error=NULL,updated_at=now() WHERE id=$1`, c.ID, c.Attempt, w.config.ID, w.config.Lease.Milliseconds())
+	_, err = tx.ExecContext(ctx, `UPDATE conv_jobs SET state='running',attempt_count=$2,lease_owner=$3,lease_until=now()+($4 * interval '1 millisecond'),progress=0,error=NULL,updated_at=now() WHERE id=$1`, c.ID, c.Attempt, w.config.ID, w.config.Lease.Milliseconds())
 	if err != nil {
 		return nil, err
 	}
@@ -138,16 +162,12 @@ func (w *Worker) runClaim(parent context.Context, c claimedJob) {
 		}
 		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
-		progress := 10
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if progress < 90 {
-					progress += 5
-				}
-				cancelled, err := w.heartbeat(ctx, c.ID, progress)
+				cancelled, err := w.heartbeat(ctx, c.ID)
 				if err != nil {
 					select {
 					case heartbeatErr <- err:
@@ -183,9 +203,9 @@ func (w *Worker) runClaim(parent context.Context, c claimedJob) {
 	}
 }
 
-func (w *Worker) heartbeat(ctx context.Context, id string, progress int) (bool, error) {
+func (w *Worker) heartbeat(ctx context.Context, id string) (bool, error) {
 	var cancel bool
-	err := w.db.QueryRowContext(ctx, `UPDATE conv_jobs SET lease_until=now()+($3 * interval '1 millisecond'),progress=GREATEST(progress,$4),updated_at=now() WHERE id=$1 AND lease_owner=$2 AND state='running' AND cancel_requested=false RETURNING cancel_requested`, id, w.config.ID, w.config.Lease.Milliseconds(), progress).Scan(&cancel)
+	err := w.db.QueryRowContext(ctx, `UPDATE conv_jobs SET lease_until=now()+($3 * interval '1 millisecond'),updated_at=now() WHERE id=$1 AND lease_owner=$2 AND state='running' AND cancel_requested=false RETURNING cancel_requested`, id, w.config.ID, w.config.Lease.Milliseconds()).Scan(&cancel)
 	if err == nil {
 		return false, nil
 	}
@@ -220,7 +240,7 @@ func (w *Worker) finish(ctx context.Context, c claimedJob, result worker.Result,
 	}
 	state := string(Failed)
 	attemptState := "failed"
-	progress := 100
+	progress := 0
 	var jobErr any
 	var key any
 	var size int64
@@ -233,6 +253,7 @@ func (w *Worker) finish(ctx context.Context, c claimedJob, result worker.Result,
 	} else if runErr == nil {
 		state = string(Succeeded)
 		attemptState = "succeeded"
+		progress = 100
 		key = result.ResultKey
 		size = result.Size
 	} else {
