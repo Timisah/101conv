@@ -73,6 +73,9 @@ func (s *Service) StorageScan(ctx context.Context) (StorageScan, error) {
 	}
 	out.Categories = progress.Categories
 	out.Owners = progress.Owners
+	if out.Owners == nil {
+		out.Owners = []OwnerStorage{}
+	}
 	if out.Status == "running" {
 		s.scanMu.Lock()
 		running := s.scanRunning

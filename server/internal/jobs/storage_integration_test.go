@@ -194,6 +194,10 @@ func TestSuccessfulRetentionExpiresFilesButPreservesJobHistory(t *testing.T) {
 	if err = svc.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	initialScan, err := svc.StorageScan(ctx)
+	if err != nil || initialScan.Owners == nil {
+		t.Fatalf("empty storage scan must serialize owners as an empty list: %+v err=%v", initialScan, err)
+	}
 	u, err := svc.CreateUploadFor(ctx, "owner", 100, nil, "image.ppm", strings.NewReader("P3\n1 1\n255\n255 0 0\n"))
 	if err != nil {
 		t.Fatal(err)
