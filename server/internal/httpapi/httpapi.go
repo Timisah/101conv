@@ -55,6 +55,7 @@ func NewWithAccounts(version string, catalogService *catalog.Service, management
 	mux.HandleFunc("POST /api/v1/setup/complete", a.completeInitialSetup)
 	mux.HandleFunc("GET /api/v1/setup/readiness", a.setupReadiness)
 	mux.HandleFunc("GET /api/v1/storage", a.storageOverview)
+	mux.HandleFunc("POST /api/v1/storage/scan", a.startStorageScan)
 	mux.HandleFunc("GET /api/v1/operations", a.operationsOverview)
 	mux.HandleFunc("GET /api/v1/storage/cleanup/preview", a.previewStorageCleanup)
 	mux.HandleFunc("PUT /api/v1/storage/retention", a.updateStorageRetention)

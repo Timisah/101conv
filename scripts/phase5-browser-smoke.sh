@@ -93,6 +93,7 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 [[ "$(docker inspect --format '{{.State.Health.Status}}' "$web_container")" == "healthy" ]]
+docker run --rm --network none --volumes-from "$core_container:ro" --entrypoint df postgres:17-alpine -P -B1 /var/lib/101conv/uploads /var/lib/101conv/results
 docker inspect "$web_container" | python3 -c 'import json,sys; c=json.load(sys.stdin)[0]; p=c["HostConfig"]["PortBindings"]["5656/tcp"]; assert p and p[0]["HostPort"] == sys.argv[1], p' "$port_num"
 docker build -f "$repo_root/web/Dockerfile.e2e" -t "$BROWSER_IMAGE" "$repo_root/web"
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_web-core" "$BROWSER_IMAGE" node - <<'NODE'

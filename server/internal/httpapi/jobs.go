@@ -28,8 +28,9 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, jobs.MaxInputBytes+(1<<20))
 	if r.ContentLength > 0 {
 		free, err := a.jobs.UploadFreeBytes()
-		if err == nil && free < uint64(r.ContentLength)+16<<20 {
-			writeAPIError(w, http.StatusInsufficientStorage, "insufficient_storage", "uploads mount has too little free space for this file")
+		required := uint64(r.ContentLength) + (16 << 20)
+		if err == nil && free < required {
+			writeAPIError(w, http.StatusInsufficientStorage, "insufficient_storage", fmt.Sprintf("uploads storage reports %d bytes free; this request needs about %d bytes including safety headroom", free, required))
 			return
 		}
 	}
@@ -235,6 +236,12 @@ func writeJobError(w http.ResponseWriter, err error) {
 	case errors.Is(err, jobs.ErrCanceled):
 		status = http.StatusConflict
 		code = "job_cancelled"
+	case errors.Is(err, jobs.ErrFileExpired):
+		status = http.StatusGone
+		code = "file_expired"
+	case errors.Is(err, jobs.ErrFileMissing):
+		status = http.StatusGone
+		code = "file_missing"
 	}
 	writeAPIError(w, status, code, err.Error())
 }

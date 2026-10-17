@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -40,10 +41,14 @@ var (
 )
 
 type Service struct {
-	db         *sql.DB
-	management *management.Service
-	uploadRoot string
-	resultRoot string
+	db          *sql.DB
+	management  *management.Service
+	uploadRoot  string
+	resultRoot  string
+	fileMu      sync.RWMutex
+	retentionMu sync.RWMutex
+	scanMu      sync.Mutex
+	scanRunning bool
 }
 
 func (s *Service) UploadRoot() string               { return s.uploadRoot }
@@ -135,11 +140,50 @@ CREATE TABLE IF NOT EXISTS conv_profile_preferences (
 ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS cleanup_pending BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS cleanup_claim_until TIMESTAMPTZ;
 ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS cleanup_observed_bytes BIGINT;
+ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS original_deleted_at TIMESTAMPTZ;
+ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS original_missing_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS conv_uploads_abandoned_idx ON conv_uploads(created_at,id) WHERE NOT consumed;
 CREATE TABLE IF NOT EXISTS conv_storage_settings (
  id INTEGER PRIMARY KEY CHECK (id=1), abandoned_upload_days INTEGER CHECK (abandoned_upload_days BETWEEN 1 AND 3650)
 );
-INSERT INTO conv_storage_settings(id) VALUES(1) ON CONFLICT (id) DO NOTHING;
+CREATE TABLE IF NOT EXISTS conv_storage_scans (
+ id INTEGER PRIMARY KEY CHECK(id=1), status TEXT NOT NULL, started_at TIMESTAMPTZ,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), completed_at TIMESTAMPTZ,
+ error TEXT NOT NULL DEFAULT '', snapshot JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE TABLE IF NOT EXISTS conv_storage_scan_files (
+ category TEXT NOT NULL, relative_path TEXT NOT NULL, size_bytes BIGINT NOT NULL,
+ modified_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(category,relative_path)
+);
+ALTER TABLE conv_storage_scan_files ADD COLUMN IF NOT EXISTS modified_at TIMESTAMPTZ NOT NULL DEFAULT now();
+INSERT INTO conv_storage_scans(id,status) VALUES(1,'not_started') ON CONFLICT(id) DO NOTHING;
+ALTER TABLE conv_storage_settings ADD COLUMN IF NOT EXISTS unsubmitted_mode TEXT;
+ALTER TABLE conv_storage_settings ADD COLUMN IF NOT EXISTS submitted_original_mode TEXT NOT NULL DEFAULT 'keep';
+ALTER TABLE conv_storage_settings ADD COLUMN IF NOT EXISTS submitted_original_days INTEGER;
+ALTER TABLE conv_storage_settings ADD COLUMN IF NOT EXISTS successful_result_mode TEXT NOT NULL DEFAULT 'keep';
+ALTER TABLE conv_storage_settings ADD COLUMN IF NOT EXISTS successful_result_days INTEGER;
+ALTER TABLE conv_storage_settings ADD COLUMN IF NOT EXISTS failed_original_mode TEXT NOT NULL DEFAULT 'keep';
+ALTER TABLE conv_storage_settings ADD COLUMN IF NOT EXISTS failed_original_days INTEGER;
+ALTER TABLE conv_storage_settings ADD COLUMN IF NOT EXISTS canceled_original_mode TEXT NOT NULL DEFAULT 'keep';
+ALTER TABLE conv_storage_settings ADD COLUMN IF NOT EXISTS canceled_original_days INTEGER;
+UPDATE conv_storage_settings SET unsubmitted_mode=CASE WHEN abandoned_upload_days IS NULL THEN 'manual' ELSE 'after_days' END WHERE unsubmitted_mode IS NULL;
+ALTER TABLE conv_storage_settings ALTER COLUMN unsubmitted_mode SET DEFAULT 'keep';
+ALTER TABLE conv_storage_settings ALTER COLUMN unsubmitted_mode SET NOT NULL;
+DO $migration$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='conv_storage_settings'::regclass AND conname='conv_storage_unsubmitted_mode_check') THEN ALTER TABLE conv_storage_settings ADD CONSTRAINT conv_storage_unsubmitted_mode_check CHECK (unsubmitted_mode IN ('keep','manual','after_days')); END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='conv_storage_settings'::regclass AND conname='conv_storage_original_mode_check') THEN ALTER TABLE conv_storage_settings ADD CONSTRAINT conv_storage_original_mode_check CHECK (submitted_original_mode IN ('keep','manual','after_days','after_success')); END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='conv_storage_settings'::regclass AND conname='conv_storage_result_mode_check') THEN ALTER TABLE conv_storage_settings ADD CONSTRAINT conv_storage_result_mode_check CHECK (successful_result_mode IN ('keep','manual','after_days')); END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='conv_storage_settings'::regclass AND conname='conv_storage_failed_mode_check') THEN ALTER TABLE conv_storage_settings ADD CONSTRAINT conv_storage_failed_mode_check CHECK (failed_original_mode IN ('keep','manual','after_days')); END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='conv_storage_settings'::regclass AND conname='conv_storage_canceled_mode_check') THEN ALTER TABLE conv_storage_settings ADD CONSTRAINT conv_storage_canceled_mode_check CHECK (canceled_original_mode IN ('keep','manual','after_days')); END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='conv_storage_settings'::regclass AND conname='conv_storage_days_check') THEN ALTER TABLE conv_storage_settings ADD CONSTRAINT conv_storage_days_check CHECK ((submitted_original_days IS NULL OR submitted_original_days BETWEEN 1 AND 3650) AND (successful_result_days IS NULL OR successful_result_days BETWEEN 1 AND 3650) AND (failed_original_days IS NULL OR failed_original_days BETWEEN 1 AND 3650) AND (canceled_original_days IS NULL OR canceled_original_days BETWEEN 1 AND 3650)); END IF;
+END $migration$;
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS result_deleted_at TIMESTAMPTZ;
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS result_missing_at TIMESTAMPTZ;
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS result_cleanup_pending BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS result_cleanup_observed_bytes BIGINT;
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS result_cleanup_claim_until TIMESTAMPTZ;
+INSERT INTO conv_storage_settings(id,unsubmitted_mode) VALUES(1,'keep') ON CONFLICT (id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS conv_cleanup_events (
  id BIGSERIAL PRIMARY KEY, category TEXT NOT NULL, owner_id TEXT NOT NULL, file_id TEXT NOT NULL,
  bytes_reclaimed BIGINT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -512,7 +556,7 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		return Job{}, false, fmt.Errorf("%w: options are only accepted for compression jobs", ErrInvalidInput)
 	}
 	var upload Upload
-	err := s.db.QueryRowContext(ctx, `SELECT id,file_name,extension,size_bytes,sha256,created_at FROM conv_uploads WHERE id=$1 AND owner_id=$2 AND NOT cleanup_pending`, req.UploadID, ownerID).Scan(&upload.ID, &upload.FileName, &upload.Extension, &upload.Size, &upload.SHA256, &upload.CreatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id,file_name,extension,size_bytes,sha256,created_at FROM conv_uploads WHERE id=$1 AND owner_id=$2 AND NOT cleanup_pending AND original_deleted_at IS NULL`, req.UploadID, ownerID).Scan(&upload.ID, &upload.FileName, &upload.Extension, &upload.Size, &upload.SHA256, &upload.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, false, ErrNotFound
 	}
@@ -605,8 +649,9 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		return Job{}, false, err
 	}
 	var consumed, cleanupPending bool
+	var deleted sql.NullTime
 	var storedOwner string
-	if err = tx.QueryRowContext(ctx, `SELECT owner_id,consumed,cleanup_pending FROM conv_uploads WHERE id=$1 FOR UPDATE`, req.UploadID).Scan(&storedOwner, &consumed, &cleanupPending); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, `SELECT owner_id,consumed,cleanup_pending,original_deleted_at FROM conv_uploads WHERE id=$1 FOR UPDATE`, req.UploadID).Scan(&storedOwner, &consumed, &cleanupPending, &deleted); errors.Is(err, sql.ErrNoRows) {
 		return Job{}, false, ErrNotFound
 	} else if err != nil {
 		return Job{}, false, err
@@ -616,6 +661,9 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	}
 	if cleanupPending {
 		return Job{}, false, fmt.Errorf("%w: upload is being cleaned up", ErrConflict)
+	}
+	if deleted.Valid {
+		return Job{}, false, ErrFileExpired
 	}
 	if consumed {
 		if existing, getErr := s.getByIdempotency(ctx, req.IdempotencyKey); getErr == nil && existing.requestHash == requestDigest {
@@ -764,12 +812,14 @@ func (s *Service) getByIdempotency(ctx context.Context, key string) (idemRecord,
 	return r, err
 }
 
-const jobColumns = `id,profile_id,profile_version,source_format,target_format,mode,state,progress,attempt_count,max_attempts,COALESCE(error,''),result_size,created_at,updated_at`
+const jobColumns = `id,profile_id,profile_version,source_format,target_format,mode,state,progress,attempt_count,max_attempts,COALESCE(error,''),result_size,created_at,updated_at,
+CASE WHEN EXISTS(SELECT 1 FROM conv_uploads u WHERE u.id=conv_jobs.upload_id AND u.original_deleted_at IS NOT NULL) THEN 'expired' WHEN EXISTS(SELECT 1 FROM conv_uploads u WHERE u.id=conv_jobs.upload_id AND u.original_missing_at IS NOT NULL) THEN 'missing' WHEN EXISTS(SELECT 1 FROM conv_uploads u WHERE u.id=conv_jobs.upload_id AND u.cleanup_pending) THEN 'scheduled' ELSE 'available' END,
+CASE WHEN result_deleted_at IS NOT NULL THEN 'expired' WHEN result_missing_at IS NOT NULL THEN 'missing' WHEN result_cleanup_pending THEN 'scheduled' WHEN result_key IS NOT NULL THEN 'available' ELSE 'not_ready' END`
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanJob(row rowScanner, job *Job, extra ...any) error {
-	args := []any{&job.ID, &job.ProfileID, &job.ProfileVer, &job.SourceFormat, &job.TargetFormat, &job.Mode, &job.State, &job.Progress, &job.Attempt, &job.MaxAttempts, &job.Error, &job.OutputSize, &job.CreatedAt, &job.UpdatedAt}
+	args := []any{&job.ID, &job.ProfileID, &job.ProfileVer, &job.SourceFormat, &job.TargetFormat, &job.Mode, &job.State, &job.Progress, &job.Attempt, &job.MaxAttempts, &job.Error, &job.OutputSize, &job.CreatedAt, &job.UpdatedAt, &job.OriginalState, &job.ResultState}
 	args = append(args, extra...)
 	return row.Scan(args...)
 }
@@ -891,12 +941,23 @@ func (s *Service) OpenResult(ctx context.Context, id string) (*os.File, Job, str
 }
 
 func (s *Service) OpenResultFor(ctx context.Context, id, ownerID string) (*os.File, Job, string, error) {
+	// Cleanup takes the write lock across unlink and state update. Once this
+	// read lock opens the file, Unix keeps that inode readable for the response
+	// even if cleanup unlinks its directory entry afterward.
+	s.fileMu.RLock()
+	defer s.fileMu.RUnlock()
 	job, err := s.GetFor(ctx, id, ownerID)
 	if err != nil {
 		return nil, Job{}, "", err
 	}
 	if job.State != Succeeded {
 		return nil, Job{}, "", fmt.Errorf("%w: result is not ready", ErrConflict)
+	}
+	if job.ResultState == "expired" {
+		return nil, Job{}, "", ErrFileExpired
+	}
+	if job.ResultState == "missing" {
+		return nil, Job{}, "", ErrFileMissing
 	}
 	var key string
 	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(result_key,'') FROM conv_jobs WHERE id=$1`, id).Scan(&key); err != nil {
@@ -908,6 +969,10 @@ func (s *Service) OpenResultFor(ctx context.Context, id, ownerID string) (*os.Fi
 	path := filepath.Join(s.resultRoot, key)
 	info, err := os.Lstat(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			_, _ = s.db.ExecContext(ctx, `UPDATE conv_jobs SET result_missing_at=COALESCE(result_missing_at,now()) WHERE id=$1 AND result_deleted_at IS NULL`, id)
+			return nil, Job{}, "", ErrFileMissing
+		}
 		return nil, Job{}, "", err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > MaxOutputBytes {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -116,6 +117,10 @@ func TestAbandonedCleanupPreservesJobsAndResumes(t *testing.T) {
 	if err != nil || report.Deleted != 1 || report.ReclaimedBytes != interrupted.Size {
 		t.Fatalf("restart recovery: %+v %v", report, err)
 	}
+	var tombstone bool
+	if err = db.QueryRowContext(ctx, `SELECT original_deleted_at IS NOT NULL FROM conv_uploads WHERE id=$1`, interrupted.ID).Scan(&tombstone); err != nil || !tombstone {
+		t.Fatalf("cleanup must preserve an explicit expired upload record: expired=%v err=%v", tombstone, err)
+	}
 	concurrent := makeUpload("concurrent.ppm")
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
@@ -133,5 +138,166 @@ func TestAbandonedCleanupPreservesJobsAndResumes(t *testing.T) {
 	var events int
 	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM conv_cleanup_events WHERE file_id=$1`, concurrent.ID).Scan(&events); err != nil || events != 1 {
 		t.Fatalf("cleanup event count=%d err=%v", events, err)
+	}
+}
+
+func TestSuccessfulRetentionExpiresFilesButPreservesJobHistory(t *testing.T) {
+	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set 101CONV_TEST_DATABASE_URL for PostgreSQL retention integration test")
+	}
+	ctx := context.Background()
+	adminDB, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminDB.Close()
+	schema := fmt.Sprintf("retention_%d", time.Now().UnixNano())
+	if _, err = adminDB.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer adminDB.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	address, _ := url.Parse(dsn)
+	q := address.Query()
+	q.Set("search_path", schema)
+	address.RawQuery = q.Encode()
+	db, err := sql.Open("pgx", address.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(6)
+	root := t.TempDir()
+	imports := filepath.Join(root, "imports")
+	if err = os.MkdirAll(imports, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(imports, "tool"), []byte("fixture"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := management.OpenWithPolicy(filepath.Join(root, "state"), []string{imports})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if _, err = manager.InstallEngine(ctx, engine.Definition{SchemaVersion: 1, ID: "retain-engine", Version: "1.0.0", Name: "retention engine", Platform: runtime.GOOS + "-" + runtime.GOARCH, Capabilities: []string{"convert"}, Executables: map[string]string{"tool": "tool"}}, imports); err != nil {
+		t.Fatal(err)
+	}
+	p := profile.Definition{SchemaVersion: 1, Type: profile.TypeConversion, ID: "retain-profile", Version: "1.0.0", Name: "Retention profile", Engines: []profile.EngineRequirement{{EngineID: "retain-engine", Versions: engine.VersionRange{Minimum: "1.0.0"}, Capabilities: []string{"convert"}}}, Rules: []profile.ConversionRule{{EngineID: "retain-engine", Executable: "tool", Sources: []string{"ppm"}, Targets: []string{"pgm"}, Arguments: []string{"{source}", "{target}"}}}}
+	if _, err = manager.InstallProfile(ctx, p, ""); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := NewService(db, manager, filepath.Join(root, "uploads"), filepath.Join(root, "results"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	u, err := svc.CreateUploadFor(ctx, "owner", 100, nil, "image.ppm", strings.NewReader("P3\n1 1\n255\n255 0 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedUpload, err := svc.CreateUploadFor(ctx, "owner", 100, nil, "failed.ppm", strings.NewReader("P3\n1 1\n255\n255 0 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedJob, _, err := svc.SubmitFor(ctx, SubmitRequest{UploadID: failedUpload.ID, ProfileID: p.ID, TargetFormat: "pgm", IdempotencyKey: "failed-retention-job"}, "owner", Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET state='failed',updated_at=now()-interval '2 days' WHERE id=$1`, failedJob.ID); err != nil {
+		t.Fatal(err)
+	}
+	job, _, err := svc.SubmitFor(ctx, SubmitRequest{UploadID: u.ID, ProfileID: p.ID, TargetFormat: "pgm", IdempotencyKey: "retention-job"}, "owner", Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := job.ID + "-1.bin"
+	result := []byte("verified result fixture")
+	if err = os.WriteFile(filepath.Join(svc.resultRoot, key), result, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET state='succeeded',result_key=$2,result_size=$3,updated_at=now()-interval '2 days' WHERE id=$1`, job.ID, key, len(result)); err != nil {
+		t.Fatal(err)
+	}
+	activeDownload, _, _, err := svc.OpenResult(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE conv_uploads SET created_at=now()-interval '2 days' WHERE id=$1`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	days := 1
+	policy := RetentionPolicy{Unsubmitted: RetentionRule{Mode: "keep"}, SubmittedOriginals: RetentionRule{Mode: "after_success"}, SuccessfulResults: RetentionRule{Mode: "after_days", Days: &days}, FailedOriginals: RetentionRule{Mode: "keep"}, CanceledOriginals: RetentionRule{Mode: "keep"}}
+	if err = svc.SetRetentionPolicy(ctx, policy); err != nil {
+		t.Fatal(err)
+	}
+	originalPreview, err := svc.PreviewCleanupCategory(ctx, "successful_originals", 0)
+	if err != nil || originalPreview.Candidates != 1 {
+		t.Fatalf("after-success preview=%+v err=%v", originalPreview, err)
+	}
+	resultPreview, err := svc.PreviewCleanupCategory(ctx, "successful_results", 1)
+	if err != nil || resultPreview.Candidates != 1 {
+		t.Fatalf("result preview=%+v err=%v", resultPreview, err)
+	}
+	report, err := svc.CleanupRetainedFiles(ctx, 100)
+	if err != nil || report.Deleted != 2 {
+		t.Fatalf("cleanup report=%+v err=%v", report, err)
+	}
+	streamed, err := io.ReadAll(activeDownload)
+	if closeErr := activeDownload.Close(); err != nil || closeErr != nil || string(streamed) != string(result) {
+		t.Fatalf("open download corrupted by cleanup: data=%q read=%v close=%v", streamed, err, closeErr)
+	}
+	got, err := svc.Get(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != Succeeded || got.OriginalState != "expired" || got.ResultState != "expired" {
+		t.Fatalf("job history/state not preserved: %+v", got)
+	}
+	if _, _, _, err = svc.OpenResult(ctx, job.ID); err != ErrFileExpired {
+		t.Fatalf("expired output must not be downloadable, got %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(svc.UploadRoot(), u.ID)); !os.IsNotExist(err) {
+		t.Fatalf("eligible original remains: %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(svc.UploadRoot(), failedUpload.ID)); err != nil {
+		t.Fatalf("failed job original was removed: %v", err)
+	}
+	if _, err = svc.StartStorageScan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	var inventory StorageScan
+	for time.Now().Before(deadline) {
+		inventory, err = svc.StorageScan(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inventory.Status == "complete" || inventory.Status == "interrupted" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if inventory.Status != "complete" {
+		t.Fatalf("filesystem scan status=%s error=%s", inventory.Status, inventory.Error)
+	}
+	originals := inventory.Categories["originals"]
+	if originals.Files != 1 || originals.MissingMetadata != 0 || originals.UnreferencedFiles != 0 {
+		t.Fatalf("original reconciliation mismatch: %+v", originals)
+	}
+	if originals.AgeBuckets["0-7 days"].Count != 1 {
+		t.Fatalf("filesystem modification-age bucket was not measured: %+v", originals.AgeBuckets)
+	}
+	if inventory.Categories["engines"].Files == 0 {
+		t.Fatal("installed engine files were not included in measured inventory")
+	}
+	overview, err := svc.StorageOverview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.DatabaseBytes <= 0 || overview.ReservedInputBytes != 0 {
+		t.Fatalf("database and reserved input measurements are inconsistent: %+v", overview)
 	}
 }

@@ -33,13 +33,16 @@ for _ in $(seq 1 40); do
 done
 "$ready" || { echo 'Isolated restore database did not become ready.' >&2; exit 1; }
 docker exec -i "$db_container" pg_restore -U postgres -d 101conv --no-owner --no-privileges < "$backup_dir/postgres.dump"
-docker exec "$db_container" psql -U postgres -d 101conv -At -c 'SELECT id FROM conv_uploads ORDER BY id' > "$check_dir/uploads.txt"
-docker exec "$db_container" psql -U postgres -d 101conv -At -c "SELECT result_key FROM conv_jobs WHERE result_key IS NOT NULL ORDER BY result_key" > "$check_dir/results.txt"
+docker exec "$db_container" psql -U postgres -d 101conv -At -c 'SELECT id FROM conv_uploads WHERE original_deleted_at IS NULL ORDER BY id' > "$check_dir/uploads.txt"
+docker exec "$db_container" psql -U postgres -d 101conv -At -c "SELECT result_key FROM conv_jobs WHERE result_key IS NOT NULL AND result_deleted_at IS NULL AND result_missing_at IS NULL ORDER BY result_key" > "$check_dir/results.txt"
 chmod 0644 "$check_dir/uploads.txt" "$check_dir/results.txt"
 docker run --rm --network none --cap-drop ALL --volume "$prefix-uploads:/uploads:ro" --volume "$prefix-results:/results:ro" --volume "$check_dir:/checks:ro" --entrypoint sh postgres:17-alpine -c '
   while IFS= read -r id; do [ -f "/uploads/$id" ] || { echo "Missing original for $id" >&2; exit 1; }; done < /checks/uploads.txt
   while IFS= read -r key; do [ -f "/results/$key" ] || { echo "Missing result for $key" >&2; exit 1; }; done < /checks/results.txt
 '
+# Check relational consistency that the file-reference test alone cannot see.
+bad_jobs="$(docker exec "$db_container" psql -U postgres -d 101conv -At -c "SELECT count(*) FROM conv_jobs j LEFT JOIN conv_uploads u ON u.id=j.upload_id WHERE u.id IS NULL")"
+[[ "$bad_jobs" == 0 ]] || { echo "Restore contains $bad_jobs jobs without upload metadata." >&2; exit 1; }
 users="$(docker exec "$db_container" psql -U postgres -d 101conv -At -c 'SELECT count(*) FROM conv_users')"
 jobs="$(docker exec "$db_container" psql -U postgres -d 101conv -At -c 'SELECT count(*) FROM conv_jobs')"
 profiles="$(docker run --rm --network none --volume "$prefix-go:/go:ro" --entrypoint sh postgres:17-alpine -c 'test -f /go/management.json && echo present || echo inspect' 2>/dev/null || true)"

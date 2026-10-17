@@ -49,30 +49,62 @@ paths:
   /api/v1/storage:
     get:
       summary: Get storage measurements, retention setting and cleanup history
-      description: File byte totals are PostgreSQL-recorded estimates; capacity is measured from Core mounts. Worker scratch usage is not measured.
+      description: Includes PostgreSQL database size, recorded upload/result totals, active input-size estimate, latest asynchronous read-only filesystem inventory with modified-age buckets and discrepancy samples, mount capacity, and retention. PostgreSQL filesystem free capacity and live Worker scratch usage are not exposed to Core.
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       responses:
         '200': { description: Storage overview and retention state }
+  /api/v1/storage/scan:
+    post:
+      summary: Start or resume an asynchronous read-only filesystem inventory
+      description: Scans configured uploads, results, and managed engines in bounded batches. It reports missing and unreferenced file counts and never deletes files.
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses:
+        '202': { description: Scan status and progress }
   /api/v1/storage/cleanup/preview:
     get:
-      summary: Preview unsubmitted upload cleanup before saving or applying
+      summary: Preview a retention category before saving or applying cleanup
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       parameters:
-        - { name: days, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 3650 } }
+        - { name: category, in: query, required: false, schema: { type: string, enum: [unsubmitted, submitted_originals, successful_originals, successful_results, failed_originals, canceled_originals], default: unsubmitted } }
+        - { name: days, in: query, required: true, schema: { type: integer, minimum: 0, maximum: 3650 } }
       responses:
         '200': { description: Estimated candidates and bytes plus short-lived preview token }
   /api/v1/storage/retention:
     put:
-      summary: Set manual or age-based cleanup of unsubmitted uploads
-      description: A non-null age requires a matching recent cleanup preview. Null means manual cleanup only. Submitted originals and results are never removed by this policy.
+      summary: Set independent file-retention policies
+      description: Supports unsubmitted uploads, submitted originals, successful results, failed originals, and canceled originals. Time-based and after-success deletion settings require a matching recent preview. Defaults are keep indefinitely.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                unsubmittedUploads: { $ref: '#/components/schemas/RetentionRule' }
+                submittedOriginals: { $ref: '#/components/schemas/RetentionRule' }
+                successfulResults: { $ref: '#/components/schemas/RetentionRule' }
+                failedOriginals: { $ref: '#/components/schemas/RetentionRule' }
+                canceledOriginals: { $ref: '#/components/schemas/RetentionRule' }
+                previewToken: { type: string }
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       responses:
         '200': { description: Saved policy }
         '409': { description: Preview is stale or missing }
   /api/v1/storage/cleanup:
     post:
-      summary: Delete up to 100 eligible unsubmitted uploads
-      description: Requires a fresh preview token. Durable claim flags make interrupted runs resumable.
+      summary: Delete up to 100 eligible files from a previewed category
+      description: Requires a fresh category preview token. Durable claim flags and tombstone markers support crash recovery.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, days, previewToken]
+              properties:
+                category: { type: string, enum: [unsubmitted, submitted_originals, successful_originals, successful_results, failed_originals, canceled_originals] }
+                days: { type: integer, minimum: 0, maximum: 3650 }
+                previewToken: { type: string }
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       responses:
         '200': { description: Actual deletion count and reclaimed bytes }
@@ -863,8 +895,16 @@ components:
         progress: { type: integer, minimum: 0, maximum: 100 }
         error: { type: string }
         outputSize: { type: integer }
+        originalState: { type: string, enum: [available, scheduled, expired, missing] }
+        resultState: { type: string, enum: [not_ready, available, scheduled, expired, missing] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    RetentionRule:
+      type: object
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [keep, manual, after_days, after_success] }
+        days: { type: integer, minimum: 1, maximum: 3650 }
     JobDetail:
       type: object
       required: [job, attempts]

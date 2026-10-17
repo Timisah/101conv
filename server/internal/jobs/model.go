@@ -22,20 +22,22 @@ type Upload struct {
 }
 
 type Job struct {
-	ID           string    `json:"id"`
-	ProfileID    string    `json:"profileId"`
-	ProfileVer   string    `json:"profileVersion"`
-	SourceFormat string    `json:"sourceFormat"`
-	TargetFormat string    `json:"targetFormat"`
-	Mode         string    `json:"mode"`
-	State        State     `json:"state"`
-	Progress     int       `json:"progress"`
-	Attempt      int       `json:"attempt"`
-	MaxAttempts  int       `json:"maxAttempts"`
-	Error        string    `json:"error,omitempty"`
-	OutputSize   int64     `json:"outputSize,omitempty"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID            string    `json:"id"`
+	ProfileID     string    `json:"profileId"`
+	ProfileVer    string    `json:"profileVersion"`
+	SourceFormat  string    `json:"sourceFormat"`
+	TargetFormat  string    `json:"targetFormat"`
+	Mode          string    `json:"mode"`
+	State         State     `json:"state"`
+	Progress      int       `json:"progress"`
+	Attempt       int       `json:"attempt"`
+	MaxAttempts   int       `json:"maxAttempts"`
+	Error         string    `json:"error,omitempty"`
+	OutputSize    int64     `json:"outputSize,omitempty"`
+	OriginalState string    `json:"originalState"`
+	ResultState   string    `json:"resultState"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 type Attempt struct {
