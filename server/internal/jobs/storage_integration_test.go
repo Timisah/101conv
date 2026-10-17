@@ -106,14 +106,14 @@ func TestAbandonedCleanupPreservesJobsAndResumes(t *testing.T) {
 		t.Fatalf("active original removed: %v", err)
 	}
 	interrupted := makeUpload("interrupted.ppm")
-	if _, err = db.ExecContext(ctx, `UPDATE conv_uploads SET cleanup_pending=true,cleanup_claim_until=now()-interval '1 minute' WHERE id=$1`, interrupted.ID); err != nil {
+	if _, err = db.ExecContext(ctx, `UPDATE conv_uploads SET cleanup_pending=true,cleanup_claim_until=now()-interval '1 minute',cleanup_observed_bytes=$2 WHERE id=$1`, interrupted.ID, interrupted.Size); err != nil {
 		t.Fatal(err)
 	}
 	if err = os.Remove(filepath.Join(svc.UploadRoot(), interrupted.ID)); err != nil {
 		t.Fatal(err)
 	}
 	report, err = svc.CleanupAbandoned(ctx, 0, 100)
-	if err != nil || report.Deleted != 1 {
+	if err != nil || report.Deleted != 1 || report.ReclaimedBytes != interrupted.Size {
 		t.Fatalf("restart recovery: %+v %v", report, err)
 	}
 	concurrent := makeUpload("concurrent.ppm")

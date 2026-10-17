@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS conv_profile_preferences (
 );
 ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS cleanup_pending BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS cleanup_claim_until TIMESTAMPTZ;
+ALTER TABLE conv_uploads ADD COLUMN IF NOT EXISTS cleanup_observed_bytes BIGINT;
 CREATE INDEX IF NOT EXISTS conv_uploads_abandoned_idx ON conv_uploads(created_at,id) WHERE NOT consumed;
 CREATE TABLE IF NOT EXISTS conv_storage_settings (
  id INTEGER PRIMARY KEY CHECK (id=1), abandoned_upload_days INTEGER CHECK (abandoned_upload_days BETWEEN 1 AND 3650)

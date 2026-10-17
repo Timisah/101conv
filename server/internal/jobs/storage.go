@@ -244,20 +244,23 @@ func (s *Service) CleanupAbandoned(ctx context.Context, days, limit int) (Cleanu
 	if err != nil {
 		return report, err
 	}
-	type candidate struct{ id, owner string }
+	type candidate struct {
+		id, owner string
+		observed  sql.NullInt64
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return report, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT u.id,u.owner_id FROM conv_uploads u WHERE NOT u.consumed AND ((NOT u.cleanup_pending AND $1::integer>0 AND u.created_at < now()-($1::integer * interval '1 day')) OR (u.cleanup_pending AND (u.cleanup_claim_until IS NULL OR u.cleanup_claim_until<now()))) AND NOT EXISTS(SELECT 1 FROM conv_jobs j WHERE j.upload_id=u.id) ORDER BY u.created_at,u.id LIMIT $2 FOR UPDATE OF u SKIP LOCKED`, days, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT u.id,u.owner_id,u.cleanup_observed_bytes FROM conv_uploads u WHERE NOT u.consumed AND ((NOT u.cleanup_pending AND $1::integer>0 AND u.created_at < now()-($1::integer * interval '1 day')) OR (u.cleanup_pending AND (u.cleanup_claim_until IS NULL OR u.cleanup_claim_until<now()))) AND NOT EXISTS(SELECT 1 FROM conv_jobs j WHERE j.upload_id=u.id) ORDER BY u.created_at,u.id LIMIT $2 FOR UPDATE OF u SKIP LOCKED`, days, limit)
 	if err != nil {
 		return report, err
 	}
 	selected := []candidate{}
 	for rows.Next() {
 		var c candidate
-		if err = rows.Scan(&c.id, &c.owner); err != nil {
+		if err = rows.Scan(&c.id, &c.owner, &c.observed); err != nil {
 			rows.Close()
 			return report, err
 		}
@@ -286,11 +289,20 @@ func (s *Service) CleanupAbandoned(ctx context.Context, days, limit int) (Cleanu
 			return report, statErr
 		}
 		var reclaimed int64
+		if c.observed.Valid {
+			reclaimed = c.observed.Int64
+		}
 		if statErr == nil {
 			if !info.Mode().IsRegular() {
 				return report, fmt.Errorf("cleanup candidate is not a regular file")
 			}
 			reclaimed = info.Size()
+			// Persist the observed size before unlinking. If Core stops between
+			// unlink and the final audit transaction, recovery can account for
+			// the bytes that this cleanup removed.
+			if _, err = s.db.ExecContext(ctx, `UPDATE conv_uploads SET cleanup_observed_bytes=$2 WHERE id=$1 AND cleanup_pending`, c.id, reclaimed); err != nil {
+				return report, err
+			}
 			if err = os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return report, err
 			}
