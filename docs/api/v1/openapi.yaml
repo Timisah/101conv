@@ -956,6 +956,180 @@ paths:
         '401': { description: Administrator bearer token required }
         '404': { description: Job or result not found }
         '409': { description: Job has not succeeded }
+  /api/v1/drives:
+    get:
+      summary: List registered mounted locations and health
+      security: [{ adminSession: [] }]
+      responses:
+        '200':
+          description: Drive registrations, access, capacity and automation references
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  drives: { type: array, items: { $ref: '#/components/schemas/MountedDrive' } }
+    post:
+      summary: Register an existing container-mounted directory
+      description: Paths must be within AUTOMATION_MOUNT_ROOTS. This endpoint cannot create host mounts or access Docker.
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, path, access]
+              properties:
+                name: { type: string, maxLength: 100 }
+                path: { type: string, format: path }
+                access: { type: string, enum: [read, read_write] }
+      responses:
+        '201': { description: Drive registered }
+        '422': { description: Path is unavailable, unsafe, or outside configured mount roots }
+  /api/v1/drives/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    put:
+      summary: Update a drive label, path, access or enabled state
+      security: [{ adminSession: [] }]
+      responses:
+        '200': { description: Updated drive }
+        '422': { description: Invalid path or access mode }
+    delete:
+      summary: Remove an unused drive registration
+      security: [{ adminSession: [] }]
+      responses:
+        '204': { description: Registration removed }
+        '409': { description: A current automation revision references this drive }
+  /api/v1/drives/test:
+    post:
+      summary: Test container path access
+      description: Optional write test creates and removes a temporary probe file under the approved mount root.
+      security: [{ adminSession: [] }]
+      responses:
+        '200': { description: Access check passed }
+        '422': { description: Path is not accessible or writable }
+  /api/v1/automation-blocks:
+    get:
+      summary: List the versioned built-in declarative blocks
+      security: [{ adminSession: [] }]
+      responses:
+        '200': { description: Block IDs, versions, configuration descriptions and permissions }
+  /api/v1/blueprints:
+    get:
+      summary: List built-in automation blueprints
+      security: [{ adminSession: [] }]
+      responses:
+        '200': { description: Automatic Folder Conversion and Automatic Compression }
+  /api/v1/blueprints/{id}/install:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, enum: [automatic-folder-conversion, automatic-compression] } }
+    post:
+      summary: Install an editable automation from a built-in blueprint
+      description: Creates a new independent revision; it never overwrites an existing automation.
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BlueprintInstall' }
+      responses:
+        '201':
+          description: Automation created from the specified blueprint version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  automation: { $ref: '#/components/schemas/Automation' }
+                  blueprintId: { type: string }
+                  blueprintVersion: { type: string }
+        '422': { description: Missing drive or compatible installed profile }
+  /api/v1/automations:
+    get:
+      summary: List automations owned by the caller
+      security: [{ adminSession: [] }]
+      responses:
+        '200': { description: Current revision, enabled state and diagnostics }
+    post:
+      summary: Create a declarative automation
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AutomationWrite' }
+      responses:
+        '201': { description: Automation and initial revision created }
+  /api/v1/automations/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    get:
+      summary: Read an automation's current revision
+      security: [{ adminSession: [] }]
+      responses:
+        '200': { description: Automation definition and revision number }
+        '404': { description: Not found or not owned by caller }
+    put:
+      summary: Save a new immutable automation revision
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AutomationWrite' }
+      responses:
+        '200': { description: New revision activated for future executions }
+        '422': { description: Invalid or incompatible definition }
+    delete:
+      summary: Delete an automation with no active execution
+      security: [{ adminSession: [] }]
+      responses:
+        '204': { description: Automation and its history deleted }
+        '409': { description: An execution is active }
+  /api/v1/automations/{id}/enabled:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    patch:
+      summary: Enable or pause an automation
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200': { description: New enabled state }
+        '422': { description: A drive or profile dependency is unavailable }
+  /api/v1/automations/{id}/dry-run:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      summary: Preview matching top-level files without submitting jobs
+      security: [{ adminSession: [] }]
+      responses:
+        '200': { description: Bounded file match preview }
+  /api/v1/automations/{id}/run:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      summary: Run one bounded folder scan now
+      security: [{ adminSession: [] }]
+      responses:
+        '202': { description: Scan accepted; resulting jobs use the existing durable job service }
+  /api/v1/automations/{id}/history:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    get:
+      summary: List bounded execution history
+      security: [{ adminSession: [] }]
+      responses:
+        '200': { description: File decisions, job states, outputs and sanitized errors }
 components:
   securitySchemes:
     engineAdmin:
@@ -978,6 +1152,132 @@ components:
       required: true
       schema: { type: string, format: uuid }
   schemas:
+    MountedDrive:
+      type: object
+      required: [id, name, path, access, enabled, accessible, writable, automationCount]
+      properties:
+        id: { type: string, description: Stable registration identifier }
+        name: { type: string }
+        path: { type: string, description: Container path beneath AUTOMATION_MOUNT_ROOTS }
+        access: { type: string, enum: [read, read_write] }
+        enabled: { type: boolean }
+        accessible: { type: boolean }
+        writable: { type: boolean }
+        freeBytes: { type: integer, minimum: 0 }
+        healthError: { type: string }
+        automationCount: { type: integer, minimum: 0 }
+    AutomationWrite:
+      type: object
+      required: [name, definition]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        definition: { $ref: '#/components/schemas/AutomationDefinition' }
+    BlueprintInstall:
+      type: object
+      required: [name, inputDriveId, outputDriveId, profileId, targetFormat]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        inputDriveId: { type: string }
+        outputDriveId: { type: string }
+        profileId: { type: string }
+        profileVersion: { type: string }
+        targetFormat: { type: string, pattern: '^[a-z0-9]{1,12}$' }
+        condition: { $ref: '#/components/schemas/AutomationCondition' }
+        extensions: { type: array, items: { type: string } }
+        nameGlob: { type: string }
+        minBytes: { type: integer, minimum: 0 }
+        maxBytes: { type: integer, minimum: 0 }
+        processExistingOnNextScan: { type: boolean, default: false }
+        outputBehavior: { type: string, enum: [create, skip_existing, unique], default: unique }
+        intervalSeconds: { type: integer, minimum: 30, maximum: 86400, default: 60 }
+        stabilitySeconds: { type: integer, minimum: 5, maximum: 3600, default: 30 }
+        maxConcurrent: { type: integer, minimum: 1, maximum: 8, default: 1 }
+    AutomationDefinition:
+      type: object
+      required: [trigger, filter, action]
+      properties:
+        trigger:
+          type: object
+          required: [type, inputDriveId, stabilitySeconds]
+          properties:
+            type: { type: string, enum: [folder.scan, manual] }
+            inputDriveId: { type: string }
+            intervalSeconds: { type: integer, minimum: 30, maximum: 86400 }
+            stabilitySeconds: { type: integer, minimum: 5, maximum: 3600 }
+            maxConcurrent: { type: integer, minimum: 1, maximum: 8, default: 1 }
+            processExistingOnNextScan: { type: boolean, default: false }
+        filter:
+          type: object
+          properties:
+            extensions: { type: array, items: { type: string } }
+            nameGlob: { type: string }
+            minBytes: { type: integer, minimum: 0 }
+            maxBytes: { type: integer, minimum: 0 }
+        condition: { $ref: '#/components/schemas/AutomationCondition' }
+        action:
+          type: object
+          required: [mode, profileId, targetFormat, outputDriveId, outputBehavior]
+          properties:
+            mode: { type: string, enum: [convert, compress] }
+            profileId: { type: string }
+            profileVersion: { type: string, description: Exact profile version captured by this revision }
+            targetFormat: { type: string }
+            outputDriveId: { type: string }
+            outputBehavior: { type: string, enum: [create, skip_existing, unique] }
+    AutomationCondition:
+      type: object
+      description: Declarative condition tree; arbitrary executable expressions are not supported.
+      properties:
+        operator: { type: string, enum: [and, or, not, extension, name_glob, min_size, max_size] }
+        value: { type: string }
+        bytes: { type: integer, minimum: 0 }
+        children: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/AutomationCondition' } }
+    Automation:
+      type: object
+      required: [id, ownerId, name, enabled, status, revision, definition, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        ownerId: { type: string }
+        name: { type: string }
+        enabled: { type: boolean }
+        status: { type: string, enum: [ready, running, paused, blocked] }
+        diagnostic: { type: string }
+        revision: { type: integer, minimum: 1 }
+        definition: { $ref: '#/components/schemas/AutomationDefinition' }
+        lastExecution: { type: string, format: date-time }
+        lastScan: { type: string, format: date-time }
+    BlockDefinition:
+      type: object
+      required: [id, version, kind, name, description, configSchema, requiredPermission]
+      properties:
+        id: { type: string }
+        version: { type: string }
+        kind: { type: string, enum: [trigger, condition, action] }
+        name: { type: string }
+        description: { type: string }
+        configSchema: { type: object, additionalProperties: true }
+        requiredPermission: { type: string }
+    ExtensionManifest:
+      type: object
+      description: Declarative compatibility metadata only; C.1 does not load or execute extension packages.
+      required: [id, name, publisher, version, extensionApiRange]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        publisher: { type: string }
+        version: { type: string }
+        extensionApiRange:
+          type: object
+          properties:
+            minimum: { type: string }
+            maximumExclusive: { type: string }
+        externalApplication: { type: string }
+        externalVersion: { type: string }
+        permissions: { type: array, items: { type: string } }
+        capabilities: { type: array, items: { type: string } }
+        dependencies: { type: object, additionalProperties: { type: string } }
+        integrity: { type: string }
+        configurationSchema: { type: integer, minimum: 1 }
     QuotaSettings:
       type: object
       required: [maxFileBytes, monthlyJobs, monthlyBytes]

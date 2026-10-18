@@ -39,9 +39,13 @@ const (
 	PermissionGroupsManage       = "groups.manage"
 	PermissionRolesManage        = "roles.manage"
 	PermissionAPIKeysManage      = "api_keys.manage"
+	PermissionDrivesManage       = "drives.manage"
+	PermissionAutomationsManage  = "automations.manage"
+	PermissionAutomationsExecute = "automations.execute"
+	PermissionAutomationsRead    = "automations.read"
 )
 
-var PermissionNames = []string{PermissionConversion, PermissionCompression, PermissionJobsRead, PermissionJobsCancel, PermissionConvertersManage, PermissionRepositoriesManage, PermissionUsersManage, PermissionGroupsManage, PermissionRolesManage, PermissionAPIKeysManage}
+var PermissionNames = []string{PermissionConversion, PermissionCompression, PermissionJobsRead, PermissionJobsCancel, PermissionConvertersManage, PermissionRepositoriesManage, PermissionUsersManage, PermissionGroupsManage, PermissionRolesManage, PermissionAPIKeysManage, PermissionDrivesManage, PermissionAutomationsManage, PermissionAutomationsExecute, PermissionAutomationsRead}
 
 type QuotaLimit struct {
 	Mode  string `json:"mode"`

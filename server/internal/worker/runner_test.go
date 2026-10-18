@@ -22,7 +22,7 @@ func TestProcessRunnerRunsRealPPMConverter(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(engineDir, "ppm-pgm")
-	build := exec.Command("go", "build", "-o", binary, "../../testdata/ppm-pgm")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "../../testdata/ppm-pgm")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build real converter: %v\n%s", err, output)
 	}

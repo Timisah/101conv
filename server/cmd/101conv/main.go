@@ -17,6 +17,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/timisah/101conv/server/internal/auth"
+	"github.com/timisah/101conv/server/internal/automation"
 	"github.com/timisah/101conv/server/internal/catalog"
 	"github.com/timisah/101conv/server/internal/httpapi"
 	"github.com/timisah/101conv/server/internal/jobs"
@@ -76,6 +77,7 @@ func main() {
 	var db *sql.DB
 	var jobService *jobs.Service
 	var accountService *auth.Service
+	var automationService *automation.Service
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
 		db, err = openDatabase(dsn)
 		if err != nil {
@@ -103,11 +105,27 @@ func main() {
 			_ = managementService.Close()
 			log.Fatalf("initialize account service: %v", err)
 		}
+		var mountRoots []string
+		for _, root := range filepath.SplitList(os.Getenv("AUTOMATION_MOUNT_ROOTS")) {
+			if strings.TrimSpace(root) != "" {
+				mountRoots = append(mountRoots, strings.TrimSpace(root))
+			}
+		}
+		automationService, err = automation.NewService(db, mountRoots, jobService, managementService, accountService)
+		if err == nil {
+			err = automationService.Migrate(context.Background())
+		}
+		if err != nil {
+			_ = db.Close()
+			_ = repositoryService.Close()
+			_ = managementService.Close()
+			log.Fatalf("initialize automation service: %v", err)
+		}
 	}
 
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           httpapi.NewWithAccounts(version, catalogService, managementService, repositoryService, jobService, accountService, os.Getenv("ENGINE_ADMIN_TOKEN")),
+		Handler:           httpapi.NewWithAutomation(version, catalogService, managementService, repositoryService, jobService, accountService, automationService, os.Getenv("ENGINE_ADMIN_TOKEN")),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -123,6 +141,9 @@ func main() {
 				return jobs.GuestRetentionPolicy{UploadHours: settings.UploadExpirationHours, ResultHours: settings.ResultExpirationHours, FailedHours: settings.FailedExpirationHours, MetadataHours: settings.MetadataExpirationHours}, nil
 			})
 			go runGuestSessionCleanup(ctx, accountService)
+		}
+		if automationService != nil {
+			go automationService.Run(ctx)
 		}
 	}
 	serveErr := make(chan error, 1)

@@ -797,6 +797,9 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		}
 		return Job{}, false, err
 	}
+	if req.ProfileVersion != "" && profileDef.Version != req.ProfileVersion {
+		return Job{}, false, fmt.Errorf("%w: selected profile version %s is no longer installed (available version is %s)", ErrUnsupported, req.ProfileVersion, profileDef.Version)
+	}
 	if !profileDef.SupportsMode(mode) {
 		return Job{}, false, fmt.Errorf("%w: %s profile %q cannot be used for %s jobs", ErrUnsupported, profileDef.Type, profileDef.ID, mode)
 	}

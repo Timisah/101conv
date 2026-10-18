@@ -54,6 +54,7 @@ type Attempt struct {
 type SubmitRequest struct {
 	UploadID       string            `json:"uploadId"`
 	ProfileID      string            `json:"profileId"`
+	ProfileVersion string            `json:"profileVersion,omitempty"`
 	TargetFormat   string            `json:"targetFormat"`
 	Mode           string            `json:"mode,omitempty"`
 	Options        map[string]string `json:"options,omitempty"`

@@ -37,6 +37,7 @@ services:
       DATA_PATH: /var/lib/101conv
       UPLOADS_PATH: /var/lib/101conv/uploads
       RESULTS_PATH: /var/lib/101conv/results
+      AUTOMATION_MOUNT_ROOTS: /mounts
       DATABASE_URL: "host=postgres port=5432 user=${POSTGRES_USER:-101conv} password=${POSTGRES_PASSWORD:?Set a strong POSTGRES_PASSWORD in Portainer} dbname=${POSTGRES_DB:-101conv} sslmode=disable"
       ENGINE_ADMIN_TOKEN: ${ENGINE_ADMIN_TOKEN:?Set a strong ENGINE_ADMIN_TOKEN in Portainer}
     volumes:
@@ -47,6 +48,11 @@ services:
           create_host_path: false
       - uploads:/var/lib/101conv/uploads
       - results:/var/lib/101conv/results
+      - type: bind
+        source: ${AUTOMATION_HOST_PATH:-${DATA_PATH:?Set DATA_PATH to the parent of the persistent Go data directory}/automation-mounts}
+        target: /mounts
+        bind:
+          create_host_path: true
     networks:
       - default
       - core-db

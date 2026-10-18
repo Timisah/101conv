@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/timisah/101conv/server/internal/auth"
+	"github.com/timisah/101conv/server/internal/automation"
 	"github.com/timisah/101conv/server/internal/catalog"
 	"github.com/timisah/101conv/server/internal/jobs"
 	"github.com/timisah/101conv/server/internal/management"
@@ -22,6 +23,7 @@ type API struct {
 	repositories *repositorymanager.Manager
 	jobs         *jobs.Service
 	accounts     *auth.Service
+	automations  *automation.Service
 	sessions     *sessionStore
 	loginGuard   *loginGuard
 }
@@ -43,7 +45,11 @@ func NewWithJobServices(version string, catalogService *catalog.Service, managem
 }
 
 func NewWithAccounts(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, accountService *auth.Service, adminToken string) http.Handler {
-	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, accounts: accountService, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
+	return NewWithAutomation(version, catalogService, managementService, repositoryService, jobService, accountService, nil, adminToken)
+}
+
+func NewWithAutomation(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, accountService *auth.Service, automationService *automation.Service, adminToken string) http.Handler {
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, accounts: accountService, automations: automationService, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
 	if managementService != nil {
 		a.sessions.setTTL(time.Duration(managementService.SessionTimeout()) * time.Minute)
 	}
@@ -60,6 +66,23 @@ func NewWithAccounts(version string, catalogService *catalog.Service, management
 	mux.HandleFunc("GET /api/v1/storage/cleanup/preview", a.previewStorageCleanup)
 	mux.HandleFunc("PUT /api/v1/storage/retention", a.updateStorageRetention)
 	mux.HandleFunc("POST /api/v1/storage/cleanup", a.applyStorageCleanup)
+	mux.HandleFunc("GET /api/v1/drives", a.listDrives)
+	mux.HandleFunc("POST /api/v1/drives", a.createDrive)
+	mux.HandleFunc("PUT /api/v1/drives/{id}", a.updateDrive)
+	mux.HandleFunc("DELETE /api/v1/drives/{id}", a.deleteDrive)
+	mux.HandleFunc("POST /api/v1/drives/test", a.testDrive)
+	mux.HandleFunc("GET /api/v1/automation-blocks", a.listAutomationBlocks)
+	mux.HandleFunc("GET /api/v1/blueprints", a.listBlueprints)
+	mux.HandleFunc("POST /api/v1/blueprints/{id}/install", a.installBlueprint)
+	mux.HandleFunc("GET /api/v1/automations", a.listAutomations)
+	mux.HandleFunc("POST /api/v1/automations", a.createAutomation)
+	mux.HandleFunc("GET /api/v1/automations/{id}", a.getAutomation)
+	mux.HandleFunc("PUT /api/v1/automations/{id}", a.updateAutomation)
+	mux.HandleFunc("DELETE /api/v1/automations/{id}", a.deleteAutomation)
+	mux.HandleFunc("PATCH /api/v1/automations/{id}/enabled", a.setAutomationEnabled)
+	mux.HandleFunc("POST /api/v1/automations/{id}/dry-run", a.dryRunAutomation)
+	mux.HandleFunc("POST /api/v1/automations/{id}/run", a.runAutomation)
+	mux.HandleFunc("GET /api/v1/automations/{id}/history", a.automationHistory)
 	mux.HandleFunc("GET /api/v1/auth/session", a.getSession)
 	mux.HandleFunc("POST /api/v1/auth/session", a.createSession)
 	mux.HandleFunc("DELETE /api/v1/auth/session", a.deleteSession)
@@ -153,6 +176,21 @@ func (a *API) authorized(w http.ResponseWriter, r *http.Request) bool {
 		permission = auth.PermissionRolesManage
 	case strings.HasPrefix(r.URL.Path, "/api/v1/settings"):
 		permission = auth.PermissionUsersManage
+	case strings.HasPrefix(r.URL.Path, "/api/v1/drives"):
+		permission = auth.PermissionDrivesManage
+	case strings.HasPrefix(r.URL.Path, "/api/v1/automations"):
+		permission = auth.PermissionAutomationsManage
+		if r.Method == http.MethodGet && !strings.HasSuffix(r.URL.Path, "/history") || strings.HasSuffix(r.URL.Path, "/history") {
+			permission = auth.PermissionAutomationsRead
+		}
+		if strings.HasSuffix(r.URL.Path, "/run") || strings.HasSuffix(r.URL.Path, "/dry-run") {
+			permission = auth.PermissionAutomationsExecute
+		}
+	case strings.HasPrefix(r.URL.Path, "/api/v1/automation-blocks") || strings.HasPrefix(r.URL.Path, "/api/v1/blueprints"):
+		permission = auth.PermissionAutomationsRead
+		if strings.HasSuffix(r.URL.Path, "/install") {
+			permission = auth.PermissionAutomationsManage
+		}
 	}
 	return a.requirePermission(w, r, permission)
 }

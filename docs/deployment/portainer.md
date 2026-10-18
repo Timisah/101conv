@@ -22,6 +22,7 @@ Portainer variables:
 | `APP_VERSION` | No | Application/catalog compatibility version; default `0.1.0`. |
 | `WORKER_CONCURRENCY` | No | Concurrent conversion processes per Worker container; default `1`, maximum `8`. Keep low on small hosts. Operations shows the configured slots and current active jobs. |
 | `WORKER_BATCH_CONCURRENCY` | No | Maximum simultaneous running jobs from one batch across the shared queue; default `2`, maximum `20`. The worker process concurrency is still the global limit. |
+| `AUTOMATION_HOST_PATH` | No | Host directory mounted into Core at `/mounts`; default `${DATA_PATH}/automation-mounts`. Use an existing Docker-visible directory containing folders administrators intend to register. |
 
 For a new installation, create the directory first, for example:
 
@@ -33,6 +34,17 @@ sudo chown -R 65532:65532 /mnt/storage/apps/101conv/data/go-data
 Run these commands on the Docker host, using your actual path. If the bind is an NFS mount with root squashing, set ownership on the NFS server instead. The browser can test whether its mounted directory is writable, but it cannot change host mounts or permissions.
 
 Set `DATA_PATH=/mnt/storage/apps/101conv/data` in Portainer. For an existing install, use its real data path and preserve all existing directories and named volumes. Never point `GO_DATA_PATH` at a directory containing unrelated application data.
+
+## Mounted folders
+
+The Compose stack binds `AUTOMATION_HOST_PATH` (or `${DATA_PATH}/automation-mounts`) to `/mounts` in **Core only**. It does not add the host folder to the Worker, expose Docker, or allow the web browser to create host mounts. Before registering folders, create the host directories and grant the Core container UID/GID `65532:65532` read access; grant write access only where output destinations are required. Example on Ubuntu:
+
+```sh
+sudo mkdir -p /mnt/truenas/media/incoming /mnt/truenas/media/converted
+sudo chown -R 65532:65532 /mnt/truenas/media
+```
+
+Set `AUTOMATION_HOST_PATH=/mnt/truenas/media` in the Portainer Environment variables table, then redeploy. If using an NFS mount, configure its server-side UID/GID or ACLs instead of relying on client-side `chown`. In **Admin → Mounted drives**, register `/mounts/incoming` as read-only and `/mounts/converted` as read/write. The access setting controls 101conv's workflow behavior; the Docker mount must also permit the corresponding operation. Use a distinct host directory dedicated to 101conv rather than exposing `/`, `/mnt`, or another broad filesystem root.
 
 After redeployment, visit `http://<docker-host>:5656/` (or the configured `PORT`). The Compose build disables cached layers for application and web images so the built files correspond to the selected Git commit. Portainer must build Compose services from the Git repository; a running stack does not update until Portainer pulls and redeploys a commit.
 
