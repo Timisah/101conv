@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.27.2-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    if [ -f /run/secrets/proxy_ca ]; then \
+      cat /etc/ssl/certs/ca-certificates.crt /run/secrets/proxy_ca >/tmp/101conv-ca.pem; \
+      export SSL_CERT_FILE=/tmp/101conv-ca.pem; \
+    fi && go mod download
+COPY . .
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    if [ -f /run/secrets/proxy_ca ]; then \
+      cat /etc/ssl/certs/ca-certificates.crt /run/secrets/proxy_ca >/tmp/101conv-ca.pem; \
+      export SSL_CERT_FILE=/tmp/101conv-ca.pem; \
+    fi && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/101conv ./cmd/101conv && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/ppm-pgm ./testdata/ppm-pgm && \
+    mkdir -p /out/data/imports /out/data/engines && \
+    cp /out/ppm-pgm /out/data/imports/ppm-pgm && \
+    chmod 0775 /out/data/imports /out/data/engines
+
+FROM scratch
+COPY --from=build /out/101conv /101conv
+COPY --from=build --chown=65532:65532 /out/data /var/lib/101conv
+WORKDIR /var/lib/101conv
+USER 65532:65532
+ENTRYPOINT ["/101conv"]

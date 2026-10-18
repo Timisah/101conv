@@ -1,3 +1,8 @@
 FROM node:24-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends chromium ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+COPY package.json package-lock.json ./
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca npm ci --ignore-scripts --strict-ssl=true
+COPY smoke.cjs cleanup-smoke.cjs ./
+RUN mkdir -p /smoke-output

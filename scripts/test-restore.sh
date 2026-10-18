@@ -16,6 +16,7 @@ project="101conv-restore-test-$suffix"
 volume_prefix="$project"
 check_dir="$(mktemp -d)"
 chmod 0755 "$check_dir"
+if [[ -n "${RESTORE_ARTIFACT_DIR:-}" ]]; then mkdir -p "$RESTORE_ARTIFACT_DIR/checks"; fi
 compose_file="$check_dir/compose.yaml"
 restore_password="$(openssl rand -hex 24)"
 restore_admin_token="restore-test-$(openssl rand -hex 24)"
@@ -24,6 +25,19 @@ export RESTORE_GO_VOLUME="$volume_prefix-go" RESTORE_UPLOADS_VOLUME="$volume_pre
 export RESTORE_PASSWORD="$restore_password" RESTORE_ADMIN_TOKEN="$restore_admin_token" RESTORE_IMAGE="$SMOKE_IMAGE"
 cleanup() {
   status=$?
+  if [[ "$status" -ne 0 && -n "${RESTORE_ARTIFACT_DIR:-}" ]]; then
+    docker compose -p "$project" -f "$compose_file" logs --no-color --tail 200 > "$RESTORE_ARTIFACT_DIR/restore-compose.log" 2>&1 || true
+    RESTORE_REDACT_TOKEN="$RESTORE_ADMIN_TOKEN" RESTORE_REDACT_PASSWORD="$RESTORE_PASSWORD" python3 - "$RESTORE_ARTIFACT_DIR/restore-compose.log" <<'PY'
+import os,sys
+from pathlib import Path
+p=Path(sys.argv[1]); text=p.read_text(errors='replace')
+for value in (os.environ.get('RESTORE_REDACT_TOKEN',''),os.environ.get('RESTORE_REDACT_PASSWORD','')):
+    if value: text=text.replace(value,'[REDACTED]')
+p.write_text(text)
+PY
+    cp -a "$check_dir/." "$RESTORE_ARTIFACT_DIR/checks/" 2>/dev/null || true
+    printf 'exit_status=%s\ncompose_project=%s\n' "$status" "$project" > "$RESTORE_ARTIFACT_DIR/run.txt"
+  fi
   docker compose -p "$project" -f "$compose_file" down --remove-orphans >/dev/null 2>&1 || true
   for volume in "${created_volumes[@]}"; do
     docker volume rm "$volume" >/dev/null 2>&1 || true
@@ -199,6 +213,10 @@ if "${compose[@]}" ps --services --filter status=running | grep -q '^web$'; then
   echo 'Restore test unexpectedly started the public web service.' >&2
   exit 1
 fi
+for service in postgres core worker; do
+  container_id="$("${compose[@]}" ps -q "$service")"
+  docker inspect "$container_id" --format '{{json .HostConfig.PortBindings}}' | python3 -c 'import json,sys; ports=json.load(sys.stdin); assert not ports or all(not bindings for bindings in ports.values()), ports'
+done
 # Probe the restored application from its private network. The optional fixture
 # conversion is separate from generic restore consistency checks.
 docker run --rm --network "$project"_private -e RESTORE_ADMIN_TOKEN -e RESTORE_ORIGINAL_PROJECT="$original_project" -e RESTORE_CONVERSION_SMOKE="$conversion_smoke" -e RESTORE_EXPIRED_UPLOADS="$expired_uploads" -e RESTORE_EXPIRED_RESULTS="$expired_results" "$BROWSER_IMAGE" node - <<'NODE'
@@ -221,6 +239,10 @@ async function get(path) {
   assert.ok(jobs.jobs.every(job => job.id && job.profileId && job.profileVersion), 'restored history retains its profile/version references');
   let convertedJobID='';
   if (process.env.RESTORE_CONVERSION_SMOKE === '1') {
+  const expired = jobs.jobs.find(job => job.resultState === 'expired');
+  assert.ok(expired, 'restored job history retains an expired-result tombstone');
+  const expiredResult = await fetch(base + '/api/v1/jobs/' + expired.id + '/result', { headers });
+  assert.equal(expiredResult.status, 410, 'expired result remains unavailable after restore');
   const profile = profiles.profiles.find(entry => entry.definition?.id === 'ppm-pgm-grayscale');
   assert.ok(profile, 'restored fixture conversion profile is available');
   assert.ok(engines.engines.some(entry => entry.installation?.engineId === 'ppm-pgm'), 'restored fixture engine is installed');

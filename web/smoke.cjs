@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', args: ['--no-sandbox','--disable-dev-shm-usage'] });
   const errors = [];
+  let activePage = null;
   const base = process.env.SMOKE_BASE;
   async function admin(path, method, body) { const response = await fetch(base+'/api/v1'+path,{method,headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN,'Content-Type':'application/json'},body:JSON.stringify(body)}); if(!response.ok)throw new Error('Fixture setup failed: '+response.status+' '+await response.text()); return response; }
   await admin('/engines/install','POST',{definition:{schemaVersion:1,id:'ppm-pgm',version:'1.0.0',name:'PPM to PGM test converter',platform:'linux-amd64',capabilities:['image.ppm.decode','image.pgm.encode'],executables:{'ppm-pgm':'ppm-pgm'}},sourceDirectory:'/var/lib/101conv/imports'});
@@ -24,6 +25,7 @@ const assert = require('node:assert/strict');
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
     const page = await context.newPage();
+    activePage = page;
     page.on('pageerror', error => errors.push(error.message));
     const apiResponses=[];page.on('response',async response=>{if(/\/api\/v1\/(jobs|uploads|batches)/.test(response.url()))apiResponses.push({url:response.url(),status:response.status(),body:(await response.text().catch(()=>'' )).slice(0,400)});});
     await page.goto(base, { waitUntil: 'networkidle' });
@@ -96,6 +98,8 @@ const assert = require('node:assert/strict');
     await page.getByRole('link', { name: 'Jobs & history' }).click();
     const conversionBatch=page.locator('.batch-history-card').filter({hasText:'Conversion batch'}).first();
     await conversionBatch.waitFor({timeout:15000});
+    const conversionBatchID=(await conversionBatch.locator('summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(conversionBatchID,'20-file batch id is displayed');
+    if(process.env.SMOKE_OUTPUT_DIR)await fs.writeFile(process.env.SMOKE_OUTPUT_DIR+'/batch-id',conversionBatchID);
     await page.waitForFunction(()=>[...document.querySelectorAll('.batch-history-card')].some(card=>card.innerText.includes('20 done')),null,{timeout:60000});
     await conversionBatch.locator('summary').click();
     const [batchDownload]=await Promise.all([page.waitForEvent('download'),conversionBatch.getByRole('button',{name:'Download successful files (.zip)'}).click()]);
@@ -171,6 +175,56 @@ const assert = require('node:assert/strict');
     const safeZip=Buffer.from(await safeZipResponse.arrayBuffer()).toString('latin1');
     assert.match(safeZip,/item-001-[0-9a-f-]{36}\.pgm/,'ZIP uses a generated safe item name');
     assert.equal(safeZip.includes('../escape'),false,'ZIP does not contain a client-controlled path');
+
+    // Exercise the actual worker pool, per-batch cap, and owner rotation using
+    // real Core/Worker processes and the same converter used by the UI tests.
+    const userCreate=await admin('/users','POST',{username:'smokeuser',password:'smoke-user-password-123',roleId:'converter',permissionOverrides:{},quotas:{maxFileBytes:{mode:'unlimited'},monthlyJobs:{mode:'unlimited'},monthlyBytes:{mode:'unlimited'}}});
+    const smokeUser=(await userCreate.json()).user;assert.ok(smokeUser.id,'test account created through the admin API');
+    async function uploadFor(token,name){const form=new FormData();form.append('file',new Blob([ppm]),name);const response=await fetch(base+'/api/v1/uploads',{method:'POST',headers:{Authorization:'Bearer '+token},body:form});assert.equal(response.status,201,'concurrency fixture upload is accepted');return (await response.json()).id;}
+    const adminSlowUploads=await Promise.all(Array.from({length:4},(_,i)=>uploadFor(process.env.ENGINE_ADMIN_TOKEN,`admin-slow-${i+1}.ppm`)));
+    const adminSlowResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'admin-fairness-batch-0001',items:adminSlowUploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))});
+    assert.equal(adminSlowResponse.status,201,'admin submits a four-file slow batch');
+    const adminSlowBatch=(await adminSlowResponse.json()).batch;
+    const userContext=await browser.newContext({viewport:{width:1280,height:900}});const userPage=await userContext.newPage();
+    userPage.on('pageerror',error=>errors.push(error.message));
+    await userPage.goto(base,{waitUntil:'networkidle'});
+    await userPage.getByLabel(/User name/).fill('smokeuser');
+    await userPage.getByLabel('Password').fill('smoke-user-password-123');
+    await userPage.getByRole('button',{name:/Sign in/}).click();
+    await userPage.getByRole('heading',{name:'What are we converting?'}).waitFor();
+    const userAccess=await userPage.evaluate(async id=>{
+      const batch=await fetch('/api/v1/batches/'+id);const zip=await fetch('/api/v1/batches/'+id+'/results.zip');
+      return {batchStatus:batch.status,zipStatus:zip.status};
+    },adminSlowBatch.id);
+    assert.ok(userAccess.batchStatus===403||userAccess.batchStatus===404,'another owner cannot view an admin batch');
+    assert.ok(userAccess.zipStatus===403||userAccess.zipStatus===404,'another owner cannot download an admin ZIP');
+    const userSlowBatch=await userPage.evaluate(async source=>{
+      const uploads=[];
+      for(let i=0;i<2;i++){const form=new FormData();form.append('file',new Blob([source]),`user-slow-${i+1}.ppm`);const up=await fetch('/api/v1/uploads',{method:'POST',body:form});if(up.status!==201)throw Error('user upload failed: '+up.status);uploads.push((await up.json()).id);}
+      const response=await fetch('/api/v1/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'convert',idempotencyKey:'user-fairness-batch-0001',items:uploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))})});
+      if(response.status!==201)throw Error('user batch submission failed: '+response.status+' '+await response.text());return (await response.json()).batch;
+    },ppm.toString());
+    let maxConcurrent=0,maxAdminBatchRunning=0,userServedBeforeAdminDone=false,adminState,userState;
+    for(let i=0;i<100;i++){
+      [adminState,userState]=await Promise.all([admin('/batches/'+adminSlowBatch.id,'GET'),admin('/batches/'+userSlowBatch.id,'GET')]);
+      const a=(await adminState.json()).batch,u=(await userState.json()).batch;
+      maxConcurrent=Math.max(maxConcurrent,a.running+u.running);
+      maxAdminBatchRunning=Math.max(maxAdminBatchRunning,a.running);
+      if(u.running>0&&a.succeeded<a.total)userServedBeforeAdminDone=true;
+      if(a.succeeded+a.failed+a.cancelled===a.total&&u.succeeded+u.failed+u.cancelled===u.total)break;
+      await new Promise(resolve=>setTimeout(resolve,200));
+    }
+    const finalAdmin=(await admin('/batches/'+adminSlowBatch.id,'GET')).batch;
+    const finalUser=(await admin('/batches/'+userSlowBatch.id,'GET')).batch;
+    assert.equal(maxConcurrent,3,'configured worker pool actually ran three conversions concurrently');
+    assert.ok(maxAdminBatchRunning<=2,'a single batch never exceeded its configured two-slot limit');
+    assert.ok(userServedBeforeAdminDone,'round-robin scheduling served another owner before the first owner batch completed');
+    assert.equal(finalAdmin.succeeded,4,'admin concurrency fixture completed all conversions');
+    assert.equal(finalUser.succeeded,2,'second owner concurrency fixture completed all conversions');
+    const ownerJobIDs=new Set(finalAdmin.items.map(item=>item.jobId));
+    const userJobs=await userPage.evaluate(async()=>fetch('/api/v1/jobs?limit=100').then(r=>r.json()));
+    assert.equal(userJobs.jobs.some(job=>ownerJobIDs.has(job.id)),false,'second owner history omits another owner’s jobs');
+    await userContext.close();
     await page.getByLabel('Search jobs').fill('ppm-pgm-grayscale');
     await page.getByLabel('Filter jobs by status').selectOption('succeeded');
     const row = page.locator('tr').filter({ hasText: 'ppm-pgm-grayscale' });
@@ -215,6 +269,7 @@ const assert = require('node:assert/strict');
 
     const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
     const mobilePage = await mobile.newPage();
+    activePage = mobilePage;
     mobilePage.on('pageerror', error => errors.push(error.message));
     await mobilePage.goto(base + '/convert', { waitUntil: 'networkidle' });
     await mobilePage.getByLabel('Password').fill(process.env.ENGINE_ADMIN_TOKEN);
@@ -250,7 +305,13 @@ const assert = require('node:assert/strict');
     await mobile.close();
     await context.close();
     assert.deepEqual(errors, [], 'no uncaught browser errors');
-    console.log('Browser verified profile preferences, mixed-format conversion batches, compression, history, result download, and mobile layouts.');
+    console.log('Browser verified setup, ownership, two-slot fair scheduling, mixed-format 20-file batches, retry/cancellation/ZIP, conversion/compression, retention, restart data, and mobile layouts.');
+  } catch (error) {
+    if (activePage && process.env.SMOKE_OUTPUT_DIR) {
+      await fs.mkdir(process.env.SMOKE_OUTPUT_DIR, { recursive: true });
+      await activePage.screenshot({ path: process.env.SMOKE_OUTPUT_DIR + '/failure.png', fullPage: true }).catch(() => {});
+    }
+    throw error;
   } finally {
     await browser.close();
   }

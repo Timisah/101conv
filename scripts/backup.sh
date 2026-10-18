@@ -53,11 +53,13 @@ docker run --rm --network none --volumes-from "$core:ro" --entrypoint tar postgr
 docker run --rm --network none --volumes-from "$core:ro" --entrypoint tar postgres:17-alpine -C /var/lib/101conv/uploads -cf - . > "$stage/uploads.tar"
 docker run --rm --network none --volumes-from "$core:ro" --entrypoint tar postgres:17-alpine -C /var/lib/101conv/results -cf - . > "$stage/results.tar"
 
-# Compose and env files may contain credentials. Copy only when present and
+# Compose and env files may contain credentials. Copy only when requested and
 # keep private permissions. Portainer's UI-stored variables cannot be read
 # safely from Docker; export them separately to a protected env file first.
 if [[ -f "$repo_root/compose.yaml" ]]; then cp "$repo_root/compose.yaml" "$stage/compose.yaml"; chmod 0600 "$stage/compose.yaml"; fi
-if [[ -n "$env_file" ]]; then
+if [[ "${BACKUP_OMIT_ENV:-0}" == 1 ]]; then
+  : # Useful for synthetic test deployments and when credentials are backed up separately.
+elif [[ -n "$env_file" ]]; then
   [[ -f "$env_file" ]] || { echo "Environment file not found: $env_file" >&2; exit 1; }
   cp "$env_file" "$stage/deployment.env"
   chmod 0600 "$stage/deployment.env"
