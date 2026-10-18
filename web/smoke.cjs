@@ -267,6 +267,67 @@ const assert = require('node:assert/strict');
     await compressedRow.getByText(/^Compression ·/).waitFor();
     try { await compressedRow.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 }); } catch (error) { console.error('compression job diagnostic', (await compressedRow.innerText()).slice(0,1000)); throw error; }
 
+    // Use a completely separate browser context to exercise the public guest
+    // path after first-run setup. No admin bearer token or account cookie is
+    // available to this context.
+    const guestContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, acceptDownloads: true });
+    const guestPage = await guestContext.newPage();
+    activePage = guestPage;
+    guestPage.on('pageerror', error => errors.push(error.message));
+    await guestPage.goto(base, { waitUntil: 'networkidle' });
+    await guestPage.getByRole('heading', { name: 'What are we converting?' }).waitFor();
+    await guestPage.getByRole('button', { name: 'Sign in' }).waitFor();
+    assert.equal(await guestPage.locator('.guest-mode-indicator').count(), 1, 'anonymous visitor is labeled as guest');
+    assert.equal(await guestPage.getByRole('link', { name: 'Users & access' }).count(), 0, 'guest navigation hides administration');
+    assert.equal(await guestPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'guest conversion view fits a phone');
+    await guestPage.locator('input[type=file]').setInputFiles([
+      { name: 'guest-one.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm },
+      { name: 'guest-two.pnm', mimeType: 'image/x-portable-anymap', buffer: ppm }
+    ]);
+    await guestPage.getByLabel('Convert to').selectOption('pgm');
+    await guestPage.getByRole('button', { name: /Convert 2 files/ }).click();
+    await guestPage.getByText(/Batch created: 2 item\(s\) submitted/).waitFor({ timeout: 10000 });
+    await guestPage.getByRole('link', { name: 'Jobs' }).click();
+    const guestBatch = guestPage.locator('.batch-history-card').filter({ hasText: '2 files' }).first();
+    await guestBatch.waitFor({ timeout: 15000 });
+    const guestBatchID = (await guestBatch.locator('summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];
+    assert.ok(guestBatchID, 'guest batch is visible in this browser session');
+    await guestPage.waitForFunction(async id => { const response = await fetch('/api/v1/batches/' + id); return response.ok && (await response.json()).batch.succeeded === 2; }, guestBatchID, { timeout: 60000 });
+    await guestBatch.locator('summary').click();
+    const guestBatchData = await guestPage.evaluate(async id => (await fetch('/api/v1/batches/' + id).then(r => r.json())).batch, guestBatchID);
+    const guestJobID = guestBatchData.items.find(item => item.state === 'succeeded')?.jobId;
+    assert.ok(guestJobID, 'guest batch retains individual job references');
+    const guestResult = await guestPage.evaluate(async id => { const r = await fetch('/api/v1/jobs/' + id + '/result'); return { status: r.status, text: await r.text() }; }, guestJobID);
+    assert.equal(guestResult.status, 200, 'guest can download its individual result');
+    assert.match(guestResult.text, /^P2\n/);
+    const [guestZip] = await Promise.all([guestPage.waitForEvent('download'), guestBatch.getByRole('button', { name: 'Download successful files (.zip)' }).click()]);
+    assert.equal((await fs.readFile(await guestZip.path())).subarray(0, 2).toString(), 'PK', 'guest can download a ZIP of its own successful results');
+    const foreignContext = await browser.newContext();
+    const foreignPage = await foreignContext.newPage();
+    await foreignPage.goto(base, { waitUntil: 'networkidle' });
+    await foreignPage.getByRole('heading', { name: 'What are we converting?' }).waitFor();
+    const foreignAccess = await foreignPage.evaluate(async id => {
+      const batch = await fetch('/api/v1/batches/' + id);
+      const zip = await fetch('/api/v1/batches/' + id + '/results.zip');
+      const admin = await fetch('/api/v1/storage');
+      return { batch: batch.status, zip: zip.status, admin: admin.status };
+    }, guestBatchID);
+    assert.equal(foreignAccess.batch, 404, 'another guest cannot enumerate or view the batch');
+    assert.equal(foreignAccess.zip, 404, 'another guest cannot download a guest ZIP');
+    assert.equal(foreignAccess.admin, 403, 'guest cannot read administrative storage');
+    assert.equal(await foreignPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'guest jobs layout has no mobile overflow');
+    await foreignContext.close();
+    await guestPage.getByRole('link', { name: 'Compress' }).click();
+    await guestPage.getByRole('heading', { name: 'Make files smaller' }).waitFor();
+    await guestPage.locator('input[type=file]').setInputFiles({ name: 'guest-compress.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm });
+    await guestPage.getByLabel('Output format').selectOption('pgm');
+    await guestPage.getByLabel('Profile for this job').selectOption('ppm-pgm-compress');
+    await guestPage.getByRole('button', { name: /Compress 1 file/ }).click();
+    await guestPage.getByText(/Compression batch created: 1 item\(s\) submitted/).waitFor({ timeout: 10000 });
+    await guestPage.getByRole('link', { name: 'Jobs' }).click();
+    await guestPage.locator('.batch-history-card').filter({ hasText: 'Compression batch' }).first().waitFor({ timeout: 15000 });
+    await guestContext.close();
+
     const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
     const mobilePage = await mobile.newPage();
     activePage = mobilePage;
@@ -305,7 +366,7 @@ const assert = require('node:assert/strict');
     await mobile.close();
     await context.close();
     assert.deepEqual(errors, [], 'no uncaught browser errors');
-    console.log('Browser verified setup, ownership, two-slot fair scheduling, mixed-format 20-file batches, retry/cancellation/ZIP, conversion/compression, retention, restart data, and mobile layouts.');
+    console.log('Browser verified setup, anonymous conversion/download/isolation on mobile, ownership, two-slot fair scheduling, mixed-format 20-file batches, retry/cancellation/ZIP, conversion/compression, retention, restart data, and mobile layouts.');
   } catch (error) {
     if (activePage && process.env.SMOKE_OUTPUT_DIR) {
       await fs.mkdir(process.env.SMOKE_OUTPUT_DIR, { recursive: true });

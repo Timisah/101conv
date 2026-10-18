@@ -31,6 +31,12 @@ For a new Portainer deployment, create the Go data directory before deploying an
 
 Administrators can configure separate retention for unsubmitted uploads, terminal-job originals, successful results, failed originals, and canceled originals. Defaults preserve files. Time-based or after-success cleanup requires a category preview; deleted files become explicit expired states while job history remains. The Storage overview uses database-recorded sizes; an administrator-triggered scan separately measures managed files and reports discrepancies. Filesystem capacity is measured inside Core, while the Worker's private temporary usage remains unavailable to Core. The Storage page labels those limits. A stopped-writer backup and isolated application-level restore rehearsal are documented in [`docs/deployment/backup.md`](docs/deployment/backup.md). The rehearsal boots restored Core and Worker privately and validates a real conversion when run through the browser smoke test.
 
+## Anonymous conversion
+
+Fresh installations enable guest conversion after the first administrator finishes secure setup. Visitors then land on Convert and can convert, compress, submit small batches, and download results without an account. Guest credentials are unique random HttpOnly cookies; each browser session owns separate jobs and files. Guest results and successful originals expire automatically (24 hours by default), unsubmitted and failed uploads expire separately, and old guest history is purged after the configured metadata interval. Closing a browser can lose access to its jobs; it does not stop scheduled cleanup. Guests do not receive personal preferences, account features, or any management access.
+
+An existing deployment remains private after upgrade. An administrator must explicitly enable guests in **Admin → Anonymous access**. That screen controls conversion/compression, file and batch limits, per-session rates, active guest job and total storage capacity, and guest lifetimes. The total capacity counts retained guest originals and results plus a worst-case output reservation for each queued or running job; this bounds result growth before a converter starts. These controls are independent from the Worker's concurrency and output-size limits. The browser smoke suite exercises guest conversion, compression, batch download, session isolation, admin-denial, and phone layout in a separate browser context.
+
 The browser uses the versioned API documented in [`docs/api/v1/openapi.yaml`](docs/api/v1/openapi.yaml). Frontend development instructions are in [`web/README.md`](web/README.md); the browser conversion smoke test is [`scripts/phase5-browser-smoke.sh`](scripts/phase5-browser-smoke.sh).
 
 ## Continuous integration and verification
@@ -41,8 +47,8 @@ To run the non-container checks locally:
 
 ```sh
 # Docker or a local PostgreSQL 17 service is needed for PostgreSQL integration tests.
-env '101CONV_TEST_DATABASE_URL=postgres://test:test@127.0.0.1:5432/101conv_test?sslmode=disable' bash -c 'cd server && go test -p 1 ./... -count=1'
-env '101CONV_TEST_DATABASE_URL=postgres://test:test@127.0.0.1:5432/101conv_test?sslmode=disable' bash -c 'cd server && go test -race -p 1 ./... -count=1 && go vet -p 1 ./...'
+env 'TEST_DATABASE_URL=postgres://test:test@127.0.0.1:5432/101conv_test?sslmode=disable' bash -c 'cd server && go test -p 1 ./... -count=1'
+env 'TEST_DATABASE_URL=postgres://test:test@127.0.0.1:5432/101conv_test?sslmode=disable' bash -c 'cd server && go test -race -p 1 ./... -count=1 && go vet -p 1 ./...'
 (cd web && npm ci --ignore-scripts && npm run lint && npm run build)
 ```
 

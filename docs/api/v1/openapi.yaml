@@ -140,11 +140,51 @@ paths:
         '200': { description: Timeout saved persistently }
         '401': { description: Administrator authentication required }
         '422': { description: Timeout outside the allowed range }
+  /api/v1/settings/anonymous:
+    get:
+      summary: Read administrator-controlled anonymous conversion settings
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: Guest capabilities, rate limits, capacity, and expiry settings }
+        '403': { description: Administrator authorization required }
+    put:
+      summary: Update anonymous conversion settings
+      description: New instances enable guest mode after first-run setup; migrated installations remain private until explicitly enabled. Guest writes require same-origin cookies and all limits are enforced server-side. Total guest storage includes retained originals and results plus the maximum-output reservation for queued/running jobs.
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled, allowConversion, allowCompression, maxFileBytes, maxBatchFiles, maxSimultaneousJobs, uploadsPerMinute, submissionsPerMinute, globalUploadsPerMinute, globalSubmissionsPerMinute, maxGlobalJobs, maxGlobalStorageBytes, resultExpirationHours, sessionExpirationHours, uploadExpirationHours, failedExpirationHours, metadataExpirationHours]
+              properties:
+                enabled: { type: boolean }
+                allowConversion: { type: boolean }
+                allowCompression: { type: boolean }
+                maxFileBytes: { type: integer, minimum: 1, maximum: 104857600 }
+                maxBatchFiles: { type: integer, minimum: 1, maximum: 20 }
+                maxSimultaneousJobs: { type: integer, minimum: 1, maximum: 100 }
+                uploadsPerMinute: { type: integer, minimum: 1, maximum: 120 }
+                submissionsPerMinute: { type: integer, minimum: 1, maximum: 60 }
+                globalUploadsPerMinute: { type: integer, minimum: 1, maximum: 10000 }
+                globalSubmissionsPerMinute: { type: integer, minimum: 1, maximum: 10000 }
+                maxGlobalJobs: { type: integer, minimum: 1, maximum: 1000 }
+                maxGlobalStorageBytes: { type: integer, minimum: 10485760, maximum: 1099511627776, description: Total guest original/result bytes, active-job output reservations, and in-flight upload reservations. Must fit maxFileBytes plus one maximum output (200 MiB). }
+                resultExpirationHours: { type: integer, minimum: 1, maximum: 720 }
+                sessionExpirationHours: { type: integer, minimum: 1, maximum: 720 }
+                uploadExpirationHours: { type: integer, minimum: 1, maximum: 720 }
+                failedExpirationHours: { type: integer, minimum: 1, maximum: 720 }
+                metadataExpirationHours: { type: integer, minimum: 1, maximum: 8760 }
+      responses:
+        '200': { description: Settings saved and audited }
+        '403': { description: Administrator authorization required }
+        '422': { description: One or more limits are outside supported bounds }
   /api/v1/auth/session:
     get:
-      summary: Check whether this browser has an active administrator or user session
+      summary: Check this browser session and whether guest access is enabled
       responses:
-        '200': { description: Session state; no-store response }
+        '200': { description: Authenticated account/guest state, or anonymous availability; no-store response }
     post:
       summary: Create an HttpOnly administrator or user session
       description: Send only password for the legacy administrator passphrase, or username and password for a local user account. The returned opaque cookie is server-side and HttpOnly.
@@ -167,6 +207,18 @@ paths:
       responses:
         '204': { description: Session revoked and cookie cleared }
         '401': { description: Session required }
+  /api/v1/auth/guest-session:
+    post:
+      summary: Start a temporary, isolated anonymous conversion session
+      description: Available only after first-run administrator setup and when guest mode is enabled. A unique 256-bit credential is issued as an HttpOnly, SameSite Strict cookie; only its digest is persisted. The request must be same-origin.
+      responses:
+        '201': { description: Guest session created; cookie and effective guest limits returned }
+        '403': { description: Guest access is disabled or setup is incomplete }
+        '429': { description: Instance guest-session rate limit reached }
+    delete:
+      summary: Revoke the current temporary guest session
+      responses:
+        '204': { description: Guest credential revoked and cookie cleared }
   /api/v1/me:
     get:
       summary: Read the current account and monthly usage
