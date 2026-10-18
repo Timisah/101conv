@@ -120,7 +120,11 @@ func (w *Worker) claim(ctx context.Context) (*claimedJob, error) {
 	}
 	var c claimedJob
 	var raw []byte
-	err = tx.QueryRowContext(ctx, `SELECT j.id,j.upload_id,j.execution,j.attempt_count+1,j.max_attempts,u.sha256,u.size_bytes FROM conv_jobs j JOIN conv_uploads u ON u.id=j.upload_id WHERE j.state='queued' AND j.attempt_count<j.max_attempts AND j.cancel_requested=false ORDER BY j.created_at LIMIT 1 FOR UPDATE OF j SKIP LOCKED`).Scan(&c.ID, &c.UploadID, &raw, &c.Attempt, &c.MaxAttempts, &c.InputSHA256, &c.InputSize)
+	var lastOwner string
+	if err = tx.QueryRowContext(ctx, `SELECT last_owner FROM conv_worker_scheduler WHERE id=1 FOR UPDATE`).Scan(&lastOwner); err != nil {
+		return nil, err
+	}
+	err = tx.QueryRowContext(ctx, `SELECT j.id,j.upload_id,j.execution,j.attempt_count+1,j.max_attempts,u.sha256,u.size_bytes FROM conv_jobs j JOIN conv_uploads u ON u.id=j.upload_id WHERE j.state='queued' AND j.attempt_count<j.max_attempts AND j.cancel_requested=false AND (j.batch_id IS NULL OR (SELECT count(*) FROM conv_jobs active WHERE active.batch_id=j.batch_id AND active.state='running')<2) AND (j.owner_id<>$1 OR NOT EXISTS(SELECT 1 FROM conv_jobs other WHERE other.state='queued' AND other.cancel_requested=false AND other.owner_id<>$1)) ORDER BY j.created_at,j.id LIMIT 1 FOR UPDATE OF j SKIP LOCKED`, lastOwner).Scan(&c.ID, &c.UploadID, &raw, &c.Attempt, &c.MaxAttempts, &c.InputSHA256, &c.InputSize)
 	if errors.Is(err, sql.ErrNoRows) {
 		if err = tx.Commit(); err != nil {
 			return nil, err
@@ -139,6 +143,9 @@ func (w *Worker) claim(ctx context.Context) (*claimedJob, error) {
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO conv_job_attempts(job_id,attempt_number,state,lease_owner) VALUES($1,$2,'running',$3)`, c.ID, c.Attempt, w.config.ID)
 	if err != nil {
+		return nil, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE conv_worker_scheduler SET last_owner=(SELECT owner_id FROM conv_jobs WHERE id=$1) WHERE id=1`, c.ID); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {

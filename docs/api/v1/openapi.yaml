@@ -727,6 +727,83 @@ paths:
         '404': { description: Upload or profile not found }
         '409': { description: Idempotency key conflicts or upload is already consumed }
         '422': { description: Profile does not support compression for this source and target pair }
+  /api/v1/batches:
+    post:
+      summary: Create one durable conversion or compression batch
+      description: Items resolve profiles independently by explicit selection, personal preference, administrator default, then compatible fallback. Per-item incompatibility or quota failures are recorded while other items can proceed. Requests are idempotent by owner and key.
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchRequest' }
+      responses:
+        '202': { description: Batch created with individual item states }
+        '200': { description: Existing batch returned for the same idempotent request }
+        '403': { description: Missing mode permission or API-key scope }
+        '409': { description: Idempotency key conflict }
+    get:
+      summary: List batches visible to the caller
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0 } }
+      responses: { '200': { description: Paginated batch states and items } }
+  /api/v1/batches/{id}:
+    get:
+      summary: Read a batch and its current jobs
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Batch summary and per-item states }
+        '404': { description: Batch is absent or not visible to the caller }
+  /api/v1/batches/{id}/resume:
+    post:
+      summary: Resume items persisted before an interrupted submission
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '202': { description: Pending batch items resumed idempotently } }
+  /api/v1/batches/{id}/cancel:
+    post:
+      summary: Cancel all queued batch jobs and request cancellation for running jobs
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '202': { description: Updated batch state } }
+  /api/v1/batches/{id}/items/{index}/cancel:
+    post:
+      summary: Cancel one batch item
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: index, required: true, schema: { type: integer, minimum: 0, maximum: 99 } }
+      responses: { '202': { description: Other batch items are unaffected } }
+  /api/v1/batches/{id}/retry:
+    post:
+      summary: Retry all failed items, or a requested subset of failed item indexes
+      description: Retries create new jobs while preserving the original immutable engine/profile execution specification. Successful items are not resubmitted. Retries require available originals, enabled profiles, installed pinned engine versions, current authorization, and quota capacity.
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items: { type: array, uniqueItems: true, items: { type: integer, minimum: 0, maximum: 99 } }
+      responses:
+        '202': { description: New retry jobs created for failed items }
+        '410': { description: Original is expired or missing }
+  /api/v1/batches/{id}/results.zip:
+    get:
+      summary: Stream successful available results as a ZIP archive
+      description: Includes only owned, successful, available results. Generated filenames prevent traversal and collisions. Archive generation is streamed and limited to 512 MiB.
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: ZIP stream, content: { application/zip: {} } }
+        '409': { description: No available successful results }
+        '413': { description: Results exceed archive limit; download files individually }
   /api/v1/profile-preferences:
     get:
       summary: List this account's effective profile mappings
@@ -899,6 +976,65 @@ components:
         resultState: { type: string, enum: [not_ready, available, scheduled, expired, missing] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    BatchRequest:
+      type: object
+      required: [mode, idempotencyKey, items]
+      properties:
+        mode: { type: string, enum: [convert, compress] }
+        idempotencyKey: { type: string, minLength: 8, maxLength: 128 }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/BatchItemRequest' }
+    BatchItemRequest:
+      type: object
+      required: [uploadId, targetFormat]
+      properties:
+        uploadId: { type: string, format: uuid }
+        profileId: { type: string }
+        targetFormat: { type: string, pattern: '^[a-z0-9]{1,12}$' }
+        options: { type: object, additionalProperties: { type: string } }
+    Batch:
+      type: object
+      required: [id, mode, state, total, queued, running, succeeded, failed, cancelled, createdAt, items]
+      properties:
+        id: { type: string, format: uuid }
+        mode: { type: string, enum: [convert, compress] }
+        state: { type: string, enum: [queued, running, succeeded, partial, failed, cancelled] }
+        total: { type: integer }
+        queued: { type: integer }
+        running: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        cancelled: { type: integer }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        items: { type: array, items: { $ref: '#/components/schemas/BatchItem' } }
+    BatchItem:
+      type: object
+      required: [index, uploadId, state]
+      properties:
+        index: { type: integer, minimum: 0 }
+        uploadId: { type: string, format: uuid }
+        fileName: { type: string, description: Original uploaded filename for this batch owner. }
+        jobId: { type: string, format: uuid }
+        state: { type: string, enum: [pending, submitting, queued, running, succeeded, failed, cancelled] }
+        error: { type: string }
+        errorCode: { type: string, description: Stable category for failures detected before a job could be queued. }
+        job: { $ref: '#/components/schemas/Job' }
+        attempts:
+          type: array
+          description: Sanitized per-job execution history; raw stdout/stderr remain available only through the existing authorized job-detail API.
+          items:
+            type: object
+            required: [number, state, startedAt]
+            properties:
+              number: { type: integer }
+              state: { type: string }
+              startedAt: { type: string, format: date-time }
+              finishedAt: { type: string, format: date-time }
+              error: { type: string }
     RetentionRule:
       type: object
       required: [mode]

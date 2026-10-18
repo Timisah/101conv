@@ -122,6 +122,36 @@ ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'conve
 CREATE INDEX IF NOT EXISTS conv_jobs_owner_created_idx ON conv_jobs(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS conv_jobs_claim_idx ON conv_jobs(state, lease_until, created_at);
 CREATE INDEX IF NOT EXISTS conv_jobs_upload_idx ON conv_jobs(upload_id);
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_id TEXT;
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_item_index INTEGER;
+CREATE TABLE IF NOT EXISTS conv_batches (
+ id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('convert','compress')),
+ idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued',
+ total INTEGER NOT NULL, queued INTEGER NOT NULL DEFAULT 0, running INTEGER NOT NULL DEFAULT 0,
+ succeeded INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, cancelled INTEGER NOT NULL DEFAULT 0,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(), completed_at TIMESTAMPTZ,
+ UNIQUE(owner_id,idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS conv_batches_owner_created_idx ON conv_batches(owner_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS conv_batch_items (
+ batch_id TEXT NOT NULL REFERENCES conv_batches(id) ON DELETE CASCADE, item_index INTEGER NOT NULL,
+ upload_id TEXT NOT NULL REFERENCES conv_uploads(id), request JSONB NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+ current_job_id TEXT REFERENCES conv_jobs(id), error TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '', claim_until TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(batch_id,item_index)
+);
+CREATE INDEX IF NOT EXISTS conv_batch_items_job_idx ON conv_batch_items(current_job_id);
+ALTER TABLE conv_batch_items ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE conv_batch_items ADD COLUMN IF NOT EXISTS error_code TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS conv_batch_item_jobs (
+ batch_id TEXT NOT NULL, item_index INTEGER NOT NULL, job_id TEXT NOT NULL REFERENCES conv_jobs(id),
+ sequence INTEGER NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(batch_id,item_index,sequence), UNIQUE(job_id),
+ FOREIGN KEY(batch_id,item_index) REFERENCES conv_batch_items(batch_id,item_index) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS conv_worker_scheduler (
+ id INTEGER PRIMARY KEY CHECK(id=1), last_owner TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO conv_worker_scheduler(id,last_owner) VALUES(1,'') ON CONFLICT(id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS conv_job_attempts (
  id BIGSERIAL PRIMARY KEY, job_id TEXT NOT NULL REFERENCES conv_jobs(id) ON DELETE CASCADE,
  attempt_number INTEGER NOT NULL, state TEXT NOT NULL, lease_owner TEXT NOT NULL,

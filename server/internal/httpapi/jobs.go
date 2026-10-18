@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"archive/zip"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,238 @@ import (
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/jobs"
 )
+
+const maxBatchArchiveBytes int64 = 512 << 20
+
+func batchOwner(p auth.Principal) string {
+	if p.IsAdmin() {
+		return ""
+	}
+	return p.ID
+}
+func batchScope(mode string) string {
+	if mode == "compress" {
+		return auth.ScopeCompress
+	}
+	return auth.ScopeSubmit
+}
+func batchLimits(p auth.Principal) jobs.Limits {
+	return jobs.Limits{MonthlyJobs: p.Quotas.MonthlyJobs.Value}
+}
+
+func (a *API) createBatch(w http.ResponseWriter, r *http.Request) {
+	var req jobs.BatchRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if req.Mode != "convert" && req.Mode != "compress" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_input", "batch mode must be convert or compress")
+		return
+	}
+	p, ok := a.requireCapability(w, r, batchScope(req.Mode))
+	if !ok || !a.jobsReady(w) {
+		return
+	}
+	batch, duplicate, err := a.jobs.CreateBatch(r.Context(), req, p.ID, batchLimits(p))
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	status := http.StatusAccepted
+	if duplicate {
+		status = http.StatusOK
+	}
+	w.Header().Set("Location", "/api/v1/batches/"+batch.ID)
+	writeJSON(w, status, map[string]any{"batch": batch, "duplicate": duplicate})
+}
+
+func (a *API) listBatches(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireCapability(w, r, auth.ScopeRead)
+	if !ok || !a.jobsReady(w) {
+		return
+	}
+	limit, offset := 25, 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		v, e := strconv.Atoi(raw)
+		if e != nil || v < 1 || v > 100 {
+			writeAPIError(w, http.StatusBadRequest, "invalid_query", "limit must be between 1 and 100")
+			return
+		}
+		limit = v
+	}
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		v, e := strconv.Atoi(raw)
+		if e != nil || v < 0 || v > 100000 {
+			writeAPIError(w, http.StatusBadRequest, "invalid_query", "offset must be between 0 and 100000")
+			return
+		}
+		offset = v
+	}
+	batches, total, err := a.jobs.ListBatches(r.Context(), batchOwner(p), limit, offset)
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"batches": batches, "total": total, "limit": limit, "offset": offset})
+}
+
+func (a *API) getBatch(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireCapability(w, r, auth.ScopeRead)
+	if !ok || !a.jobsReady(w) {
+		return
+	}
+	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), batchOwner(p), batchLimits(p))
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, batch)
+}
+
+func (a *API) downloadBatchResults(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireCapability(w, r, auth.ScopeResult)
+	if !ok || !a.jobsReady(w) {
+		return
+	}
+	ownerID := batchOwner(p)
+	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), ownerID, batchLimits(p))
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	type archiveItem struct {
+		index int
+		job   jobs.Job
+		file  io.ReadCloser
+	}
+	items := []archiveItem{}
+	var total int64
+	for _, item := range batch.Items {
+		if item.Job == nil || item.Job.State != jobs.Succeeded || item.Job.ResultState != "available" {
+			continue
+		}
+		if total+item.Job.OutputSize > maxBatchArchiveBytes {
+			for _, opened := range items {
+				opened.file.Close()
+			}
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "archive_too_large", "successful results exceed the 512 MiB batch archive limit; download items individually")
+			return
+		}
+		file, job, _, openErr := a.jobs.OpenResultFor(r.Context(), item.Job.ID, ownerID)
+		if openErr != nil {
+			for _, opened := range items {
+				opened.file.Close()
+			}
+			writeJobError(w, openErr)
+			return
+		}
+		total += job.OutputSize
+		items = append(items, archiveItem{item.Index, job, file})
+	}
+	if len(items) == 0 {
+		writeAPIError(w, http.StatusConflict, "no_available_results", "this batch has no successful results available to download")
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "101conv-batch-" + batch.ID + ".zip"}))
+	w.WriteHeader(http.StatusOK)
+	zw := zip.NewWriter(w)
+	for _, item := range items {
+		name := fmt.Sprintf("item-%03d-%s.%s", item.index+1, item.job.ID, item.job.TargetFormat)
+		header := &zip.FileHeader{Name: name, Method: zip.Store}
+		entry, e := zw.CreateHeader(header)
+		if e == nil {
+			_, e = io.CopyN(entry, item.file, item.job.OutputSize)
+		}
+		if closeErr := item.file.Close(); e == nil {
+			e = closeErr
+		}
+		if e != nil {
+			_ = zw.Close()
+			return
+		}
+	}
+	_ = zw.Close()
+}
+
+func (a *API) resumeBatch(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireCapability(w, r, auth.ScopeRead)
+	if !ok || !a.jobsReady(w) {
+		return
+	}
+	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), batchOwner(p), batchLimits(p))
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	if _, ok = a.requireCapability(w, r, batchScope(batch.Mode)); !ok {
+		return
+	}
+	batch, err = a.jobs.ResumeBatch(r.Context(), batch.ID, batchOwner(p), batchLimits(p))
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, batch)
+}
+
+func (a *API) cancelBatch(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireCapability(w, r, auth.ScopeCancel)
+	if !ok || !a.jobsReady(w) {
+		return
+	}
+	batch, err := a.jobs.CancelBatch(r.Context(), r.PathValue("id"), batchOwner(p))
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, batch)
+}
+
+func (a *API) cancelBatchItem(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireCapability(w, r, auth.ScopeCancel)
+	if !ok || !a.jobsReady(w) {
+		return
+	}
+	index, err := strconv.Atoi(r.PathValue("index"))
+	if err != nil || index < 0 || index >= jobs.MaxBatchItems {
+		writeAPIError(w, http.StatusBadRequest, "invalid_input", "batch item index is invalid")
+		return
+	}
+	batch, err := a.jobs.CancelBatchItem(r.Context(), r.PathValue("id"), index, batchOwner(p))
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, batch)
+}
+
+func (a *API) retryBatch(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireCapability(w, r, auth.ScopeRead)
+	if !ok || !a.jobsReady(w) {
+		return
+	}
+	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), batchOwner(p), batchLimits(p))
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	if _, ok = a.requireCapability(w, r, batchScope(batch.Mode)); !ok {
+		return
+	}
+	var req struct {
+		Items []int `json:"items"`
+	}
+	if r.ContentLength != 0 && !decodeBody(w, r, &req) {
+		return
+	}
+	batch, err = a.jobs.RetryBatchItems(r.Context(), batch.ID, batchOwner(p), req.Items, batchLimits(p))
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, batch)
+}
 
 func (a *API) jobsReady(w http.ResponseWriter) bool {
 	if a.jobs == nil {

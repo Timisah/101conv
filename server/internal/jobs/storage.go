@@ -308,7 +308,7 @@ func (s *Service) PreviewCleanupCategory(ctx context.Context, category string, d
 	var query string
 	switch category {
 	case "unsubmitted":
-		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u WHERE NOT u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND (u.cleanup_pending OR u.created_at<now()-($1::int*interval '1 day')) AND NOT EXISTS(SELECT 1 FROM conv_jobs j WHERE j.upload_id=u.id)`
+		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u WHERE NOT u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND (u.cleanup_pending OR u.created_at<now()-($1::int*interval '1 day')) AND NOT EXISTS(SELECT 1 FROM conv_jobs j WHERE j.upload_id=u.id) AND NOT EXISTS(SELECT 1 FROM conv_batch_items bi WHERE bi.upload_id=u.id AND bi.state IN ('pending','submitting'))`
 	case "submitted_originals":
 		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND j.state IN ('succeeded','failed','cancelled') AND j.updated_at<now()-($1::int*interval '1 day') AND NOT EXISTS(SELECT 1 FROM conv_jobs newer WHERE newer.upload_id=u.id AND newer.created_at>j.created_at) AND NOT EXISTS(SELECT 1 FROM conv_jobs active WHERE active.upload_id=u.id AND active.state IN ('queued','running'))`
 	case "successful_results":
@@ -378,7 +378,7 @@ func (s *Service) CleanupAbandoned(ctx context.Context, days, limit int) (Cleanu
 		return report, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT u.id,u.owner_id,u.cleanup_observed_bytes FROM conv_uploads u WHERE NOT u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND ((NOT u.cleanup_pending AND $1::integer>0 AND u.created_at < now()-($1::integer * interval '1 day')) OR (u.cleanup_pending AND (u.cleanup_claim_until IS NULL OR u.cleanup_claim_until<now()))) AND NOT EXISTS(SELECT 1 FROM conv_jobs j WHERE j.upload_id=u.id) ORDER BY u.created_at,u.id LIMIT $2 FOR UPDATE OF u SKIP LOCKED`, days, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT u.id,u.owner_id,u.cleanup_observed_bytes FROM conv_uploads u WHERE NOT u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND ((NOT u.cleanup_pending AND $1::integer>0 AND u.created_at < now()-($1::integer * interval '1 day')) OR (u.cleanup_pending AND (u.cleanup_claim_until IS NULL OR u.cleanup_claim_until<now()))) AND NOT EXISTS(SELECT 1 FROM conv_jobs j WHERE j.upload_id=u.id) AND NOT EXISTS(SELECT 1 FROM conv_batch_items bi WHERE bi.upload_id=u.id AND bi.state IN ('pending','submitting')) ORDER BY u.created_at,u.id LIMIT $2 FOR UPDATE OF u SKIP LOCKED`, days, limit)
 	if err != nil {
 		return report, err
 	}
@@ -454,7 +454,7 @@ func (s *Service) CleanupAbandoned(ctx context.Context, days, limit int) (Cleanu
 			return report, beginErr
 		}
 		var deletedID string
-		deleteErr := finalTx.QueryRowContext(ctx, `UPDATE conv_uploads u SET original_deleted_at=COALESCE(original_deleted_at,now()),cleanup_pending=false,cleanup_claim_until=NULL,cleanup_observed_bytes=NULL WHERE u.id=$1 AND u.cleanup_pending AND NOT EXISTS(SELECT 1 FROM conv_jobs j WHERE j.upload_id=u.id) RETURNING id`, c.id).Scan(&deletedID)
+		deleteErr := finalTx.QueryRowContext(ctx, `UPDATE conv_uploads u SET original_deleted_at=COALESCE(original_deleted_at,now()),cleanup_pending=false,cleanup_claim_until=NULL,cleanup_observed_bytes=NULL WHERE u.id=$1 AND u.cleanup_pending AND NOT EXISTS(SELECT 1 FROM conv_jobs j WHERE j.upload_id=u.id) AND NOT EXISTS(SELECT 1 FROM conv_batch_items bi WHERE bi.upload_id=u.id AND bi.state IN ('pending','submitting')) RETURNING id`, c.id).Scan(&deletedID)
 		if errors.Is(deleteErr, sql.ErrNoRows) {
 			finalTx.Rollback()
 			s.fileMu.Unlock()
