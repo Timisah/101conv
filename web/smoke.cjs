@@ -84,6 +84,63 @@ const assert = require('node:assert/strict');
     assert.match(page.url(), /marketplace\?tab=compression$/);
     await catalogNav.getByRole('link',{name:'Engines'}).click();
     assert.match(page.url(), /marketplace\?tab=engines$/);
+
+    // Exercise the real automation flow end to end. Core is the only process
+    // with these test mounts; the isolated conversion Worker has no mount.
+    await page.goto(base + '/drives', { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { name: 'Mounted drives' }).waitFor();
+    await page.getByLabel('Name', { exact: true }).fill('Smoke incoming');
+    await page.getByLabel('Container path').fill(process.env.SMOKE_MOUNT_ROOT + '/incoming');
+    await page.getByLabel('Access').selectOption('read');
+    await page.getByRole('button', { name: 'Register drive' }).click();
+    await page.getByText('Smoke incoming', { exact: true }).waitFor();
+    await page.getByLabel('Name', { exact: true }).fill('Smoke converted');
+    await page.getByLabel('Container path').fill(process.env.SMOKE_MOUNT_ROOT + '/converted');
+    await page.getByLabel('Access').selectOption('read_write');
+    await page.getByRole('button', { name: 'Register drive' }).click();
+    await page.getByText('Smoke converted', { exact: true }).waitFor();
+
+    await page.goto(base + '/automations', { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { name: 'Automations' }).waitFor();
+    await page.getByLabel('Blueprint').selectOption('automatic-folder-conversion');
+    await page.getByLabel('Name', { exact: true }).fill('Smoke folder conversion');
+    await page.getByLabel('Input folder').selectOption({ label: 'Smoke incoming · ' + '/mounts/incoming' });
+    await page.getByLabel('Output folder').selectOption({ label: 'Smoke converted · ' + '/mounts/converted' });
+    await page.getByLabel('Installed profile').selectOption('ppm-pgm-grayscale');
+    await page.getByLabel('Output format').selectOption('pgm');
+    await page.getByLabel('Extensions').fill('ppm');
+    await page.getByLabel('Scan interval (seconds)').fill('30');
+    await page.getByLabel('Stable for (seconds)').fill('5');
+    await page.getByLabel('Concurrent files (1–8)').fill('1');
+    await page.getByRole('button', { name: 'Install blueprint' }).click();
+    const automation = page.locator('.automation-card').filter({ hasText: 'Smoke folder conversion' });
+    await automation.waitFor({ timeout: 15000 });
+    await automation.getByRole('button', { name: 'Enable automation' }).click();
+    await automation.getByRole('button', { name: 'Preview' }).click();
+    await page.getByRole('heading', { name: 'Dry-run preview' }).waitFor();
+    await automation.getByRole('button', { name: 'Run now' }).click(); // establishes empty initial scan
+    await fs.writeFile(process.env.SMOKE_MOUNT_ROOT + '/incoming/automation-input.ppm', ppm);
+    await automation.getByRole('button', { name: 'Run now' }).click(); // first observation of the new file
+    await new Promise(resolve => setTimeout(resolve, 5500));
+    await automation.getByRole('button', { name: 'Run now' }).click(); // stability window elapsed
+    const automationID = (await page.evaluate(() => fetch('/api/v1/automations').then(r => r.json()))).automations.find(a => a.name === 'Smoke folder conversion')?.id;
+    assert.ok(automationID, 'blueprint installed a persistent automation');
+    let runs = [];
+    for (let i = 0; i < 90; i++) {
+      runs = await page.evaluate(async id => (await fetch('/api/v1/automations/' + id + '/history').then(r => r.json())).runs, automationID);
+      if (runs.some(run => run.fileName === 'automation-input.ppm' && run.state === 'succeeded')) break;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    const completedAutomationRun = runs.find(run => run.fileName === 'automation-input.ppm' && run.state === 'succeeded');
+    assert.ok(completedAutomationRun, 'stable file was converted exactly once by the automation');
+    assert.equal(runs.filter(run => run.fileName === 'automation-input.ppm').length, 1, 'unchanged input is not processed repeatedly');
+    const automatedOutput = await fs.readFile(process.env.SMOKE_MOUNT_ROOT + '/converted/automation-input.pgm', 'utf8');
+    assert.match(automatedOutput, /^P2\n2 1\n255\n/);
+    await automation.getByRole('button', { name: 'History' }).click();
+    await page.getByText('automation-input.ppm', { exact: true }).waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'automation editor fits mobile viewport');
+
     await page.goto(base + '/convert', { waitUntil: 'networkidle' });
     await page.getByRole('heading', { name: 'What are we converting?' }).waitFor();
 

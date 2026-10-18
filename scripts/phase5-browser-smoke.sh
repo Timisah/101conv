@@ -97,6 +97,7 @@ export SMOKE_IMAGE="101conv-phase5-smoke:$run_id"
 export WEB_IMAGE="101conv-web:phase5-smoke-$run_id"
 export DATA_PATH="$tmp_root/data"
 export GO_DATA_PATH="$tmp_root/go-data"
+export AUTOMATION_HOST_PATH="$tmp_root/automation-mounts"
 export POSTGRES_PASSWORD="phase5-smoke-$(date +%s)-$RANDOM"
 export POSTGRES_USER=101conv
 export POSTGRES_DB=101conv
@@ -112,6 +113,9 @@ export CLEANUP_BROWSER_CONTAINER="${COMPOSE_PROJECT_NAME}-cleanup-browser"
 export CRASH_CHECK_CONTAINER="${COMPOSE_PROJECT_NAME}-worker-crash-check"
 export CRASH_WAIT_CONTAINER="${COMPOSE_PROJECT_NAME}-worker-crash-wait"
 export SMOKE_OUTPUT_DIR=/smoke-output
+export SMOKE_MOUNT_ROOT=/smoke-mounts
+mkdir -p "$AUTOMATION_HOST_PATH/incoming" "$AUTOMATION_HOST_PATH/converted"
+chmod 0750 "$AUTOMATION_HOST_PATH" "$AUTOMATION_HOST_PATH/incoming" "$AUTOMATION_HOST_PATH/converted"
 if [[ -n "${SMOKE_ARTIFACT_DIR:-}" ]]; then mkdir -p "$SMOKE_ARTIFACT_DIR"; fi
 cat > "$tmp_root/compose.env" <<ENV
 DATA_PATH=$DATA_PATH
@@ -121,6 +125,7 @@ POSTGRES_USER=$POSTGRES_USER
 POSTGRES_DB=$POSTGRES_DB
 ENGINE_ADMIN_TOKEN=$ENGINE_ADMIN_TOKEN
 PORT=$PORT
+AUTOMATION_HOST_PATH=$AUTOMATION_HOST_PATH
 ENV
 chmod 0600 "$tmp_root/compose.env"
 compose() {
@@ -213,6 +218,15 @@ if [[ -n "${CODEX_PROXY_CERT:-}" && -r "$CODEX_PROXY_CERT" ]]; then
 else
   docker build "${proxy_build_args[@]}" -t "$WEB_IMAGE" "$repo_root/web"
 fi
+# Core runs as UID 65532. Give that identity ownership of only the disposable
+# smoke mounts; do not make fixture paths world-writable. The host's actual
+# production mounts and permissions are never touched by this test.
+docker run --rm --network none --user 0:0 \
+  -v "$AUTOMATION_HOST_PATH:/smoke-mounts" \
+  --entrypoint sh postgres:17-alpine -ec '
+    chown 65532:65532 /smoke-mounts /smoke-mounts/incoming /smoke-mounts/converted
+    chmod 0750 /smoke-mounts /smoke-mounts/incoming /smoke-mounts/converted
+  '
 cat >"$tmp_root/compose.override.yaml" <<YAML
 services:
   core:
@@ -220,6 +234,11 @@ services:
     image: ${SMOKE_IMAGE}
     volumes:
       - smoke-go-data:/var/lib/101conv
+      - type: bind
+        source: ${AUTOMATION_HOST_PATH}
+        target: /mounts
+        bind:
+          create_host_path: false
   worker:
     build: null
     image: ${SMOKE_IMAGE}
@@ -264,6 +283,10 @@ docker run --rm --network none --user 65532:65532 --volumes-from "$core_containe
   done
   test -d /var/lib/101conv/engines
   test -r /var/lib/101conv/imports/ppm-pgm
+  test -d /mounts/incoming && test -r /mounts/incoming || { echo "Core cannot read the configured smoke input mount" >&2; exit 1; }
+  test -d /mounts/converted && test -w /mounts/converted || { echo "Core cannot write the configured smoke output mount" >&2; exit 1; }
+  marker="/mounts/converted/.101conv-smoke-write-check-$$"
+  : > "$marker" && rm "$marker"
   echo "Core storage checks passed as UID:GID 65532:65532."
 '
 worker_container="$(compose ps -q worker)"
@@ -295,7 +318,9 @@ const assert = require('node:assert/strict');
 })().catch(error => { console.error(error); process.exit(1); });
 NODE
 if docker run --name "$BROWSER_CONTAINER" --shm-size=1g --network "${COMPOSE_PROJECT_NAME}_web-core" \
+  -v "$AUTOMATION_HOST_PATH:/smoke-mounts" \
   -e SMOKE_BASE=http://web:5656 -e SMOKE_OUTPUT_DIR=/smoke-output -e ENGINE_ADMIN_TOKEN \
+  -e SMOKE_MOUNT_ROOT \
   -e CHROMIUM_PATH=/usr/bin/chromium -e NO_PROXY=web,core,localhost,127.0.0.1 \
   -e no_proxy=web,core,localhost,127.0.0.1 "$BROWSER_IMAGE" node smoke.cjs >"$tmp_root/browser.log" 2>&1; then
   browser_status=0
