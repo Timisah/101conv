@@ -344,6 +344,13 @@ func (s *Service) reconcileStorageScan(ctx context.Context, conn *sql.Conn, p *s
 		}
 		p.Categories[q.category] = cat
 	}
+	engineBuckets, err := storageAgeBuckets(ctx, conn, "engines")
+	if err != nil {
+		return err
+	}
+	engineStats := p.Categories["engines"]
+	engineStats.AgeBuckets = engineBuckets
+	p.Categories["engines"] = engineStats
 	rows, err := conn.QueryContext(ctx, `SELECT u.owner_id,count(*),COALESCE(sum(f.size_bytes),0) FROM conv_storage_scan_files f JOIN conv_uploads u ON f.category='originals' AND f.relative_path=u.id WHERE u.original_deleted_at IS NULL GROUP BY u.owner_id ORDER BY sum(f.size_bytes) DESC LIMIT 100`)
 	if err != nil {
 		return err

@@ -310,15 +310,15 @@ func (s *Service) PreviewCleanupCategory(ctx context.Context, category string, d
 	case "unsubmitted":
 		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u WHERE NOT u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND (u.cleanup_pending OR u.created_at<now()-($1::int*interval '1 day')) AND NOT EXISTS(SELECT 1 FROM conv_jobs j WHERE j.upload_id=u.id)`
 	case "submitted_originals":
-		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND j.state IN ('succeeded','failed','cancelled') AND j.updated_at<now()-($1::int*interval '1 day')`
+		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND j.state IN ('succeeded','failed','cancelled') AND j.updated_at<now()-($1::int*interval '1 day') AND NOT EXISTS(SELECT 1 FROM conv_jobs newer WHERE newer.upload_id=u.id AND newer.created_at>j.created_at) AND NOT EXISTS(SELECT 1 FROM conv_jobs active WHERE active.upload_id=u.id AND active.state IN ('queued','running'))`
 	case "successful_results":
 		query = `SELECT count(*),COALESCE(sum(result_size),0) FROM conv_jobs WHERE state='succeeded' AND result_key IS NOT NULL AND result_deleted_at IS NULL AND result_missing_at IS NULL AND updated_at<now()-($1::int*interval '1 day')`
 	case "successful_originals":
-		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE $1::int=0 AND u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND j.state='succeeded' AND j.result_key IS NOT NULL AND j.result_deleted_at IS NULL AND j.result_missing_at IS NULL`
+		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE $1::int=0 AND u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND j.state='succeeded' AND j.result_key IS NOT NULL AND j.result_deleted_at IS NULL AND j.result_missing_at IS NULL AND NOT EXISTS(SELECT 1 FROM conv_jobs newer WHERE newer.upload_id=u.id AND newer.created_at>j.created_at) AND NOT EXISTS(SELECT 1 FROM conv_jobs active WHERE active.upload_id=u.id AND active.state IN ('queued','running'))`
 	case "failed_originals":
-		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND j.state='failed' AND j.updated_at<now()-($1::int*interval '1 day')`
+		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND j.state='failed' AND j.updated_at<now()-($1::int*interval '1 day') AND NOT EXISTS(SELECT 1 FROM conv_jobs newer WHERE newer.upload_id=u.id AND newer.created_at>j.created_at) AND NOT EXISTS(SELECT 1 FROM conv_jobs active WHERE active.upload_id=u.id AND active.state IN ('queued','running'))`
 	case "canceled_originals":
-		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND j.state='cancelled' AND j.updated_at<now()-($1::int*interval '1 day')`
+		query = `SELECT count(*),COALESCE(sum(u.size_bytes),0) FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND j.state='cancelled' AND j.updated_at<now()-($1::int*interval '1 day') AND NOT EXISTS(SELECT 1 FROM conv_jobs newer WHERE newer.upload_id=u.id AND newer.created_at>j.created_at) AND NOT EXISTS(SELECT 1 FROM conv_jobs active WHERE active.upload_id=u.id AND active.state IN ('queued','running'))`
 	default:
 		return CleanupReport{}, ErrInvalidInput
 	}
@@ -667,7 +667,7 @@ func (s *Service) cleanupJobOriginals(ctx context.Context, category string, days
 	if category == "cancelled" {
 		stateClause = `j.state='cancelled'`
 	}
-	query := `SELECT u.id,u.owner_id,u.cleanup_observed_bytes,j.result_key,j.result_size FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND ` + stateClause + ` AND ` + ageClause + ` AND ((NOT u.cleanup_pending) OR u.cleanup_claim_until IS NULL OR u.cleanup_claim_until<now()) ORDER BY j.updated_at,u.id LIMIT $2 FOR UPDATE OF u SKIP LOCKED`
+	query := `SELECT u.id,u.owner_id,u.cleanup_observed_bytes,j.result_key,j.result_size FROM conv_uploads u JOIN conv_jobs j ON j.upload_id=u.id WHERE u.consumed AND u.original_deleted_at IS NULL AND u.original_missing_at IS NULL AND ` + stateClause + ` AND ` + ageClause + ` AND NOT EXISTS(SELECT 1 FROM conv_jobs newer WHERE newer.upload_id=u.id AND newer.created_at>j.created_at) AND NOT EXISTS(SELECT 1 FROM conv_jobs active WHERE active.upload_id=u.id AND active.state IN ('queued','running')) AND ((NOT u.cleanup_pending) OR u.cleanup_claim_until IS NULL OR u.cleanup_claim_until<now()) ORDER BY j.updated_at,u.id LIMIT $2 FOR UPDATE OF u SKIP LOCKED`
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return out, err
@@ -697,6 +697,20 @@ func (s *Service) cleanupJobOriginals(ctx context.Context, category string, days
 		return out, err
 	}
 	rows.Close()
+	// Retry/submit transactions lock the upload row too. Recheck active jobs in
+	// a fresh READ COMMITTED statement while those row locks are still held, so
+	// a retry committed during selection cannot lose its input to cleanup.
+	eligible := cs[:0]
+	for _, x := range cs {
+		var active bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conv_jobs WHERE upload_id=$1 AND state IN ('queued','running'))`, x.id).Scan(&active); err != nil {
+			return out, err
+		}
+		if !active {
+			eligible = append(eligible, x)
+		}
+	}
+	cs = eligible
 	for _, x := range cs {
 		if category == "success" {
 			if !x.result.Valid || !regexp.MustCompile(`^[a-f0-9-]{36}-[0-9]{1,6}\.bin$`).MatchString(x.result.String) {

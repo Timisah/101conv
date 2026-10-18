@@ -297,6 +297,13 @@ func TestSuccessfulRetentionExpiresFilesButPreservesJobHistory(t *testing.T) {
 	if inventory.Categories["engines"].Files == 0 {
 		t.Fatal("installed engine files were not included in measured inventory")
 	}
+	var engineAgeCount int64
+	for _, bucket := range inventory.Categories["engines"].AgeBuckets {
+		engineAgeCount += bucket.Count
+	}
+	if engineAgeCount != inventory.Categories["engines"].Files {
+		t.Fatalf("engine package age buckets=%d actual files=%d", engineAgeCount, inventory.Categories["engines"].Files)
+	}
 	overview, err := svc.StorageOverview(ctx)
 	if err != nil {
 		t.Fatal(err)
