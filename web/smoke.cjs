@@ -105,6 +105,9 @@ const assert = require('node:assert/strict');
     const row = page.locator('tr').filter({ hasText: 'ppm-pgm-grayscale' });
     try { await row.waitFor({ timeout: 15000 }); } catch (error) { console.error('job diagnostic',JSON.stringify({ids:await page.evaluate(()=>localStorage.getItem('101conv-job-ids')),body:(await page.locator('body').innerText()).slice(0,1200),apiResponses})); throw error; }
     await row.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 });
+    const retentionJobId = (await row.locator('.job-id').first().textContent()).match(/[0-9a-f]{8}-[0-9a-f-]{27,}/i)?.[0];
+    assert.ok(retentionJobId, 'conversion job id is available for retention verification');
+    if (process.env.SMOKE_OUTPUT_DIR) await fs.writeFile(process.env.SMOKE_OUTPUT_DIR + '/retention-job-id', retentionJobId);
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 15000 }),
       row.getByRole('button', { name: 'Download result' }).click()

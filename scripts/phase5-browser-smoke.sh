@@ -37,6 +37,8 @@ export BUILDX_CONFIG="$tmp_root/buildx"
 export DATA_PATH="$tmp_root/data"
 export GO_DATA_PATH="$tmp_root/go-data"
 export POSTGRES_PASSWORD="phase5-smoke-$(date +%s)-$RANDOM"
+export POSTGRES_USER=101conv
+export POSTGRES_DB=101conv
 export ENGINE_ADMIN_TOKEN="phase5-admin-$(date +%s)-$RANDOM"
 port_num="${SMOKE_PORT:-15656}"
 export PORT="127.0.0.1:$port_num"
@@ -45,8 +47,10 @@ export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost"
 export no_proxy="$NO_PROXY"
 export BROWSER_IMAGE="101conv-browser-smoke:$$"
 mkdir -p "$GO_DATA_PATH/imports" "$GO_DATA_PATH/engines" "$BUILDX_CONFIG" "$tmp_root/state/uploads" "$tmp_root/state/results"
+mkdir -p "$tmp_root/smoke-output"
 chmod 0777 "$GO_DATA_PATH" "$GO_DATA_PATH/imports" "$GO_DATA_PATH/engines"
 chmod 0700 "$tmp_root/state/uploads" "$tmp_root/state/results"
+chmod 0777 "$tmp_root/smoke-output"
 mkdir -p "$DATA_PATH"
 
 cleanup() {
@@ -138,7 +142,12 @@ const assert = require('node:assert/strict');
   assert.equal(assetResponse.headers.get('cache-control'), 'public, max-age=31536000, immutable');
 })().catch(error => { console.error(error); process.exit(1); });
 NODE
-docker run --rm --shm-size=1g --network "${COMPOSE_PROJECT_NAME}_web-core" -e SMOKE_BASE=http://web:5656 -e ENGINE_ADMIN_TOKEN -e CHROMIUM_PATH=/usr/bin/chromium -e NO_PROXY=web,core,localhost,127.0.0.1 -e no_proxy=web,core,localhost,127.0.0.1 -v "$repo_root/web/node_modules:/app/node_modules:ro" -v "$repo_root/web/smoke.cjs:/app/smoke.cjs:ro" -w /app "$BROWSER_IMAGE" node smoke.cjs
+docker run --rm --shm-size=1g --network "${COMPOSE_PROJECT_NAME}_web-core" -e SMOKE_BASE=http://web:5656 -e SMOKE_OUTPUT_DIR=/smoke-output -e ENGINE_ADMIN_TOKEN -e CHROMIUM_PATH=/usr/bin/chromium -e NO_PROXY=web,core,localhost,127.0.0.1 -e no_proxy=web,core,localhost,127.0.0.1 -v "$repo_root/web/node_modules:/app/node_modules:ro" -v "$repo_root/web/smoke.cjs:/app/smoke.cjs:ro" -v "$tmp_root/smoke-output:/smoke-output" -w /app "$BROWSER_IMAGE" node smoke.cjs
+retention_job_id="$(cat "$tmp_root/smoke-output/retention-job-id")"
+[[ "$retention_job_id" =~ ^[0-9a-f-]{36}$ ]] || { echo 'Browser smoke did not provide a valid result job ID.' >&2; exit 1; }
+retention_update="$(printf "UPDATE conv_jobs SET updated_at=now()-interval '2 days' WHERE id='%s';\n" "$retention_job_id" | docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" exec -T postgres psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-101conv}" -d "${POSTGRES_DB:-101conv}")"
+[[ "$retention_update" == *'UPDATE 1'* ]] || { echo 'Could not age the test result for retention cleanup verification.' >&2; exit 1; }
+docker run --rm --shm-size=1g --network "${COMPOSE_PROJECT_NAME}_web-core" -e SMOKE_BASE=http://web:5656 -e RETENTION_JOB_ID="$retention_job_id" -e ENGINE_ADMIN_TOKEN -e CHROMIUM_PATH=/usr/bin/chromium -e NO_PROXY=web,core,localhost,127.0.0.1 -e no_proxy=web,core,localhost,127.0.0.1 -v "$repo_root/web/node_modules:/app/node_modules:ro" -v "$repo_root/web/cleanup-smoke.cjs:/app/cleanup-smoke.cjs:ro" -w /app "$BROWSER_IMAGE" node cleanup-smoke.cjs
 if [[ "${SMOKE_BACKUP_TEST:-0}" == 1 ]]; then
   "$repo_root/scripts/backup.sh" "$tmp_root/backups" "$COMPOSE_PROJECT_NAME"
   backup_dir="$(find "$tmp_root/backups" -mindepth 1 -maxdepth 1 -type d -name '101conv-backup-*' -print -quit)"
