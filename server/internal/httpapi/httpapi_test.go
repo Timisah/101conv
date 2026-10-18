@@ -33,6 +33,39 @@ func TestCatalogSourceIsAvailableOnFreshInstall(t *testing.T) {
 	}
 }
 
+func TestSameOriginRequestChecksExactOriginAndScheme(t *testing.T) {
+	tests := []struct {
+		name        string
+		origin      string
+		referer     string
+		fetchSite   string
+		forwarded   string
+		wantAllowed bool
+	}{
+		{name: "same origin", origin: "http://example.test:5656", fetchSite: "same-origin", wantAllowed: true},
+		{name: "exact origin despite same-site metadata", origin: "http://example.test:5656", fetchSite: "same-site", wantAllowed: true},
+		{name: "same-origin referer fallback", referer: "http://example.test:5656/convert", wantAllowed: true},
+		{name: "cross-site metadata rejected", origin: "http://example.test:5656", fetchSite: "cross-site", wantAllowed: false},
+		{name: "different host rejected", origin: "http://other.test:5656", wantAllowed: false},
+		{name: "different port rejected", origin: "http://example.test:8080", wantAllowed: false},
+		{name: "different scheme rejected", origin: "https://example.test:5656", wantAllowed: false},
+		{name: "forwarded https origin", origin: "https://example.test:5656", forwarded: "https", wantAllowed: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "http://example.test:5656/api/v1/auth/guest-session", nil)
+			r.Host = "example.test:5656"
+			r.Header.Set("Origin", test.origin)
+			r.Header.Set("Referer", test.referer)
+			r.Header.Set("Sec-Fetch-Site", test.fetchSite)
+			r.Header.Set("X-Forwarded-Proto", test.forwarded)
+			if got := sameOriginRequest(r); got != test.wantAllowed {
+				t.Fatalf("sameOriginRequest() = %v, want %v", got, test.wantAllowed)
+			}
+		})
+	}
+}
+
 func TestManagementRESTLifecycleAndRestart(t *testing.T) {
 	ctxDir := t.TempDir()
 	sourceDir := filepath.Join(ctxDir, "imports")

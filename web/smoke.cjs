@@ -278,6 +278,7 @@ const assert = require('node:assert/strict');
     await guestPage.getByRole('heading', { name: 'What are we converting?' }).waitFor();
     await guestPage.getByRole('button', { name: 'Sign in' }).waitFor();
     assert.equal(await guestPage.locator('.login-card').count(), 0, 'the site root opens the conversion workspace instead of the sign-in page');
+    assert.equal(await guestPage.getByRole('button', { name: 'Continue as guest' }).count(), 0, 'guest mode starts automatically without a confirmation step');
     assert.equal(await guestPage.locator('.guest-mode-indicator').count(), 1, 'anonymous visitor is labeled as guest');
     assert.equal(await guestPage.getByRole('link', { name: 'Users & access' }).count(), 0, 'guest navigation hides administration');
     assert.equal(await guestPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'guest conversion view fits a phone');

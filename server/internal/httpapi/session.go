@@ -356,13 +356,25 @@ func requestIsSecure(r *http.Request) bool {
 }
 
 func sameOriginRequest(r *http.Request) bool {
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+	// Origin is the authoritative browser CSRF signal. Fetch Metadata is an
+	// additional cross-site rejection, but values such as "same-site" can be
+	// emitted by browsers/proxies for a request whose exact Origin still matches
+	// this instance. Do not reject those same-origin requests before comparing
+	// the full origin below.
+	if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
 		return false
 	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
-		return false
+		origin = r.Header.Get("Referer")
 	}
 	parsed, err := url.Parse(origin)
-	return err == nil && parsed.Host != "" && strings.EqualFold(parsed.Host, r.Host) && (parsed.Scheme == "http" || parsed.Scheme == "https")
+	if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Host, r.Host) || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return false
+	}
+	requestScheme := "http"
+	if requestIsSecure(r) {
+		requestScheme = "https"
+	}
+	return strings.EqualFold(parsed.Scheme, requestScheme)
 }
