@@ -2,6 +2,33 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+required_gib="${SMOKE_MIN_FREE_GIB:-8}"
+required_kib=$((required_gib * 1024 * 1024))
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  echo 'Browser/container verification not started: a reachable Docker daemon is required. No containers, volumes, or images were changed.' >&2
+  exit 2
+fi
+if ! docker compose version >/dev/null 2>&1; then
+  echo 'Browser/container verification not started: Docker Compose v2 is required. No test resources were created.' >&2
+  exit 2
+fi
+docker_root="$(docker info --format '{{.DockerRootDir}}')"
+for required_path in "$repo_root" "$docker_root"; do
+  available_kib="$(df -Pk "$required_path" | awk 'NR==2 {print $4}')"
+  if [[ -z "$available_kib" || "$available_kib" -lt "$required_kib" ]]; then
+    echo "Browser/container verification not started: $required_path has ${available_kib:-unknown} KiB free; at least ${required_kib} KiB (${required_gib} GiB) is required for isolated PostgreSQL, Core/Worker, web, and browser images. Free space or set SMOKE_MIN_FREE_GIB only when you have verified the host can safely hold the images. No test containers, volumes, or images were changed." >&2
+    exit 2
+  fi
+done
+available_mem_kib="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
+if [[ -n "$available_mem_kib" && "$available_mem_kib" -lt 2097152 ]]; then
+  echo "Browser/container verification not started: only ${available_mem_kib} KiB memory is available; at least 2097152 KiB is recommended for Chromium and the conversion Worker. No test resources were created." >&2
+  exit 2
+fi
+if [[ "$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)" -lt 2 ]]; then
+  echo 'Browser/container verification warning: fewer than two CPUs are visible; the suite may be very slow.' >&2
+fi
+echo "Browser/container preflight passed: ${required_gib} GiB free-space threshold and required Docker services are available."
 tmp_root="$(mktemp -d)"
 export COMPOSE_PROJECT_NAME="101conv-phase5-smoke-$$"
 export SMOKE_IMAGE="101conv-phase5-smoke:$$"
