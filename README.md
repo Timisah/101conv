@@ -1,5 +1,7 @@
 # 101conv
 
+[![CI](https://github.com/Timisah/101conv/actions/workflows/ci.yml/badge.svg)](https://github.com/Timisah/101conv/actions/workflows/ci.yml)
+
 101conv is a self-hosted file conversion application. The supported application is a React web client, Go Core and restricted Worker, and PostgreSQL, deployed together from [`compose.yaml`](compose.yaml).
 
 ## New installation
@@ -30,3 +32,29 @@ For a new Portainer deployment, create the Go data directory before deploying an
 Administrators can configure separate retention for unsubmitted uploads, terminal-job originals, successful results, failed originals, and canceled originals. Defaults preserve files. Time-based or after-success cleanup requires a category preview; deleted files become explicit expired states while job history remains. The Storage overview uses database-recorded sizes; an administrator-triggered scan separately measures managed files and reports discrepancies. Filesystem capacity is measured inside Core, while the Worker's private temporary usage remains unavailable to Core. The Storage page labels those limits. A stopped-writer backup and isolated application-level restore rehearsal are documented in [`docs/deployment/backup.md`](docs/deployment/backup.md). The rehearsal boots restored Core and Worker privately and validates a real conversion when run through the browser smoke test.
 
 The browser uses the versioned API documented in [`docs/api/v1/openapi.yaml`](docs/api/v1/openapi.yaml). Frontend development instructions are in [`web/README.md`](web/README.md); the browser conversion smoke test is [`scripts/phase5-browser-smoke.sh`](scripts/phase5-browser-smoke.sh).
+
+## Continuous integration and verification
+
+GitHub Actions runs five checks on pushes to `main`, pull requests, and manual `workflow_dispatch`: PostgreSQL-backed Go tests; Go race tests plus `go vet`; React lint/type checking and production build; the real Docker/Chromium browser suite; and an isolated backup/restore boot with a real fixture conversion. The restore check depends on the browser suite's disposable backup, so a skipped or failed browser stage cannot turn restore into a green check. CI uses temporary credentials and disposable volumes; it does not access deployment secrets or production data.
+
+To run the non-container checks locally:
+
+```sh
+# Docker or a local PostgreSQL 17 service is needed for PostgreSQL integration tests.
+env '101CONV_TEST_DATABASE_URL=postgres://test:test@127.0.0.1:5432/101conv_test?sslmode=disable' bash -c 'cd server && go test -p 1 ./... -count=1'
+env '101CONV_TEST_DATABASE_URL=postgres://test:test@127.0.0.1:5432/101conv_test?sslmode=disable' bash -c 'cd server && go test -race -p 1 ./... -count=1 && go vet -p 1 ./...'
+(cd web && npm ci --ignore-scripts && npm run lint && npm run build)
+```
+
+The full browser and restore run requires Docker Engine with Compose v2, at least 8 GiB free on the checkout, temporary-file, and Docker storage filesystems, at least 2 GiB available memory (and at least 2 GiB total memory visible to the daemon), and two visible CPUs. The browser and Worker run in real containers; the smoke profile converts a PPM fixture into PGM, while separate cases exercise batches, cancellation, retries, ZIP downloads, permissions, retention, restart persistence, and mobile navigation. Run it with:
+
+```sh
+./scripts/ci-resource-check.sh 8 2048
+./scripts/phase5-browser-smoke.sh
+```
+
+The runner respects the selected Docker context and `DOCKER_HOST`, including rootless daemons. A remote Docker daemon must be given independently measured `SMOKE_DOCKER_FREE_GIB` and `SMOKE_DOCKER_AVAILABLE_MEM_MIB`; the script does not assume the client can measure remote capacity. The 8 GiB minimum is enforced and cannot be lowered. The script records filesystem and Docker image/volume usage before and after, retains redacted logs and browser screenshots on failure when `SMOKE_ARTIFACT_DIR` is set, and removes only its uniquely named Compose project and tagged test images. It never runs Docker prune.
+
+The restore rehearsal takes a backup of the synthetic browser deployment, checks its manifest/checksums/archives/PostgreSQL dump, restores into new uniquely named volumes on an internal-only network, checks retained account/job/profile/engine references and expired-result tombstones, starts Core and Worker, and performs and downloads a PPM-to-PGM conversion. It demonstrates this test fixture's application-level restore path; it does not prove production-host permissions, external backup storage, every converter's behavior, disaster-recovery objectives, or a restore over a live Portainer installation. Production restore must remain a deliberate, separate operation.
+
+When preflight fails, first inspect the printed checkout, temp, and Docker-root `df -h` output plus `docker system df`. Free space only by reviewing resources you own; the test scripts intentionally do not prune unrelated Docker content. A failed GitHub check includes the failing job logs and, for the browser/restore stages, uploads redacted Compose logs and screenshots as short-lived artifacts. If a stage is not run because the runner is below threshold, the job fails with the observed capacity and the end-to-end status remains unverified.

@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-tests:
+    name: Go tests (PostgreSQL)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: 101conv_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: temporary-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d 101conv_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      "101CONV_TEST_DATABASE_URL": postgres://test:temporary-ci-only@localhost:5432/101conv_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Check runner capacity
+        run: ./scripts/ci-resource-check.sh 4 2048
+      - name: Run Go unit and PostgreSQL integration tests
+        working-directory: server
+        run: go test -p 1 ./... -count=1
+
+  go-race-vet:
+    name: Go race detector and vet
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: 101conv_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: temporary-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d 101conv_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      "101CONV_TEST_DATABASE_URL": postgres://test:temporary-ci-only@localhost:5432/101conv_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Check runner capacity
+        run: ./scripts/ci-resource-check.sh 4 2048
+      - name: Run race-enabled tests
+        working-directory: server
+        run: go test -race -p 1 ./... -count=1
+      - name: Run go vet
+        working-directory: server
+        run: go vet -p 1 ./...
+
+  frontend:
+    name: React lint, types, and production build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Check runner capacity
+        run: ./scripts/ci-resource-check.sh 3 2048
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci --ignore-scripts --strict-ssl=true
+      - name: Lint and type check
+        working-directory: web
+        run: npm run lint
+      - name: Production build
+        working-directory: web
+        run: npm run build
+
+  browser-integration:
+    name: Docker browser acceptance suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check workspace and Docker daemon capacity
+        run: ./scripts/ci-resource-check.sh 8 2048
+      - name: Run real Core, Worker, PostgreSQL, Web, and Chromium workflows
+        env:
+          SMOKE_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+          SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/101conv-browser-artifacts
+          SMOKE_EXPORT_RESTORE_DIR: ${{ runner.temp }}/101conv-restore-transfer
+        run: ./scripts/phase5-browser-smoke.sh
+      - name: Upload browser logs and screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/101conv-browser-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload disposable restore fixture
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/101conv-restore-transfer/
+          if-no-files-found: error
+          retention-days: 1
+
+  restore-integration:
+    name: Isolated backup and restore conversion
+    needs: browser-integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check workspace and Docker daemon capacity
+        run: ./scripts/ci-resource-check.sh 8 2048
+      - uses: actions/download-artifact@v4
+        with:
+          name: restore-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/101conv-restore-transfer
+      - name: Load the exact smoke-test images
+        run: |
+          set -euo pipefail
+          mapfile -t images < "$RUNNER_TEMP/101conv-restore-transfer/images.txt"
+          test "${#images[@]}" -eq 2
+          export SMOKE_IMAGE="${images[0]}"
+          export BROWSER_IMAGE="${images[1]}"
+          gzip -dc "$RUNNER_TEMP/101conv-restore-transfer/images.tar.gz" | docker image load
+          docker pull postgres:17-alpine
+          printf 'SMOKE_IMAGE=%s\nBROWSER_IMAGE=%s\n' "$SMOKE_IMAGE" "$BROWSER_IMAGE" >> "$GITHUB_ENV"
+      - name: Restore into private named volumes and run a real conversion
+        env:
+          RESTORE_ARTIFACT_DIR: ${{ runner.temp }}/101conv-restore-artifacts
+        run: scripts/test-restore.sh "$RUNNER_TEMP/101conv-restore-transfer/backup" --conversion-smoke
+      - name: Upload restore diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/101conv-restore-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
