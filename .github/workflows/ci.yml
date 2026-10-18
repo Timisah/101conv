@@ -115,6 +115,17 @@ jobs:
           SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/101conv-browser-artifacts
           SMOKE_EXPORT_RESTORE_DIR: ${{ runner.temp }}/101conv-restore-transfer
         run: ./scripts/phase5-browser-smoke.sh
+      - name: Publish sanitized browser failure details
+        if: failure()
+        run: |
+          set -euo pipefail
+          for file in "$RUNNER_TEMP/101conv-browser-artifacts/browser.log" "$RUNNER_TEMP/101conv-browser-artifacts/compose.log"; do
+            if [[ -s "$file" ]]; then
+              printf '\n### %s (last 60 lines)\n\n```text\n' "$(basename "$file")" >> "$GITHUB_STEP_SUMMARY"
+              tail -n 60 "$file" >> "$GITHUB_STEP_SUMMARY"
+              printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
       - name: Upload browser logs and screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4
