@@ -227,8 +227,10 @@ services:
       WORKER_CONCURRENCY: ${SMOKE_WORKER_CONCURRENCY:-3}
       WORKER_BATCH_CONCURRENCY: ${SMOKE_WORKER_BATCH_CONCURRENCY:-2}
       JOB_LEASE: 5s
-    volumes:
-      - smoke-go-data:/var/lib/101conv/engines:ro
+    volumes: !override
+      - smoke-go-data:/var/lib/101conv:ro
+      - uploads:/var/lib/101conv/uploads:ro
+      - results:/var/lib/101conv/results
   web:
     build: null
     image: ${WEB_IMAGE}
@@ -252,6 +254,29 @@ for _ in $(seq 1 60); do
 done
 [[ "$(docker inspect --format '{{.State.Health.Status}}' "$web_container")" == "healthy" ]]
 docker run --rm --network none --volumes-from "$core_container:ro" --entrypoint df postgres:17-alpine -P -B1 /var/lib/101conv/uploads /var/lib/101conv/results
+docker run --rm --network none --user 65532:65532 --volumes-from "$core_container" --entrypoint sh postgres:17-alpine -ec '
+  for name in uploads results; do
+    path="/var/lib/101conv/$name"
+    test -d "$path" && test -w "$path" || { echo "Core cannot write $path as UID:GID 65532:65532" >&2; exit 1; }
+    marker="$path/.101conv-smoke-write-check-$$"
+    : > "$marker"
+    rm "$marker"
+  done
+  test -d /var/lib/101conv/engines
+  test -r /var/lib/101conv/imports/ppm-pgm
+  echo "Core storage checks passed as UID:GID 65532:65532."
+'
+worker_container="$(compose ps -q worker)"
+docker run --rm --network none --user 65532:65532 --volumes-from "$worker_container" --entrypoint sh postgres:17-alpine -ec '
+  test -d /var/lib/101conv/engines
+  test -r /var/lib/101conv/engines
+  test -r /var/lib/101conv/imports/ppm-pgm
+  if test -w /var/lib/101conv/engines; then
+    echo "Worker engine directory must be read-only." >&2
+    exit 1
+  fi
+  echo "Worker can read the shared engine tree and fixture; its engine tree is read-only."
+'
 docker inspect "$web_container" | python3 -c 'import json,sys; c=json.load(sys.stdin)[0]; p=c["HostConfig"]["PortBindings"]["5656/tcp"]; assert p and p[0]["HostPort"] == sys.argv[1], p' "$port_num"
 docker build "${proxy_cert_mount[@]}" "${proxy_build_args[@]}" -f "$repo_root/web/Dockerfile.e2e" -t "$BROWSER_IMAGE" "$repo_root/web"
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_web-core" "$BROWSER_IMAGE" node - <<'NODE'

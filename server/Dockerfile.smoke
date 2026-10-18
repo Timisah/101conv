@@ -15,9 +15,10 @@ RUN --mount=type=secret,id=proxy_ca,required=false \
     fi && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/101conv ./cmd/101conv && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/ppm-pgm ./testdata/ppm-pgm && \
-    mkdir -p /out/data/imports /out/data/engines && \
+    mkdir -p /out/data/imports /out/data/engines /out/data/uploads /out/data/results && \
     cp /out/ppm-pgm /out/data/imports/ppm-pgm && \
-    chmod 0775 /out/data/imports /out/data/engines
+    chmod 0755 /out/data/imports /out/data/engines && \
+    chmod 0700 /out/data/uploads /out/data/results
 
 FROM scratch
 COPY --from=build /out/101conv /101conv
