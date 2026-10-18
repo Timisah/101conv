@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[[ $# -eq 1 ]] || { echo 'Usage: scripts/test-restore.sh BACKUP_DIRECTORY (run from phase5-browser-smoke.sh)' >&2; exit 2; }
+[[ $# -ge 1 && $# -le 2 ]] || { echo 'Usage: scripts/test-restore.sh BACKUP_DIRECTORY [--conversion-smoke]' >&2; exit 2; }
+conversion_smoke=0
+if [[ ${2:-} == --conversion-smoke ]]; then conversion_smoke=1; elif [[ $# -eq 2 ]]; then echo "Unknown restore-test option: $2" >&2; exit 2; fi
 : "${SMOKE_IMAGE:?Run this from phase5-browser-smoke.sh so Core/Worker use the tested image}"
 : "${BROWSER_IMAGE:?Run this from phase5-browser-smoke.sh so the isolated API check can run}"
 docker image inspect "$SMOKE_IMAGE" >/dev/null
@@ -158,17 +160,25 @@ done
 "$ready" || { "${compose[@]}" logs --no-color postgres; echo 'Isolated restore database did not become ready.' >&2; exit 1; }
 "${compose[@]}" exec -T postgres pg_restore -U postgres -d 101conv --no-owner --no-privileges --exit-on-error < "$backup_dir/postgres.dump"
 # Check consistency against the restored files before the application starts.
-"${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c 'SELECT id FROM conv_uploads WHERE original_deleted_at IS NULL ORDER BY id' > "$check_dir/uploads.txt"
+"${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c 'SELECT id FROM conv_uploads WHERE original_deleted_at IS NULL AND original_missing_at IS NULL ORDER BY id' > "$check_dir/uploads.txt"
 "${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c 'SELECT result_key FROM conv_jobs WHERE result_key IS NOT NULL AND result_deleted_at IS NULL AND result_missing_at IS NULL ORDER BY result_key' > "$check_dir/results.txt"
-chmod 0644 "$check_dir/uploads.txt" "$check_dir/results.txt"
+"${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c 'SELECT id FROM conv_uploads WHERE original_deleted_at IS NOT NULL ORDER BY id' > "$check_dir/expired-uploads.txt"
+"${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c 'SELECT result_key FROM conv_jobs WHERE result_key IS NOT NULL AND result_deleted_at IS NOT NULL ORDER BY result_key' > "$check_dir/expired-results.txt"
+chmod 0644 "$check_dir/uploads.txt" "$check_dir/results.txt" "$check_dir/expired-uploads.txt" "$check_dir/expired-results.txt"
 docker run --rm --network none --user 0:0 --volume "$RESTORE_UPLOADS_VOLUME:/uploads:ro" --volume "$RESTORE_RESULTS_VOLUME:/results:ro" --volume "$check_dir:/checks:ro" --entrypoint sh postgres:17-alpine -c '
   while IFS= read -r id; do [ -f "/uploads/$id" ] || { echo "Missing original for $id" >&2; exit 1; }; done < /checks/uploads.txt
   while IFS= read -r key; do [ -f "/results/$key" ] || { echo "Missing result for $key" >&2; exit 1; }; done < /checks/results.txt
+  while IFS= read -r id; do [ ! -e "/uploads/$id" ] || { echo "Expired original still exists for tombstone $id" >&2; exit 1; }; done < /checks/expired-uploads.txt
+  while IFS= read -r key; do [ ! -e "/results/$key" ] || { echo "Expired result still exists for tombstone $key" >&2; exit 1; }; done < /checks/expired-results.txt
 '
 bad_jobs="$("${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c 'SELECT count(*) FROM conv_jobs j LEFT JOIN conv_uploads u ON u.id=j.upload_id WHERE u.id IS NULL')"
 [[ "$bad_jobs" == 0 ]] || { echo "Restore contains $bad_jobs jobs without upload metadata." >&2; exit 1; }
+bad_specs="$("${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c "SELECT count(*) FROM conv_jobs WHERE execution->>'engineId' IS NULL OR execution->>'engineVersion' IS NULL")"
+[[ "$bad_specs" == 0 ]] || { echo "Restore contains $bad_specs jobs without pinned engine execution specifications." >&2; exit 1; }
 users="$("${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c 'SELECT count(*) FROM conv_users')"
 jobs="$("${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c 'SELECT count(*) FROM conv_jobs')"
+expired_uploads="$(wc -l < "$check_dir/expired-uploads.txt")"
+expired_results="$(wc -l < "$check_dir/expired-results.txt")"
 "${compose[@]}" up -d core worker
 wait_health() {
   local service="$1" id status
@@ -189,8 +199,9 @@ if "${compose[@]}" ps --services --filter status=running | grep -q '^web$'; then
   echo 'Restore test unexpectedly started the public web service.' >&2
   exit 1
 fi
-# Browser image is attached to the internal-only network. It checks retained records and performs a real conversion.
-docker run --rm --network "$project"_private -e RESTORE_ADMIN_TOKEN -e RESTORE_ORIGINAL_PROJECT="$original_project" "$BROWSER_IMAGE" node - <<'NODE'
+# Probe the restored application from its private network. The optional fixture
+# conversion is separate from generic restore consistency checks.
+docker run --rm --network "$project"_private -e RESTORE_ADMIN_TOKEN -e RESTORE_ORIGINAL_PROJECT="$original_project" -e RESTORE_CONVERSION_SMOKE="$conversion_smoke" -e RESTORE_EXPIRED_UPLOADS="$expired_uploads" -e RESTORE_EXPIRED_RESULTS="$expired_results" "$BROWSER_IMAGE" node - <<'NODE'
 const assert = require('node:assert/strict');
 const base = 'http://core:5656';
 const headers = { Authorization: 'Bearer ' + process.env.RESTORE_ADMIN_TOKEN };
@@ -207,8 +218,12 @@ async function get(path) {
   assert.ok(engines.engines.length > 0, 'restored engine records are visible');
   assert.ok(profiles.profiles.length > 0, 'restored profile records are visible');
   assert.ok(jobs.total > 0, 'restored job history is visible');
+  assert.ok(jobs.jobs.every(job => job.id && job.profileId && job.profileVersion), 'restored history retains its profile/version references');
+  let convertedJobID='';
+  if (process.env.RESTORE_CONVERSION_SMOKE === '1') {
   const profile = profiles.profiles.find(entry => entry.definition?.id === 'ppm-pgm-grayscale');
-  assert.ok(profile, 'restored representative conversion profile is available');
+  assert.ok(profile, 'restored fixture conversion profile is available');
+  assert.ok(engines.engines.some(entry => entry.installation?.engineId === 'ppm-pgm'), 'restored fixture engine is installed');
   const source = Buffer.from('P3\n2 1\n255\n255 0 0 0 255 0\n');
   const form = new FormData();
   form.append('file', new Blob([source]), 'restore-smoke.ppm');
@@ -229,6 +244,8 @@ async function get(path) {
   const result = await fetch(base + '/api/v1/jobs/' + job.id + '/result', { headers });
   assert.equal(result.status, 200);
   assert.match(await result.text(), /^P2\n2 1\n255\n/);
-  console.log(`Isolated restore app passed: ${users.users.length} users, ${engines.engines.length} engines, ${profiles.profiles.length} profiles, ${jobs.total} retained jobs; conversion ${job.id} succeeded. Original Compose project: ${process.env.RESTORE_ORIGINAL_PROJECT}.`);
+  convertedJobID=job.id;
+  }
+  console.log(`Isolated restore application passed: ${users.users.length} users, ${engines.engines.length} engines, ${profiles.profiles.length} profiles, ${jobs.total} jobs, ${process.env.RESTORE_EXPIRED_UPLOADS} expired-original and ${process.env.RESTORE_EXPIRED_RESULTS} expired-result tombstones. ${convertedJobID?'Fixture conversion '+convertedJobID+' succeeded.':'Fixture conversion was not requested.'} Original Compose project: ${process.env.RESTORE_ORIGINAL_PROJECT}.`);
 })().catch(error => { console.error(error); process.exit(1); });
 NODE

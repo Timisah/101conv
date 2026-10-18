@@ -20,6 +20,8 @@ Portainer variables:
 | `POSTGRES_DB` | No | Database name; default `101conv`. Keep existing value when reusing a volume. |
 | `POSTGRES_USER` | No | Database user; default `101conv`. Keep existing value when reusing a volume. |
 | `APP_VERSION` | No | Application/catalog compatibility version; default `0.1.0`. |
+| `WORKER_CONCURRENCY` | No | Concurrent conversion processes per Worker container; default `1`, maximum `8`. Keep low on small hosts. Operations shows the configured slots and current active jobs. |
+| `WORKER_BATCH_CONCURRENCY` | No | Maximum simultaneous running jobs from one batch across the shared queue; default `2`, maximum `20`. The worker process concurrency is still the global limit. |
 
 For a new installation, create the directory first, for example:
 

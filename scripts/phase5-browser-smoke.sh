@@ -4,15 +4,16 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 required_gib="${SMOKE_MIN_FREE_GIB:-8}"
 required_kib=$((required_gib * 1024 * 1024))
-if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+unset DOCKER_HOST DOCKER_CONTEXT DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH
+if ! command -v docker >/dev/null 2>&1 || ! docker --host=unix:///var/run/docker.sock info >/dev/null 2>&1; then
   echo 'Browser/container verification not started: a reachable Docker daemon is required. No containers, volumes, or images were changed.' >&2
   exit 2
 fi
-if ! docker compose version >/dev/null 2>&1; then
+if ! command -v openssl >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
   echo 'Browser/container verification not started: Docker Compose v2 is required. No test resources were created.' >&2
   exit 2
 fi
-docker_root="$(docker info --format '{{.DockerRootDir}}')"
+docker_root="$(docker --host=unix:///var/run/docker.sock info --format '{{.DockerRootDir}}')"
 for required_path in "$repo_root" "$docker_root"; do
   available_kib="$(df -Pk "$required_path" | awk 'NR==2 {print $4}')"
   if [[ -z "$available_kib" || "$available_kib" -lt "$required_kib" ]]; then
@@ -29,11 +30,13 @@ if [[ "$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)" -lt 2 ]]; then
   echo 'Browser/container verification warning: fewer than two CPUs are visible; the suite may be very slow.' >&2
 fi
 echo "Browser/container preflight passed: ${required_gib} GiB free-space threshold and required Docker services are available."
+df -h "$repo_root" "$docker_root"
+echo "Available memory: $((available_mem_kib / 1024)) MiB; CPUs: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)."
+run_id="$(openssl rand -hex 8)"
 tmp_root="$(mktemp -d)"
-export COMPOSE_PROJECT_NAME="101conv-phase5-smoke-$$"
-export SMOKE_IMAGE="101conv-phase5-smoke:$$"
-export WEB_IMAGE="101conv-web:phase5-smoke-$$"
-export BUILDX_CONFIG="$tmp_root/buildx"
+export COMPOSE_PROJECT_NAME="101conv-phase5-smoke-$run_id"
+export SMOKE_IMAGE="101conv-phase5-smoke:$run_id"
+export WEB_IMAGE="101conv-web:phase5-smoke-$run_id"
 export DATA_PATH="$tmp_root/data"
 export GO_DATA_PATH="$tmp_root/go-data"
 export POSTGRES_PASSWORD="phase5-smoke-$(date +%s)-$RANDOM"
@@ -45,8 +48,8 @@ export PORT="127.0.0.1:$port_num"
 export SMOKE_BASE="http://127.0.0.1:$port_num"
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost"
 export no_proxy="$NO_PROXY"
-export BROWSER_IMAGE="101conv-browser-smoke:$$"
-mkdir -p "$GO_DATA_PATH/imports" "$GO_DATA_PATH/engines" "$BUILDX_CONFIG" "$tmp_root/state/uploads" "$tmp_root/state/results"
+export BROWSER_IMAGE="101conv-browser-smoke:$run_id"
+mkdir -p "$GO_DATA_PATH/imports" "$GO_DATA_PATH/engines" "$tmp_root/state/uploads" "$tmp_root/state/results"
 mkdir -p "$tmp_root/smoke-output"
 chmod 0777 "$GO_DATA_PATH" "$GO_DATA_PATH/imports" "$GO_DATA_PATH/engines"
 chmod 0700 "$tmp_root/state/uploads" "$tmp_root/state/results"
@@ -68,6 +71,7 @@ cleanup() {
   else
     rm -rf "$tmp_root"
   fi
+  df -h "$repo_root" "$docker_root"
   exit "$status"
 }
 trap cleanup EXIT
@@ -152,7 +156,7 @@ if [[ "${SMOKE_BACKUP_TEST:-0}" == 1 ]]; then
   "$repo_root/scripts/backup.sh" "$tmp_root/backups" "$COMPOSE_PROJECT_NAME"
   backup_dir="$(find "$tmp_root/backups" -mindepth 1 -maxdepth 1 -type d -name '101conv-backup-*' -print -quit)"
   [[ -n "$backup_dir" ]]
-  "$repo_root/scripts/test-restore.sh" "$backup_dir"
+  "$repo_root/scripts/test-restore.sh" "$backup_dir" --conversion-smoke
 fi
 docker compose -p "$COMPOSE_PROJECT_NAME" -f "$repo_root/compose.yaml" -f "$tmp_root/compose.override.yaml" restart postgres core worker
 for _ in $(seq 1 60); do

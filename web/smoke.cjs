@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-grayscale',version:'1.0.0',name:'PPM to grayscale PGM',description:'Convert ASCII PPM into portable grayscale images.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','--output','{target}']}]}});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'compression',id:'ppm-pgm-compress',version:'1.0.0',name:'PPM Image Compressor',description:'Compress a PPM image to grayscale PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],compression:{options:[{key:'quality',label:'Quality',type:'number',default:'85',min:1,max:100,step:1}]},rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','{compression.args}','--output','{target}'],compressionArguments:['--quality','{option:quality}']}]}});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'pnm-pgm-alternate',version:'1.0.0',name:'PNM to grayscale PGM',description:'Convert portable anymap images to PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['pnm'],targets:['pgm'],arguments:['--input','{source}','--output','{target}']}]}});
+  await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-slow',version:'1.0.0',name:'PPM to PGM (slow test)',description:'A delayed test profile for cancellation checks.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--sleep-ms','5000','--input','{source}','--output','{target}']}]}});
   const ppm = Buffer.from('P3\n2 1\n255\n255 0 0 0 255 0\n');
   const uploadForm = new FormData(); uploadForm.append('file', new Blob([ppm]), 'mode-check.ppm');
   const uploadResponse = await fetch(base+'/api/v1/uploads',{method:'POST',headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN},body:uploadForm});
@@ -100,6 +101,76 @@ const assert = require('node:assert/strict');
     const [batchDownload]=await Promise.all([page.waitForEvent('download'),conversionBatch.getByRole('button',{name:'Download successful files (.zip)'}).click()]);
     const zipPath=await batchDownload.path();assert.ok(zipPath,'successful batch archive downloaded');
     const zipBytes=await fs.readFile(zipPath);assert.equal(zipBytes.subarray(0,2).toString(),'PK','batch archive is a ZIP file');assert.ok(zipBytes.includes(Buffer.from('item-001-')),'archive contains a generated safe item filename');
+
+    // A corrupt member fails independently. Retrying it must leave the good
+    // member's original job untouched.
+    await page.goto(base + '/convert', { waitUntil: 'networkidle' });
+    await page.locator('input[type=file]').setInputFiles([
+      {name:'partial-good.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm},
+      {name:'partial-corrupt.ppm',mimeType:'image/x-portable-pixmap',buffer:Buffer.from('not a PPM image')}
+    ]);
+    await page.getByLabel('Convert to').selectOption('pgm');
+    await page.getByRole('button',{name:/Convert 2 files/}).click();
+    await page.getByRole('link',{name:'Jobs & history'}).click();
+    const partialBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
+    await partialBatch.waitFor({timeout:15000});
+    await page.waitForFunction(()=>[...document.querySelectorAll('.batch-history-card')].some(card=>card.innerText.includes('1 done · 1 failed')),null,{timeout:60000});
+    await partialBatch.locator('summary').click();
+    await partialBatch.getByText('partial-corrupt.ppm',{exact:true}).waitFor();
+    const partialID=(await partialBatch.locator('summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(partialID,'partial batch id is shown');
+    const beforeRetry=await page.evaluate(async id=>fetch('/api/v1/batches/'+id).then(r=>r.json()),partialID);
+    const successfulJobID=beforeRetry.items.find(item=>item.state==='succeeded')?.jobId;assert.ok(successfulJobID,'successful member has a job');
+    assert.equal(beforeRetry.items.filter(item=>item.state==='failed').length,1,'invalid input is isolated to its own item');
+    const failedJobID=beforeRetry.items.find(item=>item.state==='failed')?.jobId;assert.ok(failedJobID,'failed member has a job');
+    await partialBatch.getByRole('button',{name:'Retry failed'}).click();
+    await page.waitForFunction(async args=>{const b=await fetch('/api/v1/batches/'+args.id).then(r=>r.json());return b.failed===1&&b.succeeded===1&&b.items.some(item=>item.state==='failed'&&item.jobId!==args.failedID);},{id:partialID,failedID:failedJobID},{timeout:60000});
+    const afterRetry=await page.evaluate(async id=>fetch('/api/v1/batches/'+id).then(r=>r.json()),partialID);
+    assert.equal(afterRetry.items.find(item=>item.state==='succeeded').jobId,successfulJobID,'retry did not rerun successful work');
+
+    // Slow fixture jobs make cancellation controls deterministic without
+    // changing the production worker or its isolation settings.
+    await page.goto(base + '/convert', { waitUntil: 'networkidle' });
+    await page.locator('input[type=file]').setInputFiles([
+      {name:'cancel-one.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm},
+      {name:'cancel-two.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm}
+    ]);
+    await page.getByLabel('Convert to').selectOption('pgm');
+    await page.getByLabel('Profile for this job').selectOption('ppm-pgm-slow');
+    await page.getByRole('button',{name:/Convert 2 files/}).click();
+    await page.getByRole('link',{name:'Jobs & history'}).click();
+    const itemCancelBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
+    await itemCancelBatch.locator('summary').click();
+    await itemCancelBatch.getByText('cancel-one.ppm',{exact:true}).waitFor();
+    await itemCancelBatch.getByRole('button',{name:'Cancel this file'}).first().click();
+    const itemCancelID=(await itemCancelBatch.locator('summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(itemCancelID);
+    await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.cancelled===1&&b.succeeded===1;},itemCancelID,{timeout:60000});
+
+    await page.goto(base + '/convert', { waitUntil: 'networkidle' });
+    await page.locator('input[type=file]').setInputFiles([
+      {name:'batch-cancel-one.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm},
+      {name:'batch-cancel-two.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm}
+    ]);
+    await page.getByLabel('Convert to').selectOption('pgm');
+    await page.getByLabel('Profile for this job').selectOption('ppm-pgm-slow');
+    await page.getByRole('button',{name:/Convert 2 files/}).click();
+    await page.getByRole('link',{name:'Jobs & history'}).click();
+    const wholeCancelBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
+    const wholeCancelID=(await wholeCancelBatch.locator('summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(wholeCancelID);
+    await wholeCancelBatch.getByRole('button',{name:'Cancel batch'}).click();
+    await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.queued===0&&b.running===0&&b.cancelled===2;},wholeCancelID,{timeout:60000});
+
+    const hostileForm=new FormData();hostileForm.append('file',new Blob([ppm]),'../../escape.ppm');
+    const hostileUploadResponse=await fetch(base+'/api/v1/uploads',{method:'POST',headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN},body:hostileForm});
+    assert.equal(hostileUploadResponse.status,201,'hostile filename upload is accepted as a regular file');
+    const hostileUpload=await hostileUploadResponse.json();
+    const hostileBatchResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'hostile-zip-test-001',items:[{uploadId:hostileUpload.id,targetFormat:'pgm'}]});
+    const hostileBatch=(await hostileBatchResponse.json()).batch;
+    await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.succeeded===1;},hostileBatch.id,{timeout:60000});
+    const safeZipResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id+'/results.zip',{headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN}});
+    assert.equal(safeZipResponse.status,200,'hostile-name batch ZIP is downloadable');
+    const safeZip=Buffer.from(await safeZipResponse.arrayBuffer()).toString('latin1');
+    assert.match(safeZip,/item-001-[0-9a-f-]{36}\.pgm/,'ZIP uses a generated safe item name');
+    assert.equal(safeZip.includes('../escape'),false,'ZIP does not contain a client-controlled path');
     await page.getByLabel('Search jobs').fill('ppm-pgm-grayscale');
     await page.getByLabel('Filter jobs by status').selectOption('succeeded');
     const row = page.locator('tr').filter({ hasText: 'ppm-pgm-grayscale' });
