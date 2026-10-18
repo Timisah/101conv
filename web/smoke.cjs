@@ -277,9 +277,15 @@ const assert = require('node:assert/strict');
     await guestPage.goto(base, { waitUntil: 'networkidle' });
     await guestPage.getByRole('heading', { name: 'What are we converting?' }).waitFor();
     await guestPage.getByRole('button', { name: 'Sign in' }).waitFor();
+    assert.equal(await guestPage.locator('.login-card').count(), 0, 'the site root opens the conversion workspace instead of the sign-in page');
     assert.equal(await guestPage.locator('.guest-mode-indicator').count(), 1, 'anonymous visitor is labeled as guest');
     assert.equal(await guestPage.getByRole('link', { name: 'Users & access' }).count(), 0, 'guest navigation hides administration');
     assert.equal(await guestPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'guest conversion view fits a phone');
+    await guestPage.getByRole('button', { name: 'Sign in' }).click();
+    await guestPage.getByRole('heading', { name: 'Sign in' }).waitFor();
+    assert.equal(await guestPage.locator('.guest-continue').count(), 0, 'the sign-in page is reached only through the sign-in action');
+    await guestPage.goto(base, { waitUntil: 'networkidle' });
+    await guestPage.locator('.guest-mode-indicator').waitFor();
     await guestPage.locator('input[type=file]').setInputFiles([
       { name: 'guest-one.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm },
       { name: 'guest-two.pnm', mimeType: 'image/x-portable-anymap', buffer: ppm }
