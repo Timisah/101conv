@@ -257,12 +257,21 @@ func (a *API) updateAnonymousSettings(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "accounts_unavailable", "anonymous settings storage is unavailable")
 		return
 	}
+	current, err := a.accounts.AnonymousSettings(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "settings_error", "could not read current anonymous access settings")
+		return
+	}
+	retentionChanged := current.ResultExpirationHours != settings.ResultExpirationHours ||
+		current.UploadExpirationHours != settings.UploadExpirationHours ||
+		current.FailedExpirationHours != settings.FailedExpirationHours ||
+		current.MetadataExpirationHours != settings.MetadataExpirationHours
 	var unlock func()
-	if a.jobs != nil {
+	if a.jobs != nil && retentionChanged {
 		unlock = a.jobs.LockGuestRetention()
 		defer unlock()
 	}
-	if err := a.accounts.SetAnonymousSettings(r.Context(), settings); err != nil {
+	if err := a.accounts.SetAnonymousSettingsSelective(r.Context(), settings, retentionChanged, current.SessionExpirationHours != settings.SessionExpirationHours); err != nil {
 		if errors.Is(err, auth.ErrInvalidInput) {
 			writeAPIError(w, http.StatusUnprocessableEntity, "invalid_anonymous_settings", "check the supported ranges; total guest storage must fit the largest input plus one maximum-size result")
 		} else {
@@ -276,7 +285,7 @@ func (a *API) updateAnonymousSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	settings, err := a.accounts.AnonymousSettings(r.Context())
+	settings, err = a.accounts.AnonymousSettings(r.Context())
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "settings_error", "settings were saved but could not be reloaded")
 		return

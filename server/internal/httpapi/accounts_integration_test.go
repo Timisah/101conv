@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/timisah/101conv/server/internal/auth"
@@ -337,6 +339,54 @@ func TestPostgresAnonymousSessionIsolationAndAdministrativeBoundaries(t *testing
 		}
 		return resp
 	}
+	// A routine access toggle must not wait behind filesystem cleanup. Keep the
+	// setting enabled during this regression check, then restore its prior value.
+	settings, err := accounts.AnonymousSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedSettings := settings
+	updatedSettings.AllowCompression = !settings.AllowCompression
+	body, err := json.Marshal(updatedSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlockRetention := jobService.LockGuestRetention()
+	requestDone := make(chan error, 1)
+	go func() {
+		req, reqErr := http.NewRequest(http.MethodPut, server.URL+"/api/v1/settings/anonymous", bytes.NewReader(body))
+		if reqErr != nil {
+			requestDone <- reqErr
+			return
+		}
+		req.Header.Set("Authorization", "Bearer global-admin")
+		req.Header.Set("Content-Type", "application/json")
+		client := &http.Client{Timeout: 3 * time.Second}
+		response, reqErr := client.Do(req)
+		if reqErr == nil {
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				requestDone <- fmt.Errorf("anonymous settings update returned HTTP %d", response.StatusCode)
+				return
+			}
+		}
+		requestDone <- reqErr
+	}()
+	select {
+	case err = <-requestDone:
+		if err != nil {
+			unlockRetention()
+			t.Fatal(err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		unlockRetention()
+		<-requestDone
+		t.Fatal("changing guest access controls blocked behind a retention cleanup")
+	}
+	unlockRetention()
+	if err = accounts.SetAnonymousSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
 	first, second := newGuest(), newGuest()
 	for _, path := range []string{"/api/v1/me", "/api/v1/settings/anonymous", "/api/v1/storage"} {
 		resp := call(first, http.MethodGet, path, nil, "")
@@ -386,7 +436,7 @@ func TestPostgresAnonymousSessionIsolationAndAdministrativeBoundaries(t *testing
 		t.Fatalf("guest job listing leaked another guest's jobs: HTTP %d %s", resp.StatusCode, payload)
 	}
 	resp.Body.Close()
-	settings, err := accounts.AnonymousSettings(ctx)
+	settings, err = accounts.AnonymousSettings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

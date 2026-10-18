@@ -50,6 +50,13 @@ func (s *Service) AnonymousSettings(ctx context.Context) (AnonymousSettings, err
 }
 
 func (s *Service) SetAnonymousSettings(ctx context.Context, v AnonymousSettings) error {
+	return s.SetAnonymousSettingsSelective(ctx, v, true, true)
+}
+
+// SetAnonymousSettingsSelective updates the guest controls while allowing the
+// HTTP layer to serialize only changes that can alter an in-flight cleanup
+// decision. An enable/limit toggle must not wait for filesystem deletion.
+func (s *Service) SetAnonymousSettingsSelective(ctx context.Context, v AnonymousSettings, updateRetention, updateSessionLifetime bool) error {
 	if v.MaxFileBytes < 1 || v.MaxFileBytes > 100<<20 || v.MaxBatchFiles < 1 || v.MaxBatchFiles > 20 ||
 		v.MaxSimultaneousJobs < 1 || v.MaxSimultaneousJobs > 100 || v.UploadsPerMinute < 1 || v.UploadsPerMinute > 120 ||
 		v.SubmissionsPerMinute < 1 || v.SubmissionsPerMinute > 60 || v.MaxGlobalJobs < 1 || v.MaxGlobalJobs > 1000 ||
@@ -65,18 +72,20 @@ func (s *Service) SetAnonymousSettings(ctx context.Context, v AnonymousSettings)
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `UPDATE conv_anonymous_settings SET enabled=$1,allow_conversion=$2,allow_compression=$3,max_file_bytes=$4,max_batch_files=$5,max_guest_jobs=$6,uploads_per_minute=$7,submissions_per_minute=$8,global_uploads_per_minute=$9,global_submissions_per_minute=$10,max_global_jobs=$11,max_global_storage_bytes=$12,result_expiration_hours=$13,session_expiration_hours=$14,upload_expiration_hours=$15,failed_expiration_hours=$16,metadata_expiration_hours=$17,updated_at=now() WHERE id=1`,
+	_, err = tx.ExecContext(ctx, `UPDATE conv_anonymous_settings SET enabled=$1,allow_conversion=$2,allow_compression=$3,max_file_bytes=$4,max_batch_files=$5,max_guest_jobs=$6,uploads_per_minute=$7,submissions_per_minute=$8,global_uploads_per_minute=$9,global_submissions_per_minute=$10,max_global_jobs=$11,max_global_storage_bytes=$12,result_expiration_hours=CASE WHEN $18 THEN $13 ELSE result_expiration_hours END,session_expiration_hours=CASE WHEN $19 THEN $14 ELSE session_expiration_hours END,upload_expiration_hours=CASE WHEN $18 THEN $15 ELSE upload_expiration_hours END,failed_expiration_hours=CASE WHEN $18 THEN $16 ELSE failed_expiration_hours END,metadata_expiration_hours=CASE WHEN $18 THEN $17 ELSE metadata_expiration_hours END,updated_at=now() WHERE id=1`,
 		v.Enabled, v.AllowConversion, v.AllowCompression, v.MaxFileBytes, v.MaxBatchFiles, v.MaxSimultaneousJobs,
 		v.UploadsPerMinute, v.SubmissionsPerMinute, v.GlobalUploadsPerMinute, v.GlobalSubmissionsPerMinute, v.MaxGlobalJobs, v.MaxGlobalStorageBytes,
-		v.ResultExpirationHours, v.SessionExpirationHours, v.UploadExpirationHours, v.FailedExpirationHours, v.MetadataExpirationHours,
+		v.ResultExpirationHours, v.SessionExpirationHours, v.UploadExpirationHours, v.FailedExpirationHours, v.MetadataExpirationHours, updateRetention, updateSessionLifetime,
 	)
 	if err != nil {
 		return err
 	}
 	// Tightening session lifetime applies immediately. Increasing it never
 	// extends a credential that was already issued.
-	if _, err = tx.ExecContext(ctx, `UPDATE conv_guest_sessions SET expires_at=LEAST(expires_at,created_at+($1::int*interval '1 hour'))`, v.SessionExpirationHours); err != nil {
-		return err
+	if updateSessionLifetime {
+		if _, err = tx.ExecContext(ctx, `UPDATE conv_guest_sessions SET expires_at=LEAST(expires_at,created_at+($1::int*interval '1 hour')) WHERE expires_at>created_at+($1::int*interval '1 hour')`, v.SessionExpirationHours); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
