@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -15,9 +14,9 @@ import (
 )
 
 func TestInitialAdministratorClaimIsAtomicAndResumable(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL for PostgreSQL setup integration test")
+		t.Skip("set TEST_DATABASE_URL for PostgreSQL setup integration test")
 	}
 	ctx := context.Background()
 	adminDB, err := sql.Open("pgx", dsn)
@@ -88,6 +87,56 @@ func TestInitialAdministratorClaimIsAtomicAndResumable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = svc.CompleteInitialSetup(ctx, adminID); err != nil {
+		t.Fatal(err)
+	}
+	guestSettings, err := svc.AnonymousSettings(ctx)
+	if err != nil || !guestSettings.Enabled {
+		t.Fatalf("fresh setup should enable guest mode: %+v %v", guestSettings, err)
+	}
+	guest, guestToken, guestExpires, _, err := svc.CreateGuestSession(ctx)
+	if err != nil || !guest.Guest || guest.ID == "" || !guestExpires.After(time.Now()) {
+		t.Fatalf("guest session: %+v expiry=%v err=%v", guest, guestExpires, err)
+	}
+	validatedGuest, _, err := svc.AuthenticateGuest(ctx, guestToken)
+	if err != nil || !validatedGuest.Guest || validatedGuest.ID != guest.ID {
+		t.Fatalf("guest validation returned a different identity: %+v %v", validatedGuest, err)
+	}
+	secondGuest, secondToken, _, _, err := svc.CreateGuestSession(ctx)
+	if err != nil || secondGuest.ID == guest.ID {
+		t.Fatalf("guest sessions must have isolated owners: %s != %s (%v)", guest.ID, secondGuest.ID, err)
+	}
+	for i, want := range []bool{true, false} {
+		allowed, rateErr := svc.ConsumeGuestRate(ctx, guest.ID, "test-upload", 1, 3)
+		if rateErr != nil || allowed != want {
+			t.Fatalf("per-guest rate attempt %d allowed=%v err=%v, want %v", i+1, allowed, rateErr, want)
+		}
+	}
+	if allowed, rateErr := svc.ConsumeGuestRate(ctx, secondGuest.ID, "test-upload", 1, 3); rateErr != nil || !allowed {
+		t.Fatalf("second guest should fit global rate: allowed=%v err=%v", allowed, rateErr)
+	}
+	thirdOwnerAllowed, rateErr := svc.ConsumeGuestRate(ctx, "guest:third-test-owner", "test-upload", 1, 3)
+	if rateErr != nil || thirdOwnerAllowed {
+		t.Fatalf("global guest rate should reject the third upload: allowed=%v err=%v", thirdOwnerAllowed, rateErr)
+	}
+	settingsDisabled := guestSettings
+	settingsDisabled.Enabled = false
+	if err = svc.SetAnonymousSettings(ctx, settingsDisabled); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = svc.AuthenticateGuest(ctx, secondToken); !errors.Is(err, ErrDisabled) {
+		t.Fatalf("guest session remained usable after guest access was disabled: %v", err)
+	}
+	settingsDisabled.Enabled = true
+	if err = svc.SetAnonymousSettings(ctx, settingsDisabled); err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.RevokeGuestSession(ctx, guestToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = svc.AuthenticateGuest(ctx, guestToken); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("revoked guest credential authenticated: %v", err)
+	}
+	if err = svc.RevokeGuestSession(ctx, secondToken); err != nil {
 		t.Fatal(err)
 	}
 	status, err = svc.InitialSetupStatus(ctx)

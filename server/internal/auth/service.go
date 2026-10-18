@@ -80,6 +80,7 @@ var (
 	ErrConflict           = errors.New("account already exists")
 	ErrInvalidInput       = errors.New("invalid account or API key input")
 	ErrDisabled           = errors.New("account is disabled")
+	ErrRateLimited        = errors.New("anonymous request rate limit exceeded")
 	usernamePattern       = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{2,63}$`)
 	keyNamePattern        = regexp.MustCompile(`^[^\x00-\x1f\x7f]{1,80}$`)
 )
@@ -101,6 +102,7 @@ type Principal struct {
 	GroupIDs          []string                      `json:"groupIds"`
 	Quotas            Quotas                        `json:"quotas"`
 	APIKey            bool                          `json:"-"`
+	Guest             bool                          `json:"guest,omitempty"`
 }
 
 func AdminPrincipal() Principal {
@@ -229,6 +231,38 @@ CREATE TABLE IF NOT EXISTS conv_instance_setup (
 );
 INSERT INTO conv_instance_setup(id,completed)
 SELECT 1,EXISTS(SELECT 1 FROM conv_users) ON CONFLICT (id) DO NOTHING;
+CREATE TABLE IF NOT EXISTS conv_anonymous_settings (
+ id INTEGER PRIMARY KEY CHECK(id=1), enabled BOOLEAN NOT NULL DEFAULT false,
+ allow_conversion BOOLEAN NOT NULL DEFAULT true, allow_compression BOOLEAN NOT NULL DEFAULT true,
+ max_file_bytes BIGINT NOT NULL DEFAULT 10485760, max_batch_files INTEGER NOT NULL DEFAULT 5,
+ max_guest_jobs INTEGER NOT NULL DEFAULT 5, uploads_per_minute INTEGER NOT NULL DEFAULT 10,
+ submissions_per_minute INTEGER NOT NULL DEFAULT 5, global_uploads_per_minute INTEGER NOT NULL DEFAULT 120,
+ global_submissions_per_minute INTEGER NOT NULL DEFAULT 60, max_global_jobs INTEGER NOT NULL DEFAULT 32,
+ max_global_storage_bytes BIGINT NOT NULL DEFAULT 5368709120,
+ result_expiration_hours INTEGER NOT NULL DEFAULT 24, session_expiration_hours INTEGER NOT NULL DEFAULT 24,
+ upload_expiration_hours INTEGER NOT NULL DEFAULT 24, failed_expiration_hours INTEGER NOT NULL DEFAULT 24,
+ metadata_expiration_hours INTEGER NOT NULL DEFAULT 168, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ CHECK(max_file_bytes BETWEEN 1 AND 104857600), CHECK(max_batch_files BETWEEN 1 AND 20),
+ CHECK(max_guest_jobs BETWEEN 1 AND 100), CHECK(uploads_per_minute BETWEEN 1 AND 120),
+ CHECK(submissions_per_minute BETWEEN 1 AND 60), CHECK(max_global_jobs BETWEEN 1 AND 1000),
+ CHECK(global_uploads_per_minute BETWEEN 1 AND 10000), CHECK(global_submissions_per_minute BETWEEN 1 AND 10000),
+ CHECK(max_global_storage_bytes BETWEEN 10485760 AND 1099511627776),
+ CHECK(result_expiration_hours BETWEEN 1 AND 720), CHECK(session_expiration_hours BETWEEN 1 AND 720),
+ CHECK(upload_expiration_hours BETWEEN 1 AND 720), CHECK(failed_expiration_hours BETWEEN 1 AND 720),
+ CHECK(metadata_expiration_hours BETWEEN 1 AND 8760)
+);
+INSERT INTO conv_anonymous_settings(id) VALUES(1) ON CONFLICT(id) DO NOTHING;
+ALTER TABLE conv_anonymous_settings ADD COLUMN IF NOT EXISTS global_uploads_per_minute INTEGER NOT NULL DEFAULT 120 CHECK(global_uploads_per_minute BETWEEN 1 AND 10000);
+ALTER TABLE conv_anonymous_settings ADD COLUMN IF NOT EXISTS global_submissions_per_minute INTEGER NOT NULL DEFAULT 60 CHECK(global_submissions_per_minute BETWEEN 1 AND 10000);
+CREATE TABLE IF NOT EXISTS conv_guest_sessions (
+ id TEXT PRIMARY KEY, token_hash BYTEA NOT NULL UNIQUE, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS conv_guest_sessions_expiry_idx ON conv_guest_sessions(expires_at);
+CREATE TABLE IF NOT EXISTS conv_guest_rate_buckets (
+ guest_id TEXT NOT NULL, action TEXT NOT NULL, bucket TIMESTAMPTZ NOT NULL, count INTEGER NOT NULL,
+ PRIMARY KEY(guest_id,action,bucket)
+);
+CREATE INDEX IF NOT EXISTS conv_guest_rate_buckets_bucket_idx ON conv_guest_rate_buckets(bucket);
 `)
 	return err
 }

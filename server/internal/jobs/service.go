@@ -103,6 +103,10 @@ CREATE TABLE IF NOT EXISTS conv_uploads (
  size_bytes BIGINT NOT NULL, sha256 TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  consumed BOOLEAN NOT NULL DEFAULT false, owner_id TEXT NOT NULL DEFAULT 'admin'
 );
+CREATE TABLE IF NOT EXISTS conv_guest_upload_reservations (
+ id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, reserved_bytes BIGINT NOT NULL, expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS conv_guest_upload_reservations_expiry_idx ON conv_guest_upload_reservations(expires_at);
 CREATE TABLE IF NOT EXISTS conv_jobs (
  id TEXT PRIMARY KEY, upload_id TEXT NOT NULL REFERENCES conv_uploads(id),
  profile_id TEXT NOT NULL, profile_version TEXT NOT NULL,
@@ -512,6 +516,57 @@ func (s *Service) CreateUpload(ctx context.Context, fileName string, input io.Re
 }
 
 func (s *Service) CreateUploadFor(ctx context.Context, ownerID string, maxFileBytes int64, monthlyInputBytes *int64, fileName string, input io.Reader) (view Upload, retErr error) {
+	return s.CreateUploadWithGuestCapacity(ctx, ownerID, maxFileBytes, monthlyInputBytes, 0, fileName, input)
+}
+
+func (s *Service) CreateUploadWithGuestCapacity(ctx context.Context, ownerID string, maxFileBytes int64, monthlyInputBytes *int64, maxGlobalGuestStorage int64, fileName string, input io.Reader) (view Upload, retErr error) {
+	return s.CreateUploadWithGuestReservation(ctx, ownerID, maxFileBytes, monthlyInputBytes, maxGlobalGuestStorage, "", fileName, input)
+}
+
+func (s *Service) ReserveGuestUpload(ctx context.Context, ownerID string, reserveBytes, maxStorageBytes int64) (string, error) {
+	if !strings.HasPrefix(ownerID, "guest:") || reserveBytes <= 0 || maxStorageBytes <= 0 || reserveBytes > maxStorageBytes {
+		return "", ErrGuestCapacity
+	}
+	id, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('101conv-guest-storage',0))`); err != nil {
+		return "", err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM conv_guest_upload_reservations WHERE expires_at<now()`); err != nil {
+		return "", err
+	}
+	used, err := guestStorageUsage(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	if used+reserveBytes > maxStorageBytes {
+		return "", ErrGuestCapacity
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO conv_guest_upload_reservations(id,owner_id,reserved_bytes,expires_at) VALUES($1,$2,$3,now()+interval '20 minutes')`, id, ownerID, reserveBytes); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (s *Service) ReleaseGuestUploadReservation(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM conv_guest_upload_reservations WHERE id=$1`, id)
+	return err
+}
+
+func (s *Service) CreateUploadWithGuestReservation(ctx context.Context, ownerID string, maxFileBytes int64, monthlyInputBytes *int64, maxGlobalGuestStorage int64, reservationID, fileName string, input io.Reader) (view Upload, retErr error) {
 	if strings.TrimSpace(ownerID) == "" {
 		return Upload{}, fmt.Errorf("upload owner is required")
 	}
@@ -587,8 +642,32 @@ func (s *Service) CreateUploadFor(ctx context.Context, ownerID string, maxFileBy
 		return Upload{}, err
 	}
 	defer tx.Rollback()
+	if maxGlobalGuestStorage > 0 && strings.HasPrefix(ownerID, "guest:") {
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('101conv-guest-storage',0))`); err != nil {
+			return Upload{}, err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, ownerID); err != nil {
 		return Upload{}, err
+	}
+	if maxGlobalGuestStorage > 0 && strings.HasPrefix(ownerID, "guest:") {
+		if reservationID != "" {
+			var reservedOwner string
+			var reservedBytes int64
+			if err = tx.QueryRowContext(ctx, `SELECT owner_id,reserved_bytes FROM conv_guest_upload_reservations WHERE id=$1 AND expires_at>now() FOR UPDATE`, reservationID).Scan(&reservedOwner, &reservedBytes); err != nil {
+				return Upload{}, ErrGuestCapacity
+			}
+			if reservedOwner != ownerID || reservedBytes < size {
+				return Upload{}, ErrGuestCapacity
+			}
+		}
+		used, usageErr := guestStorageUsageExceptReservation(ctx, tx, reservationID)
+		if usageErr != nil {
+			return Upload{}, usageErr
+		}
+		if used+size > maxGlobalGuestStorage {
+			return Upload{}, ErrGuestCapacity
+		}
 	}
 	if monthlyInputBytes != nil {
 		var used int64
@@ -602,6 +681,11 @@ func (s *Service) CreateUploadFor(ctx context.Context, ownerID string, maxFileBy
 	if _, err = tx.ExecContext(ctx, `INSERT INTO conv_uploads(id,file_name,extension,size_bytes,sha256,owner_id) VALUES($1,$2,$3,$4,$5,$6)`, view.ID, view.FileName, view.Extension, view.Size, view.SHA256, ownerID); err != nil {
 		return Upload{}, err
 	}
+	if reservationID != "" {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM conv_guest_upload_reservations WHERE id=$1 AND owner_id=$2`, reservationID, ownerID); err != nil {
+			return Upload{}, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return Upload{}, err
 	}
@@ -614,7 +698,32 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (Job, bool, err
 }
 
 type Limits struct {
-	MonthlyJobs *int64
+	MonthlyJobs                *int64
+	Guest                      bool
+	MaxBatchFiles              int
+	MaxGuestActiveJobs         int
+	MaxGlobalGuestJobs         int
+	MaxGlobalGuestStorageBytes int64
+}
+
+// guestStorageUsage counts actual retained originals/results and reserves the
+// hard per-result output ceiling for active or not-yet-submitted guest jobs.
+// This keeps anonymous result growth within the same configured capacity even
+// while converters are writing into private Worker workspaces.
+func guestStorageUsage(ctx context.Context, tx *sql.Tx) (int64, error) {
+	return guestStorageUsageExceptReservation(ctx, tx, "")
+}
+
+func guestStorageUsageExceptReservation(ctx context.Context, tx *sql.Tx, excludeReservation string) (int64, error) {
+	var used int64
+	err := tx.QueryRowContext(ctx, `
+SELECT
+ (SELECT COALESCE(sum(size_bytes),0) FROM conv_uploads WHERE owner_id LIKE 'guest:%' AND original_deleted_at IS NULL)
+ +(SELECT COALESCE(sum(result_size),0) FROM conv_jobs WHERE owner_id LIKE 'guest:%' AND state='succeeded' AND result_key IS NOT NULL AND result_deleted_at IS NULL AND result_missing_at IS NULL)
+ +((SELECT count(*) FROM conv_jobs WHERE owner_id LIKE 'guest:%' AND state IN ('queued','running'))
+   +(SELECT count(*) FROM conv_batch_items i JOIN conv_batches b ON b.id=i.batch_id WHERE b.owner_id LIKE 'guest:%' AND i.state IN ('pending','submitting')))*$1
+ +(SELECT COALESCE(sum(reserved_bytes),0) FROM conv_guest_upload_reservations WHERE expires_at>now() AND ($2='' OR id<>$2))`, MaxOutputBytes, excludeReservation).Scan(&used)
+	return used, err
 }
 
 type MonthlyUsage struct {
@@ -736,7 +845,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	if err != nil {
 		return Job{}, false, err
 	}
-	if existing, e := s.getByIdempotency(ctx, req.IdempotencyKey); e == nil {
+	if existing, e := s.getByIdempotency(ctx, req.IdempotencyKey, ownerID); e == nil {
 		if existing.requestHash != requestDigest {
 			return Job{}, false, fmt.Errorf("%w: idempotency key was used for a different request", ErrConflict)
 		}
@@ -753,8 +862,41 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		return Job{}, false, err
 	}
 	defer tx.Rollback()
+	if limits.Guest && batchID == "" {
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('101conv-guest-storage',0))`); err != nil {
+			return Job{}, false, err
+		}
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('101conv-guest-jobs',0))`); err != nil {
+			return Job{}, false, err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, ownerID); err != nil {
 		return Job{}, false, err
+	}
+	if limits.Guest && batchID == "" {
+		if limits.MaxGuestActiveJobs < 1 || limits.MaxGlobalGuestJobs < 1 {
+			return Job{}, false, ErrGuestCapacity
+		}
+		var ownerActive, globalActive int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM conv_jobs WHERE owner_id=$1 AND state IN ('queued','running')`, ownerID).Scan(&ownerActive); err != nil {
+			return Job{}, false, err
+		}
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM conv_jobs WHERE owner_id LIKE 'guest:%' AND state IN ('queued','running')`).Scan(&globalActive); err != nil {
+			return Job{}, false, err
+		}
+		if ownerActive >= limits.MaxGuestActiveJobs || globalActive >= limits.MaxGlobalGuestJobs {
+			return Job{}, false, ErrGuestCapacity
+		}
+		if limits.MaxGlobalGuestStorageBytes < 1 {
+			return Job{}, false, ErrGuestCapacity
+		}
+		used, usageErr := guestStorageUsage(ctx, tx)
+		if usageErr != nil {
+			return Job{}, false, usageErr
+		}
+		if used+MaxOutputBytes > limits.MaxGlobalGuestStorageBytes {
+			return Job{}, false, ErrGuestCapacity
+		}
 	}
 	if batchID != "" {
 		var cancelled bool
@@ -794,7 +936,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		return Job{}, false, ErrFileExpired
 	}
 	if consumed {
-		if existing, getErr := s.getByIdempotency(ctx, req.IdempotencyKey); getErr == nil && existing.requestHash == requestDigest {
+		if existing, getErr := s.getByIdempotency(ctx, req.IdempotencyKey, ownerID); getErr == nil && existing.requestHash == requestDigest {
 			return existing.job, true, nil
 		}
 		return Job{}, false, fmt.Errorf("%w: upload has already been submitted", ErrConflict)
@@ -819,7 +961,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			if existing, getErr := s.getByIdempotency(ctx, req.IdempotencyKey); getErr == nil && existing.requestHash == requestDigest {
+			if existing, getErr := s.getByIdempotency(ctx, req.IdempotencyKey, ownerID); getErr == nil && existing.requestHash == requestDigest {
 				return existing.job, true, nil
 			}
 			return Job{}, false, fmt.Errorf("%w: idempotency key already exists", ErrConflict)
@@ -830,7 +972,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		return Job{}, false, err
 	}
 	if err = tx.Commit(); err != nil {
-		if existing, getErr := s.getByIdempotency(ctx, req.IdempotencyKey); getErr == nil && existing.requestHash == requestDigest {
+		if existing, getErr := s.getByIdempotency(ctx, req.IdempotencyKey, ownerID); getErr == nil && existing.requestHash == requestDigest {
 			return existing.job, true, nil
 		}
 		return Job{}, false, err
@@ -938,9 +1080,9 @@ type idemRecord struct {
 	requestHash string
 }
 
-func (s *Service) getByIdempotency(ctx context.Context, key string) (idemRecord, error) {
+func (s *Service) getByIdempotency(ctx context.Context, key, ownerID string) (idemRecord, error) {
 	var r idemRecord
-	err := scanJob(s.db.QueryRowContext(ctx, `SELECT `+jobColumns+`,request_hash FROM conv_jobs WHERE idempotency_key=$1`, key), &r.job, &r.requestHash)
+	err := scanJob(s.db.QueryRowContext(ctx, `SELECT `+jobColumns+`,request_hash FROM conv_jobs WHERE idempotency_key=$1 AND owner_id=$2`, key, ownerID), &r.job, &r.requestHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return idemRecord{}, ErrNotFound
 	}

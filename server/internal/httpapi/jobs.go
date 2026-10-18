@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"archive/zip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -27,8 +28,48 @@ func batchScope(mode string) string {
 	}
 	return auth.ScopeSubmit
 }
-func batchLimits(p auth.Principal) jobs.Limits {
-	return jobs.Limits{MonthlyJobs: p.Quotas.MonthlyJobs.Value}
+func (a *API) guestJobLimits(ctx context.Context, p auth.Principal) jobs.Limits {
+	limits := jobs.Limits{MonthlyJobs: p.Quotas.MonthlyJobs.Value, Guest: p.Guest}
+	if p.Guest && a.accounts != nil {
+		if s, err := a.accounts.AnonymousSettings(ctx); err == nil {
+			limits.MaxBatchFiles = s.MaxBatchFiles
+			limits.MaxGuestActiveJobs = s.MaxSimultaneousJobs
+			limits.MaxGlobalGuestJobs = s.MaxGlobalJobs
+			limits.MaxGlobalGuestStorageBytes = s.MaxGlobalStorageBytes
+		} else {
+			limits.MaxBatchFiles = 0
+			limits.MaxGuestActiveJobs = 0
+			limits.MaxGlobalGuestJobs = 0
+			limits.MaxGlobalGuestStorageBytes = 0
+		}
+	}
+	return limits
+}
+
+func (a *API) consumeGuestRate(w http.ResponseWriter, r *http.Request, p auth.Principal, action string) bool {
+	if !p.Guest || a.accounts == nil {
+		return true
+	}
+	s, err := a.accounts.AnonymousSettings(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "settings_error", "could not check guest request limits")
+		return false
+	}
+	per, global := s.SubmissionsPerMinute, s.GlobalSubmissionsPerMinute
+	if action == "upload" {
+		per, global = s.UploadsPerMinute, s.GlobalUploadsPerMinute
+	}
+	allowed, err := a.accounts.ConsumeGuestRate(r.Context(), p.ID, action, per, global)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "rate_limit_error", "could not check guest request limits")
+		return false
+	}
+	if !allowed {
+		w.Header().Set("Retry-After", "60")
+		writeAPIError(w, http.StatusTooManyRequests, "guest_rate_limited", "guest request limit reached; wait a minute and try again")
+		return false
+	}
+	return true
 }
 
 func (a *API) createBatch(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +85,10 @@ func (a *API) createBatch(w http.ResponseWriter, r *http.Request) {
 	if !ok || !a.jobsReady(w) {
 		return
 	}
-	batch, duplicate, err := a.jobs.CreateBatch(r.Context(), req, p.ID, batchLimits(p))
+	if !a.consumeGuestRate(w, r, p, "submission") {
+		return
+	}
+	batch, duplicate, err := a.jobs.CreateBatch(r.Context(), req, p.ID, a.guestJobLimits(r.Context(), p))
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -92,7 +136,7 @@ func (a *API) getBatch(w http.ResponseWriter, r *http.Request) {
 	if !ok || !a.jobsReady(w) {
 		return
 	}
-	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), batchOwner(p), batchLimits(p))
+	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), batchOwner(p), a.guestJobLimits(r.Context(), p))
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -106,7 +150,7 @@ func (a *API) downloadBatchResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ownerID := batchOwner(p)
-	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), ownerID, batchLimits(p))
+	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), ownerID, a.guestJobLimits(r.Context(), p))
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -171,7 +215,7 @@ func (a *API) resumeBatch(w http.ResponseWriter, r *http.Request) {
 	if !ok || !a.jobsReady(w) {
 		return
 	}
-	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), batchOwner(p), batchLimits(p))
+	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), batchOwner(p), a.guestJobLimits(r.Context(), p))
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -179,7 +223,7 @@ func (a *API) resumeBatch(w http.ResponseWriter, r *http.Request) {
 	if _, ok = a.requireCapability(w, r, batchScope(batch.Mode)); !ok {
 		return
 	}
-	batch, err = a.jobs.ResumeBatch(r.Context(), batch.ID, batchOwner(p), batchLimits(p))
+	batch, err = a.jobs.ResumeBatch(r.Context(), batch.ID, batchOwner(p), a.guestJobLimits(r.Context(), p))
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -223,7 +267,7 @@ func (a *API) retryBatch(w http.ResponseWriter, r *http.Request) {
 	if !ok || !a.jobsReady(w) {
 		return
 	}
-	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), batchOwner(p), batchLimits(p))
+	batch, err := a.jobs.GetBatch(r.Context(), r.PathValue("id"), batchOwner(p), a.guestJobLimits(r.Context(), p))
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -237,7 +281,10 @@ func (a *API) retryBatch(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 && !decodeBody(w, r, &req) {
 		return
 	}
-	batch, err = a.jobs.RetryBatchItems(r.Context(), batch.ID, batchOwner(p), req.Items, batchLimits(p))
+	if !a.consumeGuestRate(w, r, p, "submission") {
+		return
+	}
+	batch, err = a.jobs.RetryBatchItems(r.Context(), batch.ID, batchOwner(p), req.Items, a.guestJobLimits(r.Context(), p))
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -258,7 +305,26 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if !ok || !a.jobsReady(w) {
 		return
 	}
+	if !a.consumeGuestRate(w, r, p, "upload") {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, jobs.MaxInputBytes+(1<<20))
+	reservationID := ""
+	maxGuestStorage := int64(0)
+	if p.Guest {
+		settings, err := a.accounts.AnonymousSettings(r.Context())
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "settings_error", "could not check guest storage limits")
+			return
+		}
+		maxGuestStorage = settings.MaxGlobalStorageBytes
+		reservationID, err = a.jobs.ReserveGuestUpload(r.Context(), p.ID, p.MaxFileBytes, maxGuestStorage)
+		if err != nil {
+			writeJobError(w, err)
+			return
+		}
+		defer a.jobs.ReleaseGuestUploadReservation(context.Background(), reservationID)
+	}
 	if r.ContentLength > 0 {
 		free, err := a.jobs.UploadFreeBytes()
 		required := uint64(r.ContentLength) + (16 << 20)
@@ -278,7 +344,7 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer part.Close()
-	upload, err := a.jobs.CreateUploadFor(r.Context(), p.ID, p.MaxFileBytes, p.Quotas.MonthlyBytes.Value, part.FileName(), part)
+	upload, err := a.jobs.CreateUploadWithGuestReservation(r.Context(), p.ID, p.MaxFileBytes, p.Quotas.MonthlyBytes.Value, maxGuestStorage, reservationID, part.FileName(), part)
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -308,6 +374,9 @@ func (a *API) submitJobMode(w http.ResponseWriter, r *http.Request, forcedMode s
 	if !ok || !a.jobsReady(w) {
 		return
 	}
+	if !a.consumeGuestRate(w, r, p, "submission") {
+		return
+	}
 	var req jobs.SubmitRequest
 	if !decodeBody(w, r, &req) {
 		return
@@ -325,7 +394,7 @@ func (a *API) submitJobMode(w http.ResponseWriter, r *http.Request, forcedMode s
 		}
 		req.Mode = "convert"
 	}
-	job, duplicate, err := a.jobs.SubmitFor(r.Context(), req, p.ID, jobs.Limits{MonthlyJobs: p.Quotas.MonthlyJobs.Value})
+	job, duplicate, err := a.jobs.SubmitFor(r.Context(), req, p.ID, a.guestJobLimits(r.Context(), p))
 	if err != nil {
 		writeJobError(w, err)
 		return
@@ -463,6 +532,9 @@ func writeJobError(w http.ResponseWriter, err error) {
 	case errors.Is(err, jobs.ErrQuotaExceeded):
 		status = http.StatusTooManyRequests
 		code = "quota_exceeded"
+	case errors.Is(err, jobs.ErrGuestCapacity):
+		status = http.StatusTooManyRequests
+		code = "guest_capacity_reached"
 	case errors.Is(err, jobs.ErrInsufficientStorage):
 		status = http.StatusInsufficientStorage
 		code = "insufficient_storage"

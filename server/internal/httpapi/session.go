@@ -19,6 +19,7 @@ import (
 
 const (
 	adminCookie = "101conv_admin"
+	guestCookie = "101conv_guest"
 )
 
 type sessionStore struct {
@@ -144,6 +145,12 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	success = true
+	if c, err := r.Cookie(guestCookie); err == nil {
+		if a.accounts != nil {
+			_ = a.accounts.RevokeGuestSession(r.Context(), c.Value)
+		}
+		http.SetCookie(w, &http.Cookie{Name: guestCookie, Value: "", Path: "/api/v1", MaxAge: -1, HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteStrictMode})
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: adminCookie, Value: token, Path: "/api/v1", Expires: expires, MaxAge: int(time.Until(expires).Seconds()),
 		HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteStrictMode,
@@ -156,10 +163,125 @@ func (a *API) getSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	p, _, ok := a.identityWithMethod(r)
 	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
+		result := map[string]any{"authenticated": false}
+		if a.accounts != nil {
+			if settings, err := a.accounts.AnonymousSettings(r.Context()); err == nil {
+				setup, _ := a.accounts.InitialSetupStatus(r.Context())
+				result["anonymousEnabled"] = settings.Enabled && setup.Completed
+				result["guestResultExpirationHours"] = settings.ResultExpirationHours
+				result["guestMaxBatchFiles"] = settings.MaxBatchFiles
+			}
+		}
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "username": p.Username, "role": p.Role, "canConvert": p.CanConvert, "canCompress": p.Permissions[auth.PermissionCompression], "canReadJobs": p.CanReadJobs, "permissions": p.Permissions})
+	result := map[string]any{"authenticated": true, "username": p.Username, "role": p.Role, "canConvert": p.CanConvert, "canCompress": p.Permissions[auth.PermissionCompression], "canReadJobs": p.CanReadJobs, "permissions": p.Permissions, "guest": p.Guest}
+	if p.Guest && a.accounts != nil {
+		if settings, err := a.accounts.AnonymousSettings(r.Context()); err == nil {
+			result["guestResultExpirationHours"] = settings.ResultExpirationHours
+			result["guestMaxBatchFiles"] = settings.MaxBatchFiles
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *API) createGuestSession(w http.ResponseWriter, r *http.Request) {
+	if a.accounts == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "guest_unavailable", "guest access is not configured")
+		return
+	}
+	if !sameOriginRequest(r) {
+		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
+		return
+	}
+	p, token, expires, settings, err := a.accounts.CreateGuestSession(r.Context())
+	if err != nil {
+		if errors.Is(err, auth.ErrRateLimited) {
+			w.Header().Set("Retry-After", "60")
+			writeAPIError(w, http.StatusTooManyRequests, "guest_rate_limited", "too many guest sessions were started; try again in a minute")
+			return
+		}
+		if errors.Is(err, auth.ErrDisabled) {
+			writeAPIError(w, http.StatusForbidden, "guest_disabled", "anonymous conversions are not enabled")
+		} else {
+			writeAPIError(w, http.StatusInternalServerError, "guest_session_error", "could not start a guest session")
+		}
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: guestCookie, Value: token, Path: "/api/v1", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteStrictMode})
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, map[string]any{"authenticated": true, "guest": true, "username": p.Username, "role": p.Role, "canConvert": p.CanConvert, "canCompress": settings.AllowCompression, "canReadJobs": true, "permissions": p.Permissions, "expiresAt": expires, "guestResultExpirationHours": settings.ResultExpirationHours, "guestMaxBatchFiles": settings.MaxBatchFiles})
+}
+
+func (a *API) deleteGuestSession(w http.ResponseWriter, r *http.Request) {
+	if !sameOriginRequest(r) {
+		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
+		return
+	}
+	if c, err := r.Cookie(guestCookie); err == nil && a.accounts != nil {
+		if err := a.accounts.RevokeGuestSession(r.Context(), c.Value); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "guest_session_error", "could not end guest session")
+			return
+		}
+	}
+	http.SetCookie(w, &http.Cookie{Name: guestCookie, Value: "", Path: "/api/v1", MaxAge: -1, HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteStrictMode})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) getAnonymousSettings(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	if a.accounts == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "accounts_unavailable", "anonymous settings storage is unavailable")
+		return
+	}
+	settings, err := a.accounts.AnonymousSettings(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "settings_error", "could not read anonymous access settings")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (a *API) updateAnonymousSettings(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var settings auth.AnonymousSettings
+	if !decodeBody(w, r, &settings) {
+		return
+	}
+	if a.accounts == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "accounts_unavailable", "anonymous settings storage is unavailable")
+		return
+	}
+	var unlock func()
+	if a.jobs != nil {
+		unlock = a.jobs.LockGuestRetention()
+		defer unlock()
+	}
+	if err := a.accounts.SetAnonymousSettings(r.Context(), settings); err != nil {
+		if errors.Is(err, auth.ErrInvalidInput) {
+			writeAPIError(w, http.StatusUnprocessableEntity, "invalid_anonymous_settings", "check the supported ranges; total guest storage must fit the largest input plus one maximum-size result")
+		} else {
+			writeAPIError(w, http.StatusInternalServerError, "settings_error", "could not save anonymous access settings")
+		}
+		return
+	}
+	if p, ok := a.identity(r); ok {
+		if err := a.accounts.RecordAudit(r.Context(), p.ID, "anonymous.settings_updated", "instance", "1", map[string]any{"enabled": settings.Enabled, "resultExpirationHours": settings.ResultExpirationHours, "sessionExpirationHours": settings.SessionExpirationHours}); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "audit_error", "settings were saved but the audit record could not be written")
+			return
+		}
+	}
+	settings, err := a.accounts.AnonymousSettings(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "settings_error", "settings were saved but could not be reloaded")
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
 }
 
 func (a *API) getSessionSettings(w http.ResponseWriter, r *http.Request) {
@@ -198,12 +320,17 @@ func (a *API) updateSessionSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteSession(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.identityWithMethod(r); !ok {
+	p, _, ok := a.identityWithMethod(r)
+	if !ok {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "sign-in required")
 		return
 	}
 	if r.Header.Get("Authorization") == "" && !sameOriginRequest(r) {
 		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
+		return
+	}
+	if p.Guest {
+		a.deleteGuestSession(w, r)
 		return
 	}
 	if a.sessions == nil {

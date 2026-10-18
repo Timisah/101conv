@@ -27,9 +27,9 @@ func (unusedBatchRunner) Run(context.Context, worker.Invocation) (worker.Result,
 }
 
 func TestDurableBatchIdempotencyRetryCancelAndRestart(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL to run PostgreSQL batch integration test")
+		t.Skip("set TEST_DATABASE_URL to run PostgreSQL batch integration test")
 	}
 	ctx := context.Background()
 	adminDB, err := sql.Open("pgx", dsn)
@@ -411,5 +411,22 @@ func TestDurableBatchIdempotencyRetryCancelAndRestart(t *testing.T) {
 	}
 	if strings.Join(fairRound[:3], ",") != "fair-round-b,fair-round-c,fair-round-a" {
 		t.Fatalf("eligible owner rotation starved a user: %v", fairRound)
+	}
+	guestOwner := "guest:capacity-fixture"
+	guestLimits := Limits{Guest: true, MaxBatchFiles: 5, MaxGuestActiveJobs: 10, MaxGlobalGuestJobs: 20, MaxGlobalGuestStorageBytes: MaxOutputBytes + (1 << 20)}
+	guestUpload, err := svc.CreateUploadWithGuestCapacity(ctx, guestOwner, 1<<20, nil, guestLimits.MaxGlobalGuestStorageBytes, "guest-one.ppm", strings.NewReader("guest"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestBatch, _, err := svc.CreateBatch(ctx, BatchRequest{Mode: "convert", IdempotencyKey: "guest-capacity-batch-01", Items: []BatchItemRequest{{UploadID: guestUpload.ID, TargetFormat: "pgm"}}}, guestOwner, guestLimits)
+	if err != nil || guestBatch.Queued != 1 {
+		t.Fatalf("first guest batch should reserve one maximum output: batch=%+v err=%v", guestBatch, err)
+	}
+	guestUploadTwo, err := svc.CreateUploadWithGuestCapacity(ctx, guestOwner, 1<<20, nil, guestLimits.MaxGlobalGuestStorageBytes, "guest-two.ppm", strings.NewReader("guest"))
+	if err != nil {
+		t.Fatalf("a small upload should fit beside one reserved output: %v", err)
+	}
+	if _, _, err = svc.CreateBatch(ctx, BatchRequest{Mode: "convert", IdempotencyKey: "guest-capacity-batch-02", Items: []BatchItemRequest{{UploadID: guestUploadTwo.ID, TargetFormat: "pgm"}}}, guestOwner, guestLimits); !errors.Is(err, ErrGuestCapacity) {
+		t.Fatalf("a second maximum output reservation exceeded guest storage but was accepted: %v", err)
 	}
 }

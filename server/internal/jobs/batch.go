@@ -101,6 +101,16 @@ func (s *Service) RetryBatchItems(ctx context.Context, id, ownerID string, index
 		if err != nil {
 			return Batch{}, err
 		}
+		if limits.Guest {
+			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('101conv-guest-storage',0))`); err != nil {
+				tx.Rollback()
+				return Batch{}, err
+			}
+			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('101conv-guest-jobs',0))`); err != nil {
+				tx.Rollback()
+				return Batch{}, err
+			}
+		}
 		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, batchOwner); err != nil {
 			tx.Rollback()
 			return Batch{}, err
@@ -116,6 +126,36 @@ func (s *Service) RetryBatchItems(ctx context.Context, id, ownerID string, index
 		if batchCancelled {
 			tx.Rollback()
 			return Batch{}, fmt.Errorf("%w: canceled batch items cannot be retried", ErrConflict)
+		}
+		if limits.Guest {
+			var ownerOutstanding, globalOutstanding int
+			q := `SELECT (SELECT count(*) FROM conv_jobs j WHERE j.owner_id=$1 AND j.state IN ('queued','running'))+(SELECT count(*) FROM conv_batch_items i JOIN conv_batches b ON b.id=i.batch_id WHERE b.owner_id=$1 AND i.state IN ('pending','submitting'))`
+			if err = tx.QueryRowContext(ctx, q, batchOwner).Scan(&ownerOutstanding); err != nil {
+				tx.Rollback()
+				return Batch{}, err
+			}
+			q = `SELECT (SELECT count(*) FROM conv_jobs j WHERE j.owner_id LIKE 'guest:%' AND j.state IN ('queued','running'))+(SELECT count(*) FROM conv_batch_items i JOIN conv_batches b ON b.id=i.batch_id WHERE b.owner_id LIKE 'guest:%' AND i.state IN ('pending','submitting'))`
+			if err = tx.QueryRowContext(ctx, q).Scan(&globalOutstanding); err != nil {
+				tx.Rollback()
+				return Batch{}, err
+			}
+			if ownerOutstanding+1 > limits.MaxGuestActiveJobs || globalOutstanding+1 > limits.MaxGlobalGuestJobs {
+				tx.Rollback()
+				return Batch{}, ErrGuestCapacity
+			}
+			if limits.MaxGlobalGuestStorageBytes < 1 {
+				tx.Rollback()
+				return Batch{}, ErrGuestCapacity
+			}
+			used, usageErr := guestStorageUsage(ctx, tx)
+			if usageErr != nil {
+				tx.Rollback()
+				return Batch{}, usageErr
+			}
+			if used+MaxOutputBytes > limits.MaxGlobalGuestStorageBytes {
+				tx.Rollback()
+				return Batch{}, ErrGuestCapacity
+			}
 		}
 		reset, resetErr := tx.ExecContext(ctx, `UPDATE conv_batch_items SET state='pending',error='',error_code='',claim_until=now(),updated_at=now() WHERE batch_id=$1 AND item_index=$2 AND current_job_id IS NULL AND state='failed'`, id, index)
 		if resetErr != nil {
@@ -259,6 +299,9 @@ func (s *Service) CreateBatch(ctx context.Context, req BatchRequest, ownerID str
 	if req.Mode != "convert" && req.Mode != "compress" || !idempotencyRE.MatchString(req.IdempotencyKey) || len(req.Items) < 1 || len(req.Items) > MaxBatchItems {
 		return Batch{}, false, fmt.Errorf("%w: batch mode, idempotency key, or item count is invalid", ErrInvalidInput)
 	}
+	if limits.Guest && limits.MaxBatchFiles > 0 && len(req.Items) > limits.MaxBatchFiles {
+		return Batch{}, false, ErrGuestCapacity
+	}
 	for i := range req.Items {
 		if !fileIDRE.MatchString(req.Items[i].UploadID) || !formatRE.MatchString(strings.ToLower(req.Items[i].TargetFormat)) {
 			return Batch{}, false, fmt.Errorf("%w: item %d has an invalid upload or target format", ErrInvalidInput, i+1)
@@ -287,6 +330,17 @@ func (s *Service) CreateBatch(ctx context.Context, req BatchRequest, ownerID str
 		return Batch{}, false, err
 	}
 	defer tx.Rollback()
+	if limits.Guest {
+		if limits.MaxGuestActiveJobs < 1 || limits.MaxGlobalGuestJobs < 1 {
+			return Batch{}, false, ErrGuestCapacity
+		}
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('101conv-guest-storage',0))`); err != nil {
+			return Batch{}, false, err
+		}
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('101conv-guest-jobs',0))`); err != nil {
+			return Batch{}, false, err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, ownerID); err != nil {
 		return Batch{}, false, err
 	}
@@ -307,6 +361,30 @@ func (s *Service) CreateBatch(ctx context.Context, req BatchRequest, ownerID str
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Batch{}, false, err
+	}
+	if limits.Guest {
+		var ownerOutstanding, globalOutstanding int
+		countQuery := `SELECT (SELECT count(*) FROM conv_jobs j WHERE j.owner_id=$1 AND j.state IN ('queued','running')) + (SELECT count(*) FROM conv_batch_items bi JOIN conv_batches b ON b.id=bi.batch_id WHERE b.owner_id=$1 AND bi.state IN ('pending','submitting'))`
+		if err = tx.QueryRowContext(ctx, countQuery, ownerID).Scan(&ownerOutstanding); err != nil {
+			return Batch{}, false, err
+		}
+		globalQuery := `SELECT (SELECT count(*) FROM conv_jobs j WHERE j.owner_id LIKE 'guest:%' AND j.state IN ('queued','running')) + (SELECT count(*) FROM conv_batch_items bi JOIN conv_batches b ON b.id=bi.batch_id WHERE b.owner_id LIKE 'guest:%' AND bi.state IN ('pending','submitting'))`
+		if err = tx.QueryRowContext(ctx, globalQuery).Scan(&globalOutstanding); err != nil {
+			return Batch{}, false, err
+		}
+		if ownerOutstanding+len(req.Items) > limits.MaxGuestActiveJobs || globalOutstanding+len(req.Items) > limits.MaxGlobalGuestJobs {
+			return Batch{}, false, ErrGuestCapacity
+		}
+		if limits.MaxGlobalGuestStorageBytes < 1 {
+			return Batch{}, false, ErrGuestCapacity
+		}
+		used, usageErr := guestStorageUsage(ctx, tx)
+		if usageErr != nil {
+			return Batch{}, false, usageErr
+		}
+		if used+int64(len(req.Items))*MaxOutputBytes > limits.MaxGlobalGuestStorageBytes {
+			return Batch{}, false, ErrGuestCapacity
+		}
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO conv_batches(id,owner_id,mode,idempotency_key,request_hash,total) VALUES($1,$2,$3,$4,$5,$6)`, id, ownerID, req.Mode, req.IdempotencyKey, hash, len(req.Items)); err != nil {
 		return Batch{}, false, err
@@ -352,6 +430,48 @@ func (s *Service) resumeBatch(ctx context.Context, batchID, ownerID string, limi
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
+		}
+		if limits.Guest {
+			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('101conv-guest-storage',0))`); err != nil {
+				tx.Rollback()
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('101conv-guest-jobs',0))`); err != nil {
+				tx.Rollback()
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, ownerID); err != nil {
+				tx.Rollback()
+				return err
+			}
+			var ownerOutstanding, globalOutstanding int
+			q := `SELECT (SELECT count(*) FROM conv_jobs j WHERE j.owner_id=$1 AND j.state IN ('queued','running'))+(SELECT count(*) FROM conv_batch_items i JOIN conv_batches b ON b.id=i.batch_id WHERE b.owner_id=$1 AND i.state IN ('pending','submitting'))`
+			if err = tx.QueryRowContext(ctx, q, ownerID).Scan(&ownerOutstanding); err != nil {
+				tx.Rollback()
+				return err
+			}
+			q = `SELECT (SELECT count(*) FROM conv_jobs j WHERE j.owner_id LIKE 'guest:%' AND j.state IN ('queued','running'))+(SELECT count(*) FROM conv_batch_items i JOIN conv_batches b ON b.id=i.batch_id WHERE b.owner_id LIKE 'guest:%' AND i.state IN ('pending','submitting'))`
+			if err = tx.QueryRowContext(ctx, q).Scan(&globalOutstanding); err != nil {
+				tx.Rollback()
+				return err
+			}
+			if ownerOutstanding > limits.MaxGuestActiveJobs || globalOutstanding > limits.MaxGlobalGuestJobs {
+				tx.Rollback()
+				return ErrGuestCapacity
+			}
+			if limits.MaxGlobalGuestStorageBytes < 1 {
+				tx.Rollback()
+				return ErrGuestCapacity
+			}
+			used, usageErr := guestStorageUsage(ctx, tx)
+			if usageErr != nil {
+				tx.Rollback()
+				return usageErr
+			}
+			if used > limits.MaxGlobalGuestStorageBytes {
+				tx.Rollback()
+				return ErrGuestCapacity
+			}
 		}
 		var cancelled bool
 		if err = tx.QueryRowContext(ctx, `SELECT cancel_requested FROM conv_batches WHERE id=$1`, batchID).Scan(&cancelled); err != nil {

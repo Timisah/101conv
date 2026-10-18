@@ -83,6 +83,12 @@ func (s *Service) CompleteInitialSetup(ctx context.Context, actorID string) erro
 	if !admin {
 		return ErrInvalidInput
 	}
+	// Fresh installations opt into guest mode only when the administrator has
+	// completed the deliberate first-run setup. Existing deployments are already
+	// marked complete by migration and retain the private default (disabled).
+	if _, err = tx.ExecContext(ctx, `UPDATE conv_anonymous_settings SET enabled=true,updated_at=now() WHERE id=1`); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE conv_instance_setup SET completed=true,updated_at=now() WHERE id=1`); err != nil {
 		return err
 	}

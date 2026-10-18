@@ -63,8 +63,12 @@ func NewWithAccounts(version string, catalogService *catalog.Service, management
 	mux.HandleFunc("GET /api/v1/auth/session", a.getSession)
 	mux.HandleFunc("POST /api/v1/auth/session", a.createSession)
 	mux.HandleFunc("DELETE /api/v1/auth/session", a.deleteSession)
+	mux.HandleFunc("POST /api/v1/auth/guest-session", a.createGuestSession)
+	mux.HandleFunc("DELETE /api/v1/auth/guest-session", a.deleteGuestSession)
 	mux.HandleFunc("GET /api/v1/settings/session", a.getSessionSettings)
 	mux.HandleFunc("PUT /api/v1/settings/session", a.updateSessionSettings)
+	mux.HandleFunc("GET /api/v1/settings/anonymous", a.getAnonymousSettings)
+	mux.HandleFunc("PUT /api/v1/settings/anonymous", a.updateAnonymousSettings)
 	mux.HandleFunc("GET /api/v1/me", a.getMe)
 	mux.HandleFunc("POST /api/v1/me/password", a.changeMyPassword)
 	mux.HandleFunc("GET /api/v1/me/api-keys", a.listMyAPIKeys)
@@ -219,11 +223,11 @@ func (a *API) identityWithMethod(r *http.Request) (auth.Principal, string, bool)
 		return auth.Principal{}, "", false
 	}
 	if a.sessions == nil {
-		return auth.Principal{}, "", false
+		return a.guestIdentity(r)
 	}
 	p, ok := a.sessions.principal(r)
 	if !ok {
-		return auth.Principal{}, "", false
+		return a.guestIdentity(r)
 	}
 	if p.ID != "admin" && a.accounts != nil {
 		fresh, err := a.accounts.Principal(r.Context(), p.ID)
@@ -233,6 +237,21 @@ func (a *API) identityWithMethod(r *http.Request) (auth.Principal, string, bool)
 		p = fresh
 	}
 	return p, "session", true
+}
+
+func (a *API) guestIdentity(r *http.Request) (auth.Principal, string, bool) {
+	if a.accounts == nil {
+		return auth.Principal{}, "", false
+	}
+	c, err := r.Cookie(guestCookie)
+	if err != nil {
+		return auth.Principal{}, "", false
+	}
+	p, _, err := a.accounts.AuthenticateGuest(r.Context(), c.Value)
+	if err != nil {
+		return auth.Principal{}, "", false
+	}
+	return p, "guest", true
 }
 
 func (a *API) requireCapability(w http.ResponseWriter, r *http.Request, scope string) (auth.Principal, bool) {
@@ -245,7 +264,7 @@ func (a *API) requireCapability(w http.ResponseWriter, r *http.Request, scope st
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return auth.Principal{}, false
 	}
-	if method == "session" && r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOriginRequest(r) {
+	if (method == "session" || method == "guest") && r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOriginRequest(r) {
 		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
 		return auth.Principal{}, false
 	}

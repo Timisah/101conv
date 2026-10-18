@@ -21,9 +21,9 @@ import (
 )
 
 func TestAbandonedCleanupPreservesJobsAndResumes(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL for PostgreSQL cleanup integration test")
+		t.Skip("set TEST_DATABASE_URL for PostgreSQL cleanup integration test")
 	}
 	ctx := context.Background()
 	adminDB, err := sql.Open("pgx", dsn)
@@ -142,9 +142,9 @@ func TestAbandonedCleanupPreservesJobsAndResumes(t *testing.T) {
 }
 
 func TestSuccessfulRetentionExpiresFilesButPreservesJobHistory(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL for PostgreSQL retention integration test")
+		t.Skip("set TEST_DATABASE_URL for PostgreSQL retention integration test")
 	}
 	ctx := context.Background()
 	adminDB, err := sql.Open("pgx", dsn)
@@ -269,6 +269,54 @@ func TestSuccessfulRetentionExpiresFilesButPreservesJobHistory(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(svc.UploadRoot(), failedUpload.ID)); err != nil {
 		t.Fatalf("failed job original was removed: %v", err)
 	}
+	guestOriginal, err := svc.CreateUploadFor(ctx, "guest:retention-fixture", 100, nil, "guest.ppm", strings.NewReader("P3\n1 1\n255\n255 0 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestFailedOriginal, err := svc.CreateUploadFor(ctx, "guest:retention-fixture", 100, nil, "guest-failed.ppm", strings.NewReader("P3\n1 1\n255\n255 0 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestJob, _, err := svc.SubmitFor(ctx, SubmitRequest{UploadID: guestOriginal.ID, ProfileID: p.ID, TargetFormat: "pgm", IdempotencyKey: "guest-retention-job"}, "guest:retention-fixture", Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestFailedJob, _, err := svc.SubmitFor(ctx, SubmitRequest{UploadID: guestFailedOriginal.ID, ProfileID: p.ID, TargetFormat: "pgm", IdempotencyKey: "guest-failed-retention-job"}, "guest:retention-fixture", Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestResultKey := guestJob.ID + "-1.bin"
+	guestResultData := []byte("guest verified result")
+	if err = os.WriteFile(filepath.Join(svc.resultRoot, guestResultKey), guestResultData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET state='succeeded',result_key=$2,result_size=$3,updated_at=now()-interval '2 days' WHERE id=$1`, guestJob.ID, guestResultKey, len(guestResultData)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET state='failed',updated_at=now()-interval '2 days' WHERE id=$1`, guestFailedJob.ID); err != nil {
+		t.Fatal(err)
+	}
+	guestDownload, _, _, err := svc.OpenResultFor(ctx, guestJob.ID, "guest:retention-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestCleanup, err := svc.CleanupGuestExpired(ctx, GuestRetentionPolicy{UploadHours: 24, ResultHours: 1, FailedHours: 72, MetadataHours: 168}, 100)
+	if err != nil || guestCleanup.Deleted != 2 {
+		guestDownload.Close()
+		t.Fatalf("guest result/original cleanup: %+v err=%v", guestCleanup, err)
+	}
+	guestStreamed, readErr := io.ReadAll(guestDownload)
+	closeErr := guestDownload.Close()
+	if readErr != nil || closeErr != nil || string(guestStreamed) != string(guestResultData) {
+		t.Fatalf("guest cleanup disrupted active result download: %q read=%v close=%v", guestStreamed, readErr, closeErr)
+	}
+	guestExpired, err := svc.GetFor(ctx, guestJob.ID, "guest:retention-fixture")
+	if err != nil || guestExpired.ResultState != "expired" || guestExpired.OriginalState != "expired" {
+		t.Fatalf("guest tombstones/history missing after cleanup: %+v err=%v", guestExpired, err)
+	}
+	if _, err = os.Stat(filepath.Join(svc.UploadRoot(), guestFailedOriginal.ID)); err != nil {
+		t.Fatalf("failed guest original was deleted before its own retention deadline: %v", err)
+	}
 	if _, err = svc.StartStorageScan(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -288,10 +336,10 @@ func TestSuccessfulRetentionExpiresFilesButPreservesJobHistory(t *testing.T) {
 		t.Fatalf("filesystem scan status=%s error=%s", inventory.Status, inventory.Error)
 	}
 	originals := inventory.Categories["originals"]
-	if originals.Files != 1 || originals.MissingMetadata != 0 || originals.UnreferencedFiles != 0 {
+	if originals.Files != 2 || originals.MissingMetadata != 0 || originals.UnreferencedFiles != 0 {
 		t.Fatalf("original reconciliation mismatch: %+v", originals)
 	}
-	if originals.AgeBuckets["0-7 days"].Count != 1 {
+	if originals.AgeBuckets["0-7 days"].Count != 2 {
 		t.Fatalf("filesystem modification-age bucket was not measured: %+v", originals.AgeBuckets)
 	}
 	if inventory.Categories["engines"].Files == 0 {

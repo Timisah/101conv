@@ -13,6 +13,13 @@ import (
 
 func ptrInt64(v int64) *int64 { return &v }
 
+func integrationDatabaseURL() string {
+	if value := os.Getenv("TEST_DATABASE_URL"); value != "" {
+		return value
+	}
+	return os.Getenv("101CONV_TEST_DATABASE_URL")
+}
+
 func testQuotas(max, jobs, bytes QuotaLimit) *Quotas {
 	return &Quotas{MaxFileBytes: max, MonthlyJobs: jobs, MonthlyBytes: bytes}
 }
@@ -36,9 +43,9 @@ func TestPasswordHashAndScopeChecks(t *testing.T) {
 }
 
 func TestPostgresAccountAndAPIKeyLifecycle(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL to run PostgreSQL auth integration tests")
+		t.Skip("set TEST_DATABASE_URL to run PostgreSQL auth integration tests")
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -100,9 +107,9 @@ func TestPostgresAccountAndAPIKeyLifecycle(t *testing.T) {
 }
 
 func TestPostgresGroupsPermissionConflictsAndQuotaInheritance(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL to run PostgreSQL access-control integration tests")
+		t.Skip("set TEST_DATABASE_URL to run PostgreSQL access-control integration tests")
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -189,9 +196,9 @@ func TestPostgresGroupsPermissionConflictsAndQuotaInheritance(t *testing.T) {
 }
 
 func TestPostgresLastAdministratorCannotBeRemoved(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL to run PostgreSQL administrator protection tests")
+		t.Skip("set TEST_DATABASE_URL to run PostgreSQL administrator protection tests")
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -239,9 +246,9 @@ func TestPostgresLastAdministratorCannotBeRemoved(t *testing.T) {
 }
 
 func TestPostgresMigrationBackfillsExistingAccountQuotas(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL to run PostgreSQL migration tests")
+		t.Skip("set TEST_DATABASE_URL to run PostgreSQL migration tests")
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {

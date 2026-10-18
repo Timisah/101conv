@@ -98,6 +98,10 @@ func (a *API) setMyProfilePreference(w http.ResponseWriter, r *http.Request) {
 	if !ok || !a.jobsReady(w) {
 		return
 	}
+	if p.Guest {
+		writeAPIError(w, http.StatusForbidden, "guest_endpoint_forbidden", "guest sessions use administrator defaults and cannot save personal preferences")
+		return
+	}
 	var req preferenceRequest
 	if !decodeBody(w, r, &req) {
 		return
@@ -113,6 +117,10 @@ func (a *API) setMyProfilePreference(w http.ResponseWriter, r *http.Request) {
 func (a *API) deleteMyProfilePreference(w http.ResponseWriter, r *http.Request) {
 	p, ok := a.requireCapability(w, r, preferenceScope(r.PathValue("mode")))
 	if !ok || !a.jobsReady(w) {
+		return
+	}
+	if p.Guest {
+		writeAPIError(w, http.StatusForbidden, "guest_endpoint_forbidden", "guest sessions cannot save personal preferences")
 		return
 	}
 	if err := a.jobs.DeleteProfilePreference(r.Context(), p.ID, r.PathValue("mode"), r.PathValue("source"), r.PathValue("target"), false); err != nil {

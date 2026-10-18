@@ -114,6 +114,16 @@ func main() {
 	defer stop()
 	if jobService != nil {
 		go jobService.RunRetention(ctx)
+		if accountService != nil {
+			go jobService.RunGuestRetention(ctx, func(ctx context.Context) (jobs.GuestRetentionPolicy, error) {
+				settings, err := accountService.AnonymousSettings(ctx)
+				if err != nil {
+					return jobs.GuestRetentionPolicy{}, err
+				}
+				return jobs.GuestRetentionPolicy{UploadHours: settings.UploadExpirationHours, ResultHours: settings.ResultExpirationHours, FailedHours: settings.FailedExpirationHours, MetadataHours: settings.MetadataExpirationHours}, nil
+			})
+			go runGuestSessionCleanup(ctx, accountService)
+		}
 	}
 	serveErr := make(chan error, 1)
 	go func() { log.Printf("101conv %s listening on :%s", version, port); serveErr <- server.ListenAndServe() }()
@@ -134,6 +144,25 @@ func main() {
 	}
 	_ = repositoryService.Close()
 	_ = managementService.Close()
+}
+
+func runGuestSessionCleanup(ctx context.Context, service *auth.Service) {
+	clean := func() {
+		if err := service.PurgeExpiredGuestSessions(ctx); err != nil {
+			log.Printf("guest session cleanup: %v", err)
+		}
+	}
+	clean()
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			clean()
+		}
+	}
 }
 
 func openDatabase(dsn string) (*sql.DB, error) {

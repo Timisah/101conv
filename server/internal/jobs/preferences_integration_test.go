@@ -17,9 +17,9 @@ import (
 )
 
 func TestProfilePreferencePrecedenceAndConcurrentUpdates(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL to run PostgreSQL profile preference integration tests")
+		t.Skip("set TEST_DATABASE_URL to run PostgreSQL profile preference integration tests")
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {

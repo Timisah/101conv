@@ -1,15 +1,18 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,10 +25,17 @@ import (
 	"github.com/timisah/101conv/server/internal/management"
 )
 
+func integrationDatabaseURL() string {
+	if value := os.Getenv("TEST_DATABASE_URL"); value != "" {
+		return value
+	}
+	return os.Getenv("101CONV_TEST_DATABASE_URL")
+}
+
 func TestPostgresUserSessionAndScopedAPIKeyAuthorization(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL to run PostgreSQL authorization integration tests")
+		t.Skip("set TEST_DATABASE_URL to run PostgreSQL authorization integration tests")
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -215,6 +225,179 @@ func TestPostgresUserSessionAndScopedAPIKeyAuthorization(t *testing.T) {
 	principal, err = accounts.Principal(ctx, user.ID)
 	if err != nil || principal.Quotas.MonthlyJobs.Value == nil || *principal.Quotas.MonthlyJobs.Value != limit {
 		t.Fatalf("bulk quota change was not applied: %+v err=%v", principal.Quotas.MonthlyJobs, err)
+	}
+}
+
+func TestPostgresAnonymousSessionIsolationAndAdministrativeBoundaries(t *testing.T) {
+	dsn := integrationDatabaseURL()
+	if dsn == "" {
+		t.Skip("set TEST_DATABASE_URL to run PostgreSQL guest authorization integration tests")
+	}
+	adminDB, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminDB.Close()
+	id, err := randomTestID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := "guest_" + strings.ReplaceAll(id, "-", "")
+	ctx := context.Background()
+	if _, err = adminDB.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer adminDB.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	address, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := address.Query()
+	query.Set("search_path", schema)
+	address.RawQuery = query.Encode()
+	db, err := sql.Open("pgx", address.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	accounts, err := auth.NewService(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = accounts.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := management.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	jobService, err := jobs.NewService(db, manager, filepath.Join(t.TempDir(), "uploads"), filepath.Join(t.TempDir(), "results"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = jobService.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	catalogService, err := catalog.New("0.1.0-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := accounts.CreateInitialAdmin(ctx, "guest-admin-"+id[:8], "guest integration admin password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = accounts.CompleteInitialSetup(ctx, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewWithAccounts("0.1.0-dev", catalogService, manager, nil, jobService, accounts, "global-admin"))
+	defer server.Close()
+	newGuest := func() *http.Client {
+		t.Helper()
+		jar, jarErr := cookiejar.New(nil)
+		if jarErr != nil {
+			t.Fatal(jarErr)
+		}
+		client := &http.Client{Jar: jar}
+		req, reqErr := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/guest-session", strings.NewReader(`{}`))
+		if reqErr != nil {
+			t.Fatal(reqErr)
+		}
+		req.Header.Set("Origin", server.URL)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.Header.Set("Content-Type", "application/json")
+		resp, doErr := client.Do(req)
+		if doErr != nil {
+			t.Fatal(doErr)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create guest session: HTTP %d", resp.StatusCode)
+		}
+		cookies := jar.Cookies(req.URL)
+		if len(cookies) != 1 || cookies[0].Name != guestCookie || cookies[0].Value == "" {
+			t.Fatalf("guest credential was not isolated in the expected cookie: %#v", cookies)
+		}
+		return client
+	}
+	call := func(client *http.Client, method, path string, body io.Reader, contentType string) *http.Response {
+		t.Helper()
+		req, reqErr := http.NewRequest(method, server.URL+path, body)
+		if reqErr != nil {
+			t.Fatal(reqErr)
+		}
+		req.Header.Set("Origin", server.URL)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		resp, doErr := client.Do(req)
+		if doErr != nil {
+			t.Fatal(doErr)
+		}
+		return resp
+	}
+	first, second := newGuest(), newGuest()
+	for _, path := range []string{"/api/v1/me", "/api/v1/settings/anonymous", "/api/v1/storage"} {
+		resp := call(first, http.MethodGet, path, nil, "")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("guest administrative boundary %s returned %d, want 403", path, resp.StatusCode)
+		}
+	}
+	var uploadBody bytes.Buffer
+	form := multipart.NewWriter(&uploadBody)
+	part, err := form.CreateFormFile("file", "guest.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = part.Write([]byte("not decoded at upload time")); err != nil {
+		t.Fatal(err)
+	}
+	if err = form.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resp := call(first, http.MethodPost, "/api/v1/uploads", &uploadBody, form.FormDataContentType())
+	var upload struct {
+		ID string `json:"id"`
+	}
+	if resp.StatusCode != http.StatusCreated {
+		payload, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("guest upload returned HTTP %d: %s", resp.StatusCode, payload)
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&upload); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	resp = call(second, http.MethodPost, "/api/v1/batches", strings.NewReader(`{"mode":"convert","idempotencyKey":"guest-cross-owner-1","items":[{"uploadId":"`+upload.ID+`","targetFormat":"webp"}]}`), "application/json")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("another guest could use this upload; batch returned %d, want indistinguishable 404", resp.StatusCode)
+	}
+	resp = call(second, http.MethodGet, "/api/v1/jobs", nil, "")
+	var list struct {
+		Jobs []json.RawMessage `json:"jobs"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&list) != nil || len(list.Jobs) != 0 {
+		payload, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("guest job listing leaked another guest's jobs: HTTP %d %s", resp.StatusCode, payload)
+	}
+	resp.Body.Close()
+	settings, err := accounts.AnonymousSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Enabled = false
+	if err = accounts.SetAnonymousSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	resp = call(first, http.MethodGet, "/api/v1/jobs", nil, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("disabled guest cookie remained authorized: HTTP %d", resp.StatusCode)
 	}
 }
 

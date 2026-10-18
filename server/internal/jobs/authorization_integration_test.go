@@ -18,10 +18,17 @@ import (
 	"github.com/timisah/101conv/server/internal/profile"
 )
 
+func integrationDatabaseURL() string {
+	if value := os.Getenv("TEST_DATABASE_URL"); value != "" {
+		return value
+	}
+	return os.Getenv("101CONV_TEST_DATABASE_URL")
+}
+
 func TestPostgresOwnerIsolationAndQuotas(t *testing.T) {
-	dsn := os.Getenv("101CONV_TEST_DATABASE_URL")
+	dsn := integrationDatabaseURL()
 	if dsn == "" {
-		t.Skip("set 101CONV_TEST_DATABASE_URL to run PostgreSQL authorization integration tests")
+		t.Skip("set TEST_DATABASE_URL to run PostgreSQL authorization integration tests")
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {

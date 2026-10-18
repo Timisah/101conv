@@ -12,6 +12,7 @@ var (
 	ErrQuotaExceeded       = errors.New("account quota exceeded")
 	ErrLeaseLost           = errors.New("worker lease lost")
 	ErrInsufficientStorage = errors.New("insufficient application storage")
+	ErrGuestCapacity       = errors.New("anonymous conversion capacity has been reached")
 	ErrFileExpired         = errors.New("file retention period has expired")
 	ErrFileMissing         = errors.New("file is missing from storage")
 )

@@ -135,6 +135,15 @@ func (a *API) listProfiles(w http.ResponseWriter, r *http.Request) {
 		writeManagementError(w, err)
 		return
 	}
+	if p.Guest {
+		enabled := v[:0]
+		for _, item := range v {
+			if item.State.Enabled {
+				enabled = append(enabled, item)
+			}
+		}
+		v = enabled
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"profiles": v})
 }
 func (a *API) installProfile(w http.ResponseWriter, r *http.Request) {

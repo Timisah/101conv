@@ -14,6 +14,10 @@ func (a *API) getMe(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
+	if p.Guest {
+		writeAPIError(w, http.StatusForbidden, "guest_endpoint_forbidden", "account features are unavailable in guest mode")
+		return
+	}
 	response := map[string]any{"user": p}
 	if !p.IsAdmin() && a.jobs != nil {
 		usage, err := a.jobs.MonthlyUsage(r.Context(), p.ID)
