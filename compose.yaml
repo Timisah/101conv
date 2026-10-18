@@ -115,6 +115,8 @@ services:
       CONVERSION_TIMEOUT: ${CONVERSION_TIMEOUT:-10m}
       MAX_OUTPUT_BYTES: ${MAX_OUTPUT_BYTES:-209715200}
       JOB_LEASE: ${JOB_LEASE:-45s}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+      WORKER_BATCH_CONCURRENCY: ${WORKER_BATCH_CONCURRENCY:-2}
     volumes:
       - type: bind
         source: ${GO_DATA_PATH:-${DATA_PATH:?Set DATA_PATH to the parent of the persistent Go data directory}/go-data}/engines

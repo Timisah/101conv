@@ -8,21 +8,26 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/timisah/101conv/server/internal/worker"
 )
 
 type WorkerConfig struct {
-	ID           string
-	Lease        time.Duration
-	PollInterval time.Duration
+	ID               string
+	Lease            time.Duration
+	PollInterval     time.Duration
+	Concurrency      int
+	BatchConcurrency int
 }
 
 type Worker struct {
 	db     *sql.DB
 	runner worker.Runner
 	config WorkerConfig
+	active atomic.Int32
 }
 
 type claimedJob struct {
@@ -54,6 +59,18 @@ func NewWorker(db *sql.DB, runner worker.Runner, config WorkerConfig) (*Worker, 
 	if config.PollInterval <= 0 {
 		config.PollInterval = time.Second
 	}
+	if config.Concurrency <= 0 {
+		config.Concurrency = 1
+	}
+	if config.Concurrency > 8 {
+		return nil, fmt.Errorf("worker concurrency cannot exceed 8")
+	}
+	if config.BatchConcurrency <= 0 {
+		config.BatchConcurrency = 2
+	}
+	if config.BatchConcurrency > 20 {
+		return nil, fmt.Errorf("batch concurrency cannot exceed 20")
+	}
 	return &Worker{db: db, runner: runner, config: config}, nil
 }
 
@@ -75,30 +92,54 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 		}
 	}()
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		claim, err := w.claim(ctx)
-		if err != nil {
-			return err
-		}
-		if claim == nil {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(w.config.PollInterval):
-				continue
+	workerCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	errCh := make(chan error, w.config.Concurrency)
+	var wg sync.WaitGroup
+	for slot := 0; slot < w.config.Concurrency; slot++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for workerCtx.Err() == nil {
+				claim, err := w.claim(workerCtx)
+				if err != nil {
+					if workerCtx.Err() == nil {
+						select {
+						case errCh <- err:
+						default:
+						}
+					}
+					stop()
+					return
+				}
+				if claim == nil {
+					select {
+					case <-workerCtx.Done():
+						return
+					case <-time.After(w.config.PollInterval):
+						continue
+					}
+				}
+				w.active.Add(1)
+				_ = w.recordWorkerHeartbeat(workerCtx, true)
+				w.runClaim(workerCtx, *claim)
+				w.active.Add(-1)
+				_ = w.recordWorkerHeartbeat(workerCtx, true)
 			}
-		}
-		w.runClaim(ctx, *claim)
-		_ = w.recordWorkerHeartbeat(ctx, true)
+		}()
 	}
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		return err
+	default:
+	}
+	return ctx.Err()
 }
 
 func (w *Worker) recordWorkerHeartbeat(ctx context.Context, activity bool) error {
-	_, err := w.db.ExecContext(ctx, `INSERT INTO conv_worker_heartbeats(worker_id,last_seen,last_activity) VALUES($1,now(),CASE WHEN $2 THEN now() ELSE NULL END)
-	ON CONFLICT(worker_id) DO UPDATE SET last_seen=now(),last_activity=CASE WHEN $2 THEN now() ELSE conv_worker_heartbeats.last_activity END`, w.config.ID, activity)
+	_, err := w.db.ExecContext(ctx, `INSERT INTO conv_worker_heartbeats(worker_id,last_seen,last_activity,active_jobs,configured_concurrency,batch_concurrency) VALUES($1,now(),CASE WHEN $2 THEN now() ELSE NULL END,$3,$4,$5)
+	ON CONFLICT(worker_id) DO UPDATE SET last_seen=now(),last_activity=CASE WHEN $2 THEN now() ELSE conv_worker_heartbeats.last_activity END,active_jobs=$3,configured_concurrency=$4,batch_concurrency=$5`, w.config.ID, activity, w.active.Load(), w.config.Concurrency, w.config.BatchConcurrency)
 	return err
 }
 
@@ -118,13 +159,31 @@ func (w *Worker) claim(ctx context.Context) (*claimedJob, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Complete cancellations whose Core stopped after setting the durable batch
+	// fence but before transitioning every queued job.
+	_, err = tx.ExecContext(ctx, `UPDATE conv_jobs j SET state='cancelled',error='batch cancelled',updated_at=now()
+	 FROM conv_batches b WHERE j.batch_id=b.id AND b.cancel_requested AND j.state='queued' AND NOT j.batch_submission_pending`)
+	if err != nil {
+		return nil, err
+	}
 	var c claimedJob
 	var raw []byte
 	var lastOwner string
 	if err = tx.QueryRowContext(ctx, `SELECT last_owner FROM conv_worker_scheduler WHERE id=1 FOR UPDATE`).Scan(&lastOwner); err != nil {
 		return nil, err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT j.id,j.upload_id,j.execution,j.attempt_count+1,j.max_attempts,u.sha256,u.size_bytes FROM conv_jobs j JOIN conv_uploads u ON u.id=j.upload_id WHERE j.state='queued' AND j.attempt_count<j.max_attempts AND j.cancel_requested=false AND (j.batch_id IS NULL OR (SELECT count(*) FROM conv_jobs active WHERE active.batch_id=j.batch_id AND active.state='running')<2) AND (j.owner_id<>$1 OR NOT EXISTS(SELECT 1 FROM conv_jobs other WHERE other.state='queued' AND other.cancel_requested=false AND other.owner_id<>$1)) ORDER BY j.created_at,j.id LIMIT 1 FOR UPDATE OF j SKIP LOCKED`, lastOwner).Scan(&c.ID, &c.UploadID, &raw, &c.Attempt, &c.MaxAttempts, &c.InputSHA256, &c.InputSize)
+	err = tx.QueryRowContext(ctx, `WITH eligible AS (
+	 SELECT j.id,j.owner_id,j.created_at FROM conv_jobs j
+		WHERE j.state='queued' AND j.attempt_count<j.max_attempts AND NOT j.cancel_requested AND NOT j.batch_submission_pending
+		AND (j.batch_id IS NULL OR (NOT EXISTS (SELECT 1 FROM conv_batches b WHERE b.id=j.batch_id AND b.cancel_requested)
+		 AND (SELECT count(*) FROM conv_jobs active WHERE active.batch_id=j.batch_id AND active.state='running')<$2))
+	), next_owner AS (
+	 SELECT owner_id FROM eligible GROUP BY owner_id ORDER BY (owner_id>$1) DESC,owner_id LIMIT 1
+	)
+	SELECT j.id,j.upload_id,j.execution,j.attempt_count+1,j.max_attempts,u.sha256,u.size_bytes
+	FROM conv_jobs j JOIN conv_uploads u ON u.id=j.upload_id JOIN eligible e ON e.id=j.id
+	WHERE j.owner_id=(SELECT owner_id FROM next_owner)
+	ORDER BY j.created_at,j.id LIMIT 1 FOR UPDATE OF j SKIP LOCKED`, lastOwner, w.config.BatchConcurrency).Scan(&c.ID, &c.UploadID, &raw, &c.Attempt, &c.MaxAttempts, &c.InputSHA256, &c.InputSize)
 	if errors.Is(err, sql.ErrNoRows) {
 		if err = tx.Commit(); err != nil {
 			return nil, err

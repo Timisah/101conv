@@ -77,10 +77,13 @@ type CleanupEvent struct {
 }
 
 type WorkerStatus struct {
-	ID           string     `json:"id"`
-	LastSeen     time.Time  `json:"lastSeen"`
-	LastActivity *time.Time `json:"lastActivity,omitempty"`
-	Online       bool       `json:"online"`
+	ID                    string     `json:"id"`
+	LastSeen              time.Time  `json:"lastSeen"`
+	LastActivity          *time.Time `json:"lastActivity,omitempty"`
+	Online                bool       `json:"online"`
+	ActiveJobs            int        `json:"activeJobs"`
+	ConfiguredConcurrency int        `json:"configuredConcurrency"`
+	BatchConcurrency      int        `json:"batchConcurrency"`
 }
 type OperationsSnapshot struct {
 	DatabaseConnected bool             `json:"databaseConnected"`
@@ -117,14 +120,14 @@ func (s *Service) Operations(ctx context.Context) (OperationsSnapshot, error) {
 	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM conv_jobs WHERE state='running' AND lease_until<now()`).Scan(&out.ExpiredLeases); err != nil {
 		return out, err
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT worker_id,last_seen,last_activity FROM conv_worker_heartbeats ORDER BY last_seen DESC LIMIT 10`)
+	rows, err = s.db.QueryContext(ctx, `SELECT worker_id,last_seen,last_activity,active_jobs,configured_concurrency,batch_concurrency FROM conv_worker_heartbeats ORDER BY last_seen DESC LIMIT 10`)
 	if err != nil {
 		return out, err
 	}
 	for rows.Next() {
 		var worker WorkerStatus
 		var activity sql.NullTime
-		if err = rows.Scan(&worker.ID, &worker.LastSeen, &activity); err != nil {
+		if err = rows.Scan(&worker.ID, &worker.LastSeen, &activity, &worker.ActiveJobs, &worker.ConfiguredConcurrency, &worker.BatchConcurrency); err != nil {
 			rows.Close()
 			return out, err
 		}

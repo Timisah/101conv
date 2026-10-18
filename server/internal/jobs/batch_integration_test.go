@@ -212,4 +212,204 @@ func TestDurableBatchIdempotencyRetryCancelAndRestart(t *testing.T) {
 	if claimedOwners[0] != "owner-a" || claimedOwners[1] != "owner-b" {
 		t.Fatalf("queued batches should rotate owners fairly: %v (first batch %s)", claimedOwners, firstOwnerBatch.ID)
 	}
+	// A saturated batch and canceled queue entries must not mask eligible work
+	// owned by another user.
+	for _, owner := range []string{"owner-limit-a", "owner-limit-b", "owner-cancelled"} {
+		if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET state='cancelled',updated_at=now() WHERE owner_id=$1 AND state='queued'`, owner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	makeUserUpload := func(user, name string) Upload {
+		t.Helper()
+		u, e := svc.CreateUploadFor(ctx, user, 1<<20, nil, name, strings.NewReader("input"))
+		if e != nil {
+			t.Fatal(e)
+		}
+		return u
+	}
+	makeUserBatch := func(user, key string, files int) Batch {
+		t.Helper()
+		items := make([]BatchItemRequest, 0, files)
+		for i := 0; i < files; i++ {
+			u := makeUserUpload(user, fmt.Sprintf("%s-%d.ppm", user, i))
+			items = append(items, BatchItemRequest{UploadID: u.ID, TargetFormat: "pgm"})
+		}
+		b, _, e := svc.CreateBatch(ctx, BatchRequest{Mode: "convert", IdempotencyKey: key, Items: items}, user, Limits{})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return b
+	}
+	limitBatch := makeUserBatch("owner-limit-a", "limit-batch-0001", 3)
+	if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET state='running',updated_at=now() WHERE id IN (SELECT current_job_id FROM conv_batch_items WHERE batch_id=$1 ORDER BY item_index LIMIT 2)`, limitBatch.ID); err != nil {
+		t.Fatal(err)
+	}
+	_ = makeUserBatch("owner-limit-b", "other-batch-0001", 1)
+	_ = makeUserBatch("owner-cancelled", "cancel-batch-0001", 1)
+	if _, err = restarted.CancelBatch(ctx, func() string {
+		var id string
+		_ = db.QueryRowContext(ctx, `SELECT id FROM conv_batches WHERE owner_id='owner-cancelled'`).Scan(&id)
+		return id
+	}(), "owner-cancelled"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE conv_worker_scheduler SET last_owner='owner-limit-a' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	limitedWorker, err := NewWorker(db, unusedBatchRunner{}, WorkerConfig{ID: "batch-limit-test", Concurrency: 1, BatchConcurrency: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := limitedWorker.claim(ctx)
+	if err != nil || claim == nil {
+		t.Fatalf("ineligible saturated/canceled work stalled queue: claim=%+v err=%v", claim, err)
+	}
+	var claimedOwner string
+	if err = db.QueryRowContext(ctx, `SELECT owner_id FROM conv_jobs WHERE id=$1`, claim.ID).Scan(&claimedOwner); err != nil || claimedOwner != "owner-limit-b" {
+		t.Fatalf("expected eligible owner despite saturated earlier batch, got owner=%q err=%v", claimedOwner, err)
+	}
+
+	// Max-size batches remain one manageable record. Listing is aggregate-only;
+	// detail hydration uses bounded queries rather than one query per item/job.
+	large := makeUserBatch("owner-hundred", "hundred-batch-0001", MaxBatchItems)
+	if large.Total != 100 || len(large.Items) != 100 || large.Queued != 100 {
+		t.Fatalf("100-item batch was not represented consistently: total=%d items=%d queued=%d", large.Total, len(large.Items), large.Queued)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET state='failed',error='fixture failure',updated_at=now() WHERE id=(SELECT current_job_id FROM conv_batch_items WHERE batch_id=$1 AND item_index=0)`, large.ID); err != nil {
+		t.Fatal(err)
+	}
+	readBack, err := restarted.GetBatch(ctx, large.ID, "owner-hundred", Limits{})
+	if err != nil || readBack.Queued != 99 || readBack.Failed != 1 {
+		t.Fatalf("job transition should atomically update durable counters: queued=%d failed=%d err=%v", readBack.Queued, readBack.Failed, err)
+	}
+	var storedItemState string
+	if err = db.QueryRowContext(ctx, `SELECT state FROM conv_batch_items WHERE batch_id=$1 AND item_index=0`, large.ID).Scan(&storedItemState); err != nil || storedItemState != "failed" {
+		t.Fatalf("job transition did not persist item state: %q err=%v", storedItemState, err)
+	}
+	listed, total, err := restarted.ListBatches(ctx, "owner-hundred", 10, 0)
+	if err != nil || total != 1 || len(listed) != 1 || listed[0].Queued != 99 || listed[0].Failed != 1 {
+		t.Fatalf("batch list aggregate mismatch: total=%d list=%+v err=%v", total, listed, err)
+	}
+	sharedUpload := makeUserUpload("owner-idempotent", "parallel-idempotency.ppm")
+	sharedRequest := BatchRequest{Mode: "convert", IdempotencyKey: "same-batch-key-0001", Items: []BatchItemRequest{{UploadID: sharedUpload.ID, TargetFormat: "pgm"}}}
+	type createResult struct {
+		batch     Batch
+		duplicate bool
+		err       error
+	}
+	created := make(chan createResult, 2)
+	start := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		go func() {
+			<-start
+			request := sharedRequest
+			request.Items = append([]BatchItemRequest(nil), sharedRequest.Items...)
+			b, duplicate, e := restarted.CreateBatch(ctx, request, "owner-idempotent", Limits{})
+			created <- createResult{b, duplicate, e}
+		}()
+	}
+	close(start)
+	first, second := <-created, <-created
+	if first.err != nil || second.err != nil || first.batch.ID == "" || first.batch.ID != second.batch.ID || first.duplicate == second.duplicate {
+		t.Fatalf("concurrent same-key batch requests were not idempotent: first=%+v second=%+v", first, second)
+	}
+	var duplicateJobs int
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM conv_batch_item_jobs WHERE batch_id=$1`, first.batch.ID).Scan(&duplicateJobs); err != nil || duplicateJobs != 1 {
+		t.Fatalf("same idempotency key created %d jobs, err=%v", duplicateJobs, err)
+	}
+	// Concurrent claims obey the per-batch cap, recover expired leases, and
+	// resume work after replacing the Worker instance.
+	if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET state='cancelled',updated_at=now() WHERE state='queued'`); err != nil {
+		t.Fatal(err)
+	}
+	parallelBatch := makeUserBatch("owner-parallel", "parallel-batch-0001", 8)
+	parallelWorker, err := NewWorker(db, unusedBatchRunner{}, WorkerConfig{ID: "parallel-claim-worker", Concurrency: 4, BatchConcurrency: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := make(chan *claimedJob, 8)
+	claimErrors := make(chan error, 8)
+	claimStart := make(chan struct{})
+	for i := 0; i < 8; i++ {
+		go func() {
+			<-claimStart
+			c, e := parallelWorker.claim(ctx)
+			if e != nil {
+				claimErrors <- e
+				return
+			}
+			claims <- c
+		}()
+	}
+	close(claimStart)
+	claimed := []*claimedJob{}
+	for i := 0; i < 8; i++ {
+		select {
+		case e := <-claimErrors:
+			t.Fatal(e)
+		case c := <-claims:
+			if c != nil {
+				claimed = append(claimed, c)
+			}
+		}
+	}
+	if len(claimed) != 2 {
+		t.Fatalf("concurrent claims exceeded or failed to fill per-batch limit: got %d, want 2", len(claimed))
+	}
+	var activeInBatch int
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM conv_jobs WHERE batch_id=$1 AND state='running'`, parallelBatch.ID).Scan(&activeInBatch); err != nil || activeInBatch != 2 {
+		t.Fatalf("parallel batch running count=%d err=%v", activeInBatch, err)
+	}
+	expiredID := claimed[0].ID
+	if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET lease_until=now()-interval '1 second' WHERE id=$1`, expiredID); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := parallelWorker.claim(ctx)
+	if err != nil || recovered == nil || recovered.ID != expiredID || recovered.Attempt != 2 {
+		t.Fatalf("expired lease was not reclaimed with a new attempt: claim=%+v err=%v", recovered, err)
+	}
+	var expiredAttemptState string
+	if err = db.QueryRowContext(ctx, `SELECT state FROM conv_job_attempts WHERE job_id=$1 AND attempt_number=1`, expiredID).Scan(&expiredAttemptState); err != nil || expiredAttemptState != "lease_expired" {
+		t.Fatalf("expired attempt state=%q err=%v", expiredAttemptState, err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET lease_until=now()-interval '1 second' WHERE batch_id=$1 AND state='running'`, parallelBatch.ID); err != nil {
+		t.Fatal(err)
+	}
+	restartedWorker, err := NewWorker(db, unusedBatchRunner{}, WorkerConfig{ID: "parallel-claim-worker-restarted", Concurrency: 2, BatchConcurrency: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = restartedWorker.claim(ctx); err != nil {
+		t.Fatalf("claim after Worker restart did not recover leases: %v", err)
+	}
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM conv_job_attempts a JOIN conv_jobs j ON j.id=a.job_id WHERE j.batch_id=$1 AND a.state='lease_expired'`, parallelBatch.ID).Scan(&activeInBatch); err != nil || activeInBatch < 2 {
+		t.Fatalf("restart did not persist expired attempts: count=%d err=%v", activeInBatch, err)
+	}
+
+	// The persistent round-robin cursor must rotate through all eligible owners,
+	// not just alternate between a fixed pair.
+	if _, err = db.ExecContext(ctx, `UPDATE conv_jobs SET state='cancelled',updated_at=now() WHERE state='queued'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range []string{"fair-round-a", "fair-round-b", "fair-round-c"} {
+		_ = makeUserBatch(owner, owner+"-batch-0001", 2)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE conv_worker_scheduler SET last_owner='fair-round-a' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	fairRound := []string{}
+	for i := 0; i < 6; i++ {
+		c, e := restartedWorker.claim(ctx)
+		if e != nil || c == nil {
+			t.Fatalf("round-robin claim %d: claim=%+v err=%v", i, c, e)
+		}
+		var owner string
+		if err = db.QueryRowContext(ctx, `SELECT owner_id FROM conv_jobs WHERE id=$1`, c.ID).Scan(&owner); err != nil {
+			t.Fatal(err)
+		}
+		fairRound = append(fairRound, owner)
+	}
+	if strings.Join(fairRound[:3], ",") != "fair-round-b,fair-round-c,fair-round-a" {
+		t.Fatalf("eligible owner rotation starved a user: %v", fairRound)
+	}
 }

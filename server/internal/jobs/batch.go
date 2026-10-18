@@ -97,14 +97,6 @@ func (s *Service) RetryBatchItems(ctx context.Context, id, ownerID string, index
 			return Batch{}, ErrInvalidInput
 		}
 		seen[index] = true
-		reset, resetErr := s.db.ExecContext(ctx, `UPDATE conv_batch_items i SET state='pending',error='',error_code='',claim_until=now(),updated_at=now() FROM conv_batches b WHERE i.batch_id=$1 AND i.item_index=$2 AND i.current_job_id IS NULL AND i.state='failed' AND b.id=i.batch_id AND ($3='' OR b.owner_id=$3)`, id, index, ownerID)
-		if resetErr != nil {
-			return Batch{}, resetErr
-		}
-		if n, _ := reset.RowsAffected(); n > 0 {
-			submitPending = true
-			continue
-		}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return Batch{}, err
@@ -112,6 +104,30 @@ func (s *Service) RetryBatchItems(ctx context.Context, id, ownerID string, index
 		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, batchOwner); err != nil {
 			tx.Rollback()
 			return Batch{}, err
+		}
+		var batchCancelled bool
+		if err = tx.QueryRowContext(ctx, `SELECT cancel_requested FROM conv_batches WHERE id=$1 AND owner_id=$2 FOR UPDATE`, id, batchOwner).Scan(&batchCancelled); errors.Is(err, sql.ErrNoRows) {
+			tx.Rollback()
+			return Batch{}, ErrNotFound
+		} else if err != nil {
+			tx.Rollback()
+			return Batch{}, err
+		}
+		if batchCancelled {
+			tx.Rollback()
+			return Batch{}, fmt.Errorf("%w: canceled batch items cannot be retried", ErrConflict)
+		}
+		reset, resetErr := tx.ExecContext(ctx, `UPDATE conv_batch_items SET state='pending',error='',error_code='',claim_until=now(),updated_at=now() WHERE batch_id=$1 AND item_index=$2 AND current_job_id IS NULL AND state='failed'`, id, index)
+		if resetErr != nil {
+			tx.Rollback()
+			return Batch{}, resetErr
+		}
+		if n, _ := reset.RowsAffected(); n > 0 {
+			if err = tx.Commit(); err != nil {
+				return Batch{}, err
+			}
+			submitPending = true
+			continue
 		}
 		var oldJob, uploadID string
 		var state string
@@ -196,6 +212,10 @@ func (s *Service) RetryBatchItems(ctx context.Context, id, ownerID string, index
 			tx.Rollback()
 			return Batch{}, fmt.Errorf("%w: the original engine version is no longer installed", ErrConflict)
 		}
+		if batchCancelled {
+			tx.Rollback()
+			return Batch{}, fmt.Errorf("%w: canceled batch items cannot be retried", ErrConflict)
+		}
 		newID, err := randomID()
 		if err != nil {
 			tx.Rollback()
@@ -279,6 +299,9 @@ func (s *Service) CreateBatch(ctx context.Context, req BatchRequest, ownerID str
 		if err = tx.Commit(); err != nil {
 			return Batch{}, false, err
 		}
+		if err = s.resumeBatch(ctx, existingID, ownerID, limits); err != nil {
+			return Batch{}, true, err
+		}
 		batch, getErr := s.GetBatch(ctx, existingID, ownerID, limits)
 		return batch, true, getErr
 	}
@@ -330,6 +353,15 @@ func (s *Service) resumeBatch(ctx context.Context, batchID, ownerID string, limi
 		if err != nil {
 			return err
 		}
+		var cancelled bool
+		if err = tx.QueryRowContext(ctx, `SELECT cancel_requested FROM conv_batches WHERE id=$1`, batchID).Scan(&cancelled); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if cancelled {
+			tx.Rollback()
+			return nil
+		}
 		var index int
 		var raw []byte
 		err = tx.QueryRowContext(ctx, `SELECT item_index,request FROM conv_batch_items WHERE batch_id=$1 AND (state='pending' OR (state='submitting' AND claim_until<now())) ORDER BY item_index LIMIT 1 FOR UPDATE SKIP LOCKED`, batchID).Scan(&index, &raw)
@@ -352,8 +384,11 @@ func (s *Service) resumeBatch(ctx context.Context, batchID, ownerID string, limi
 		if err = json.Unmarshal(raw, &req); err != nil {
 			return s.failBatchItem(ctx, batchID, index, "Saved item request could not be read", "invalid_request")
 		}
-		job, _, submitErr := s.SubmitFor(ctx, req, ownerID, limits)
+		job, _, submitErr := s.submitBatchItem(ctx, req, ownerID, limits, batchID, index)
 		if submitErr != nil {
+			if errors.Is(submitErr, ErrCanceled) {
+				continue
+			}
 			if updateErr := s.failBatchItem(ctx, batchID, index, batchError(submitErr), batchErrorCode(submitErr)); updateErr != nil {
 				return updateErr
 			}
@@ -404,7 +439,7 @@ func batchErrorCode(err error) string {
 }
 
 func (s *Service) failBatchItem(ctx context.Context, batchID string, index int, message, code string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE conv_batch_items SET state='failed',error=$3,error_code=$4,updated_at=now() WHERE batch_id=$1 AND item_index=$2 AND current_job_id IS NULL`, batchID, index, message, code)
+	_, err := s.db.ExecContext(ctx, `UPDATE conv_batch_items SET state='failed',error=$3,error_code=$4,updated_at=now() WHERE batch_id=$1 AND item_index=$2 AND current_job_id IS NULL AND state IN ('pending','submitting')`, batchID, index, message, code)
 	return err
 }
 
@@ -414,8 +449,9 @@ func (s *Service) attachBatchJob(ctx context.Context, batchID string, index int,
 		return err
 	}
 	defer tx.Rollback()
-	var owner, batchState, itemState string
-	if err = tx.QueryRowContext(ctx, `SELECT owner_id,state FROM conv_batches WHERE id=$1 FOR UPDATE`, batchID).Scan(&owner, &batchState); err != nil {
+	var owner, itemState string
+	var batchCancelled bool
+	if err = tx.QueryRowContext(ctx, `SELECT owner_id,cancel_requested FROM conv_batches WHERE id=$1 FOR UPDATE`, batchID).Scan(&owner, &batchCancelled); err != nil {
 		return err
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT state FROM conv_batch_items WHERE batch_id=$1 AND item_index=$2 FOR UPDATE`, batchID, index).Scan(&itemState); err != nil {
@@ -425,14 +461,14 @@ func (s *Service) attachBatchJob(ctx context.Context, batchID string, index int,
 	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(max(sequence),0)+1 FROM conv_batch_item_jobs WHERE batch_id=$1 AND item_index=$2`, batchID, index).Scan(&sequence); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE conv_jobs SET batch_id=$2,batch_item_index=$3 WHERE id=$1 AND owner_id=$4`, job.ID, batchID, index, owner); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE conv_jobs SET batch_id=$2,batch_item_index=$3,batch_submission_pending=false WHERE id=$1 AND owner_id=$4`, job.ID, batchID, index, owner); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO conv_batch_item_jobs(batch_id,item_index,job_id,sequence) VALUES($1,$2,$3,$4) ON CONFLICT(job_id) DO NOTHING`, batchID, index, job.ID, sequence); err != nil {
 		return err
 	}
 	finalState, finalError := string(job.State), ""
-	if batchState == "cancelled" || itemState == "cancelled" {
+	if batchCancelled || itemState == "cancelled" {
 		finalState, finalError = "cancelled", "Cancelled before submission completed"
 		if _, err = tx.ExecContext(ctx, `UPDATE conv_jobs SET state=CASE WHEN state='queued' THEN 'cancelled' ELSE state END,cancel_requested=CASE WHEN state='running' THEN true ELSE cancel_requested END,updated_at=now() WHERE id=$1 AND state IN ('queued','running')`, job.ID); err != nil {
 			return err
@@ -452,32 +488,16 @@ func (s *Service) getBatch(ctx context.Context, id, ownerID string, limits Limit
 	if !jobIDRE.MatchString(id) {
 		return Batch{}, ErrNotFound
 	}
-	var visible bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conv_batches WHERE id=$1 AND ($2='' OR owner_id=$2))`, id, ownerID).Scan(&visible); err != nil {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
 		return Batch{}, err
 	}
-	if !visible {
-		return Batch{}, ErrNotFound
-	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE conv_batch_items bi SET state=j.state,error=COALESCE(j.error,''),error_code='' FROM conv_jobs j WHERE bi.batch_id=$1 AND bi.current_job_id=j.id`, id); err != nil {
-		return Batch{}, err
-	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE conv_batches b SET
-	 queued=(SELECT count(*) FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state IN ('pending','submitting','queued')),
-	 running=(SELECT count(*) FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state='running'),
-	 succeeded=(SELECT count(*) FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state='succeeded'),
-	 failed=(SELECT count(*) FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state='failed'),
-	 cancelled=(SELECT count(*) FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state='cancelled'),
-	 state=CASE WHEN EXISTS(SELECT 1 FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state IN ('pending','submitting','queued','running')) THEN CASE WHEN EXISTS(SELECT 1 FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state='running') THEN 'running' ELSE 'queued' END
-	 WHEN EXISTS(SELECT 1 FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state='succeeded') AND EXISTS(SELECT 1 FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state IN ('failed','cancelled')) THEN 'partial'
-	 WHEN EXISTS(SELECT 1 FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state='succeeded') THEN 'succeeded'
-	 WHEN EXISTS(SELECT 1 FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state='failed') THEN 'failed' ELSE 'cancelled' END,
-	 completed_at=CASE WHEN EXISTS(SELECT 1 FROM conv_batch_items i WHERE i.batch_id=b.id AND i.state IN ('pending','submitting','queued','running')) THEN NULL ELSE COALESCE(completed_at,now()) END
-	 WHERE b.id=$1 AND ($2='' OR b.owner_id=$2)`, id, ownerID); err != nil {
-		return Batch{}, err
-	}
+	defer tx.Rollback()
 	var b Batch
-	err := s.db.QueryRowContext(ctx, `SELECT id,mode,state,total,queued,running,succeeded,failed,cancelled,created_at,completed_at FROM conv_batches WHERE id=$1 AND ($2='' OR owner_id=$2)`, id, ownerID).Scan(&b.ID, &b.Mode, &b.State, &b.Total, &b.Queued, &b.Running, &b.Succeeded, &b.Failed, &b.Cancelled, &b.CreatedAt, &b.CompletedAt)
+	// Status is a read-only snapshot. Current job state is authoritative while an
+	// item has a job; pending/submitting items use their durable item state.
+	err = tx.QueryRowContext(ctx, `SELECT id,mode,state,total,queued,running,succeeded,failed,cancelled,created_at,completed_at
+	 FROM conv_batches WHERE id=$1 AND ($2='' OR owner_id=$2)`, id, ownerID).Scan(&b.ID, &b.Mode, &b.State, &b.Total, &b.Queued, &b.Running, &b.Succeeded, &b.Failed, &b.Cancelled, &b.CreatedAt, &b.CompletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Batch{}, ErrNotFound
 	}
@@ -486,37 +506,70 @@ func (s *Service) getBatch(ctx context.Context, id, ownerID string, limits Limit
 	}
 	if !includeItems {
 		b.Items = []BatchItem{}
-		return b, nil
+		return b, tx.Commit()
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT i.item_index,i.upload_id,u.file_name,COALESCE(i.current_job_id,''),i.state,i.error,i.error_code FROM conv_batch_items i JOIN conv_uploads u ON u.id=i.upload_id WHERE i.batch_id=$1 ORDER BY i.item_index`, id)
+	rows, err := tx.QueryContext(ctx, `SELECT i.item_index,i.upload_id,u.file_name,COALESCE(j.id,''),COALESCE(j.state,i.state),COALESCE(j.error,i.error),CASE WHEN j.id IS NULL THEN i.error_code ELSE '' END,
+	 j.profile_id,j.profile_version,j.source_format,j.target_format,j.mode,j.progress,j.attempt_count,j.max_attempts,j.result_size,j.created_at,j.updated_at,
+	 CASE WHEN u.original_deleted_at IS NOT NULL THEN 'expired' WHEN u.original_missing_at IS NOT NULL THEN 'missing' WHEN u.cleanup_pending THEN 'scheduled' ELSE 'available' END,
+	 CASE WHEN j.result_deleted_at IS NOT NULL THEN 'expired' WHEN j.result_missing_at IS NOT NULL THEN 'missing' WHEN j.result_cleanup_pending THEN 'scheduled' WHEN j.result_key IS NOT NULL THEN 'available' WHEN j.id IS NOT NULL THEN 'not_ready' ELSE NULL END
+	 FROM conv_batch_items i JOIN conv_uploads u ON u.id=i.upload_id LEFT JOIN conv_jobs j ON j.id=i.current_job_id
+	 WHERE i.batch_id=$1 ORDER BY i.item_index`, id)
 	if err != nil {
 		return Batch{}, err
 	}
 	defer rows.Close()
 	b.Items = []BatchItem{}
+	jobIDs := []string{}
 	for rows.Next() {
 		var item BatchItem
-		if err = rows.Scan(&item.Index, &item.UploadID, &item.FileName, &item.JobID, &item.State, &item.Error, &item.ErrorCode); err != nil {
+		var profileID, profileVersion, source, target, mode sql.NullString
+		var progress, attempt, maxAttempts, resultSize sql.NullInt64
+		var created, updated sql.NullTime
+		var originalState, resultState sql.NullString
+		if err = rows.Scan(&item.Index, &item.UploadID, &item.FileName, &item.JobID, &item.State, &item.Error, &item.ErrorCode,
+			&profileID, &profileVersion, &source, &target, &mode, &progress, &attempt, &maxAttempts, &resultSize, &created, &updated, &originalState, &resultState); err != nil {
 			return Batch{}, err
 		}
 		if item.JobID != "" {
-			detail, e := s.DetailFor(ctx, item.JobID, ownerID)
-			if e == nil {
-				item.Job = &detail.Job
-				item.Attempts = []BatchAttempt{}
-				for _, attempt := range detail.Attempts {
-					var finished *time.Time
-					if !attempt.Finished.IsZero() {
-						t := attempt.Finished
-						finished = &t
-					}
-					item.Attempts = append(item.Attempts, BatchAttempt{Number: attempt.Number, State: attempt.State, StartedAt: attempt.StartedAt, FinishedAt: finished, Error: attempt.Error})
-				}
-			}
+			item.Job = &Job{ID: item.JobID, ProfileID: profileID.String, ProfileVer: profileVersion.String, SourceFormat: source.String, TargetFormat: target.String, Mode: mode.String, State: State(item.State), Progress: int(progress.Int64), Attempt: int(attempt.Int64), MaxAttempts: int(maxAttempts.Int64), Error: item.Error, OutputSize: resultSize.Int64, CreatedAt: created.Time, UpdatedAt: updated.Time, OriginalState: originalState.String, ResultState: resultState.String}
+			item.Attempts = []BatchAttempt{}
+			jobIDs = append(jobIDs, item.JobID)
 		}
 		b.Items = append(b.Items, item)
 	}
-	return b, rows.Err()
+	_ = rows.Close()
+	if err = rows.Err(); err != nil {
+		return Batch{}, err
+	}
+	if len(jobIDs) > 0 {
+		attemptRows, e := tx.QueryContext(ctx, `SELECT job_id,attempt_number,state,started_at,finished_at,COALESCE(error,'') FROM conv_job_attempts WHERE job_id=ANY($1) ORDER BY job_id,attempt_number`, jobIDs)
+		if e != nil {
+			return Batch{}, e
+		}
+		byJob := make(map[string][]BatchAttempt, len(jobIDs))
+		for attemptRows.Next() {
+			var jid string
+			var item BatchAttempt
+			var finished sql.NullTime
+			if e = attemptRows.Scan(&jid, &item.Number, &item.State, &item.StartedAt, &finished, &item.Error); e != nil {
+				return Batch{}, e
+			}
+			if finished.Valid {
+				item.FinishedAt = &finished.Time
+			}
+			byJob[jid] = append(byJob[jid], item)
+		}
+		_ = attemptRows.Close()
+		if e = attemptRows.Err(); e != nil {
+			return Batch{}, e
+		}
+		for i := range b.Items {
+			if b.Items[i].JobID != "" {
+				b.Items[i].Attempts = byJob[b.Items[i].JobID]
+			}
+		}
+	}
+	return b, tx.Commit()
 }
 
 func (s *Service) ResumeBatch(ctx context.Context, id, ownerID string, limits Limits) (Batch, error) {
@@ -546,17 +599,30 @@ func (s *Service) CancelBatch(ctx context.Context, id, ownerID string) (Batch, e
 	if !jobIDRE.MatchString(id) {
 		return Batch{}, ErrNotFound
 	}
-	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conv_batches WHERE id=$1 AND ($2='' OR owner_id=$2))`, id, ownerID).Scan(&exists); err != nil {
+	// Commit the cancellation fence separately. A worker claim checks this flag,
+	// so queued jobs become ineligible immediately without holding a batch row
+	// lock while job transitions (job -> item -> batch) are being canceled.
+	res, err := s.db.ExecContext(ctx, `UPDATE conv_batches SET cancel_requested=true WHERE id=$1 AND ($2='' OR owner_id=$2)`, id, ownerID)
+	if err != nil {
 		return Batch{}, err
 	}
-	if !exists {
+	if n, _ := res.RowsAffected(); n == 0 {
 		return Batch{}, ErrNotFound
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE conv_batch_items SET state='cancelled',error='Cancelled before submission',error_code='cancelled',updated_at=now() WHERE batch_id=$1 AND state IN ('pending','submitting')`, id); err != nil {
+	// Update jobs before pending item rows: a running worker transitions job ->
+	// item, so this lock order avoids deadlocks with the state-sync trigger.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return Batch{}, err
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE conv_jobs SET state=CASE WHEN state='queued' THEN 'cancelled' ELSE state END,cancel_requested=CASE WHEN state='running' THEN true ELSE cancel_requested END,updated_at=now() WHERE batch_id=$1 AND state IN ('queued','running')`, id); err != nil {
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `UPDATE conv_jobs SET state=CASE WHEN state='queued' THEN 'cancelled' ELSE state END,cancel_requested=CASE WHEN state='running' THEN true ELSE cancel_requested END,updated_at=now() WHERE batch_id=$1 AND state IN ('queued','running')`, id); err != nil {
+		return Batch{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE conv_batch_items SET state='cancelled',error='Cancelled before submission',error_code='cancelled',updated_at=now() WHERE batch_id=$1 AND current_job_id IS NULL AND state IN ('pending','submitting')`, id); err != nil {
+		return Batch{}, err
+	}
+	if err = tx.Commit(); err != nil {
 		return Batch{}, err
 	}
 	return s.GetBatch(ctx, id, ownerID, Limits{})
@@ -572,13 +638,24 @@ func (s *Service) CancelBatchItem(ctx context.Context, id string, index int, own
 		return Batch{}, err
 	}
 	if jobID.Valid {
-		if _, err = s.CancelFor(ctx, jobID.String, ownerID); err != nil {
+		if _, err = s.db.ExecContext(ctx, `UPDATE conv_jobs SET state=CASE WHEN state='queued' THEN 'cancelled' ELSE state END,cancel_requested=CASE WHEN state='running' THEN true ELSE cancel_requested END,updated_at=now() WHERE id=$1 AND state IN ('queued','running')`, jobID.String); err != nil {
 			return Batch{}, err
 		}
 	} else {
-		_, err = s.db.ExecContext(ctx, `UPDATE conv_batch_items SET state='cancelled',error='Cancelled before submission',error_code='cancelled',updated_at=now() WHERE batch_id=$1 AND item_index=$2 AND state IN ('pending','submitting')`, id, index)
-		if err != nil {
+		// Race safely with submission attachment. If attachment wins, cancel the
+		// newly linked job in a second pass; if this update wins, attachment sees
+		// the canceled item and cancels its job before it becomes claimable.
+		if _, err = s.db.ExecContext(ctx, `UPDATE conv_batch_items i SET state='cancelled',error='Cancelled before submission',error_code='cancelled',updated_at=now() FROM conv_batches b WHERE i.batch_id=$1 AND i.item_index=$2 AND b.id=i.batch_id AND ($3='' OR b.owner_id=$3) AND i.current_job_id IS NULL AND i.state IN ('pending','submitting')`, id, index, ownerID); err != nil {
 			return Batch{}, err
+		}
+		var attached sql.NullString
+		if err = s.db.QueryRowContext(ctx, `SELECT current_job_id FROM conv_batch_items WHERE batch_id=$1 AND item_index=$2`, id, index).Scan(&attached); err != nil {
+			return Batch{}, err
+		}
+		if attached.Valid {
+			if _, err = s.db.ExecContext(ctx, `UPDATE conv_jobs SET state=CASE WHEN state='queued' THEN 'cancelled' ELSE state END,cancel_requested=CASE WHEN state='running' THEN true ELSE cancel_requested END,updated_at=now() WHERE id=$1 AND state IN ('queued','running')`, attached.String); err != nil {
+				return Batch{}, err
+			}
 		}
 	}
 	return s.GetBatch(ctx, id, ownerID, Limits{})
@@ -595,29 +672,23 @@ func (s *Service) ListBatches(ctx context.Context, ownerID string, limit, offset
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM conv_batches WHERE ($1='' OR owner_id=$1)`, ownerID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM conv_batches WHERE ($1='' OR owner_id=$1) ORDER BY created_at DESC LIMIT $2 OFFSET $3`, ownerID, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,mode,state,total,queued,running,succeeded,failed,cancelled,created_at,completed_at
+	 FROM conv_batches WHERE ($1='' OR owner_id=$1) ORDER BY created_at DESC LIMIT $2 OFFSET $3`, ownerID, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
-	ids := []string{}
+	out := make([]Batch, 0, limit)
 	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
+		var b Batch
+		if err = rows.Scan(&b.ID, &b.Mode, &b.State, &b.Total, &b.Queued, &b.Running, &b.Succeeded, &b.Failed, &b.Cancelled, &b.CreatedAt, &b.CompletedAt); err != nil {
 			return nil, 0, err
 		}
-		ids = append(ids, id)
+		b.Items = []BatchItem{}
+		out = append(out, b)
 	}
 	if err = rows.Err(); err != nil {
 		return nil, 0, err
-	}
-	out := make([]Batch, 0, len(ids))
-	for _, id := range ids {
-		b, e := s.getBatch(ctx, id, ownerID, Limits{}, false)
-		if e != nil {
-			return nil, 0, e
-		}
-		out = append(out, b)
 	}
 	return out, total, nil
 }

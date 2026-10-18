@@ -124,6 +124,7 @@ CREATE INDEX IF NOT EXISTS conv_jobs_claim_idx ON conv_jobs(state, lease_until, 
 CREATE INDEX IF NOT EXISTS conv_jobs_upload_idx ON conv_jobs(upload_id);
 ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_id TEXT;
 ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_item_index INTEGER;
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_submission_pending BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS conv_batches (
  id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('convert','compress')),
  idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued',
@@ -132,6 +133,7 @@ CREATE TABLE IF NOT EXISTS conv_batches (
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), completed_at TIMESTAMPTZ,
  UNIQUE(owner_id,idempotency_key)
 );
+ALTER TABLE conv_batches ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS conv_batches_owner_created_idx ON conv_batches(owner_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS conv_batch_items (
  batch_id TEXT NOT NULL REFERENCES conv_batches(id) ON DELETE CASCADE, item_index INTEGER NOT NULL,
@@ -142,6 +144,71 @@ CREATE TABLE IF NOT EXISTS conv_batch_items (
 CREATE INDEX IF NOT EXISTS conv_batch_items_job_idx ON conv_batch_items(current_job_id);
 ALTER TABLE conv_batch_items ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE conv_batch_items ADD COLUMN IF NOT EXISTS error_code TEXT NOT NULL DEFAULT '';
+CREATE OR REPLACE FUNCTION conv_adjust_batch_counters() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE old_state TEXT := ''; new_state TEXT; dq INTEGER := 0; dr INTEGER := 0; ds INTEGER := 0; df INTEGER := 0; dc INTEGER := 0;
+BEGIN
+ new_state := NEW.state;
+ IF TG_OP='UPDATE' THEN
+  old_state := OLD.state;
+  IF old_state IS NOT DISTINCT FROM new_state THEN RETURN NEW; END IF;
+ END IF;
+ IF old_state IN ('pending','submitting','queued') THEN dq := dq-1; END IF;
+ IF old_state='running' THEN dr := dr-1; END IF;
+ IF old_state='succeeded' THEN ds := ds-1; END IF;
+ IF old_state='failed' THEN df := df-1; END IF;
+ IF old_state='cancelled' THEN dc := dc-1; END IF;
+ IF new_state IN ('pending','submitting','queued') THEN dq := dq+1; END IF;
+ IF new_state='running' THEN dr := dr+1; END IF;
+ IF new_state='succeeded' THEN ds := ds+1; END IF;
+ IF new_state='failed' THEN df := df+1; END IF;
+ IF new_state='cancelled' THEN dc := dc+1; END IF;
+ UPDATE conv_batches b SET
+  queued=b.queued+dq,running=b.running+dr,succeeded=b.succeeded+ds,failed=b.failed+df,cancelled=b.cancelled+dc,
+  state=CASE WHEN b.queued+dq+b.running+dr>0 THEN CASE WHEN b.running+dr>0 THEN 'running' ELSE 'queued' END
+   WHEN b.succeeded+ds>0 AND b.failed+df+b.cancelled+dc>0 THEN 'partial'
+   WHEN b.succeeded+ds>0 THEN 'succeeded' WHEN b.failed+df>0 THEN 'failed' ELSE 'cancelled' END,
+  completed_at=CASE WHEN b.queued+dq+b.running+dr>0 THEN NULL ELSE COALESCE(b.completed_at,NEW.updated_at,now()) END
+ WHERE b.id=NEW.batch_id;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS conv_batch_item_counter_sync ON conv_batch_items;
+CREATE TRIGGER conv_batch_item_counter_sync AFTER INSERT OR UPDATE ON conv_batch_items
+ FOR EACH ROW EXECUTE FUNCTION conv_adjust_batch_counters();
+-- Item states follow job state transitions in the same transaction. Reads never
+-- repair or write state; they can therefore remain cheap and side-effect free.
+CREATE OR REPLACE FUNCTION conv_sync_batch_item_state() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF OLD.state IS DISTINCT FROM NEW.state THEN
+  UPDATE conv_batch_items SET state=NEW.state,error=COALESCE(NEW.error,''),error_code='',updated_at=NEW.updated_at
+   WHERE current_job_id=NEW.id AND state IS DISTINCT FROM NEW.state;
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS conv_jobs_batch_state_sync ON conv_jobs;
+CREATE TRIGGER conv_jobs_batch_state_sync AFTER UPDATE OF state ON conv_jobs
+ FOR EACH ROW EXECUTE FUNCTION conv_sync_batch_item_state();
+-- Bring forward rows created before the transition trigger without changing job
+-- history or touching file data.
+UPDATE conv_batch_items i SET state=j.state,error=COALESCE(j.error,''),updated_at=j.updated_at
+ FROM conv_jobs j WHERE i.current_job_id=j.id AND i.state IS DISTINCT FROM j.state;
+WITH item_counts AS (
+ SELECT batch_id,count(*) FILTER (WHERE state IN ('pending','submitting','queued')) AS queued,
+  count(*) FILTER (WHERE state='running') AS running,count(*) FILTER (WHERE state='succeeded') AS succeeded,
+  count(*) FILTER (WHERE state='failed') AS failed,count(*) FILTER (WHERE state='cancelled') AS cancelled,
+  max(updated_at) AS last_updated FROM conv_batch_items GROUP BY batch_id
+)
+UPDATE conv_batches b SET queued=c.queued,running=c.running,succeeded=c.succeeded,failed=c.failed,cancelled=c.cancelled,
+ state=CASE WHEN c.queued+c.running>0 THEN CASE WHEN c.running>0 THEN 'running' ELSE 'queued' END
+  WHEN c.succeeded>0 AND c.failed+c.cancelled>0 THEN 'partial' WHEN c.succeeded>0 THEN 'succeeded'
+  WHEN c.failed>0 THEN 'failed' ELSE 'cancelled' END,
+ completed_at=CASE WHEN c.queued+c.running>0 THEN NULL ELSE COALESCE(c.last_updated,b.created_at) END
+FROM item_counts c WHERE c.batch_id=b.id AND
+ (b.queued,b.running,b.succeeded,b.failed,b.cancelled,b.state,b.completed_at) IS DISTINCT FROM
+ (c.queued,c.running,c.succeeded,c.failed,c.cancelled,
+  CASE WHEN c.queued+c.running>0 THEN CASE WHEN c.running>0 THEN 'running' ELSE 'queued' END
+   WHEN c.succeeded>0 AND c.failed+c.cancelled>0 THEN 'partial' WHEN c.succeeded>0 THEN 'succeeded'
+   WHEN c.failed>0 THEN 'failed' ELSE 'cancelled' END,
+  CASE WHEN c.queued+c.running>0 THEN NULL ELSE COALESCE(c.last_updated,b.created_at) END);
 CREATE TABLE IF NOT EXISTS conv_batch_item_jobs (
  batch_id TEXT NOT NULL, item_index INTEGER NOT NULL, job_id TEXT NOT NULL REFERENCES conv_jobs(id),
  sequence INTEGER NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -223,6 +290,9 @@ CREATE TABLE IF NOT EXISTS conv_worker_heartbeats (
  worker_id TEXT PRIMARY KEY, started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  last_seen TIMESTAMPTZ NOT NULL DEFAULT now(), last_activity TIMESTAMPTZ
 );
+ALTER TABLE conv_worker_heartbeats ADD COLUMN IF NOT EXISTS active_jobs INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE conv_worker_heartbeats ADD COLUMN IF NOT EXISTS configured_concurrency INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE conv_worker_heartbeats ADD COLUMN IF NOT EXISTS batch_concurrency INTEGER NOT NULL DEFAULT 2;
 `
 	_, err := s.db.ExecContext(ctx, schema)
 	return err
@@ -565,6 +635,14 @@ func (s *Service) MonthlyUsage(ctx context.Context, ownerID string) (MonthlyUsag
 }
 
 func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID string, limits Limits) (Job, bool, error) {
+	return s.submitFor(ctx, req, ownerID, limits, "", -1)
+}
+
+func (s *Service) submitBatchItem(ctx context.Context, req SubmitRequest, ownerID string, limits Limits, batchID string, itemIndex int) (Job, bool, error) {
+	return s.submitFor(ctx, req, ownerID, limits, batchID, itemIndex)
+}
+
+func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID string, limits Limits, batchID string, itemIndex int) (Job, bool, error) {
 	if strings.TrimSpace(ownerID) == "" {
 		return Job{}, false, fmt.Errorf("job owner is required")
 	}
@@ -678,6 +756,26 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, ownerID); err != nil {
 		return Job{}, false, err
 	}
+	if batchID != "" {
+		var cancelled bool
+		if err = tx.QueryRowContext(ctx, `SELECT cancel_requested FROM conv_batches WHERE id=$1 AND owner_id=$2 FOR UPDATE`, batchID, ownerID).Scan(&cancelled); errors.Is(err, sql.ErrNoRows) {
+			return Job{}, false, ErrNotFound
+		} else if err != nil {
+			return Job{}, false, err
+		}
+		if cancelled {
+			return Job{}, false, ErrCanceled
+		}
+		var itemState string
+		if err = tx.QueryRowContext(ctx, `SELECT state FROM conv_batch_items WHERE batch_id=$1 AND item_index=$2 FOR UPDATE`, batchID, itemIndex).Scan(&itemState); errors.Is(err, sql.ErrNoRows) {
+			return Job{}, false, ErrNotFound
+		} else if err != nil {
+			return Job{}, false, err
+		}
+		if itemState != "submitting" {
+			return Job{}, false, ErrCanceled
+		}
+	}
 	var consumed, cleanupPending bool
 	var deleted sql.NullTime
 	var storedOwner string
@@ -710,7 +808,14 @@ func (s *Service) SubmitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			return Job{}, false, ErrQuotaExceeded
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO conv_jobs(id,upload_id,profile_id,profile_version,source_format,target_format,mode,execution,idempotency_key,request_hash,state,max_attempts,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12)`, id, upload.ID, req.ProfileID, profileDef.Version, upload.Extension, target, mode, specBytes, req.IdempotencyKey, requestDigest, MaxAttempts, ownerID)
+	if batchID == "" {
+		_, err = tx.ExecContext(ctx, `INSERT INTO conv_jobs(id,upload_id,profile_id,profile_version,source_format,target_format,mode,execution,idempotency_key,request_hash,state,max_attempts,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12)`, id, upload.ID, req.ProfileID, profileDef.Version, upload.Extension, target, mode, specBytes, req.IdempotencyKey, requestDigest, MaxAttempts, ownerID)
+	} else {
+		// The worker cannot see a batch job until attachBatchJob clears this hold.
+		// This closes the window where a worker could claim an item before the
+		// durable batch-item pointer is committed.
+		_, err = tx.ExecContext(ctx, `INSERT INTO conv_jobs(id,upload_id,profile_id,profile_version,source_format,target_format,mode,execution,idempotency_key,request_hash,state,max_attempts,owner_id,batch_id,batch_item_index,batch_submission_pending) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12,$13,$14,true)`, id, upload.ID, req.ProfileID, profileDef.Version, upload.Extension, target, mode, specBytes, req.IdempotencyKey, requestDigest, MaxAttempts, ownerID, batchID, itemIndex)
+	}
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {

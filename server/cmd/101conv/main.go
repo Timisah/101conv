@@ -170,13 +170,15 @@ func runWorker() error {
 	runner := &worker.ProcessRunner{EngineRoot: env("ENGINE_ROOT", "/var/lib/101conv/engines"), UploadRoot: env("UPLOADS_PATH", "/var/lib/101conv/uploads"), ResultRoot: env("RESULTS_PATH", "/var/lib/101conv/results"), WorkRoot: env("WORK_PATH", "/work"), Timeout: durationEnv("CONVERSION_TIMEOUT", 10*time.Minute), MaxOutput: maxOutput}
 	workerID := env("WORKER_ID", "")
 	lease := durationEnv("JOB_LEASE", 45*time.Second)
-	runnerService, err := jobs.NewWorker(db, runner, jobs.WorkerConfig{ID: workerID, Lease: lease, PollInterval: time.Second})
+	concurrency := intEnv("WORKER_CONCURRENCY", 1)
+	batchConcurrency := intEnv("WORKER_BATCH_CONCURRENCY", 2)
+	runnerService, err := jobs.NewWorker(db, runner, jobs.WorkerConfig{ID: workerID, Lease: lease, PollInterval: time.Second, Concurrency: concurrency, BatchConcurrency: batchConcurrency})
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Printf("101conv worker started with lease %s", lease)
+	log.Printf("101conv worker started with lease %s, concurrency %d, per-batch concurrency %d", lease, concurrency, batchConcurrency)
 	err = runnerService.Run(ctx)
 	if errors.Is(err, context.Canceled) {
 		return nil
@@ -233,6 +235,17 @@ func int64Env(key string, fallback int64) int64 {
 		return fallback
 	}
 	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n <= 0 {
+		log.Fatalf("invalid %s", key)
+	}
+	return n
+}
+func intEnv(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(value)
 	if err != nil || n <= 0 {
 		log.Fatalf("invalid %s", key)
 	}
