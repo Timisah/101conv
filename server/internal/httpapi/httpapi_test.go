@@ -77,6 +77,11 @@ func TestGuestSessionRequestAllowsHeaderStrippedBrowserJSON(t *testing.T) {
 	if !guestSessionRequest(r) {
 		t.Fatal("header-stripped browser JSON request should be accepted")
 	}
+	r.Header.Set("Sec-Fetch-Site", "none")
+	r.Header.Del("X-101conv-Request")
+	if !guestSessionRequest(r) {
+		t.Fatal("non-cross-site JSON request with rewritten metadata should be accepted")
+	}
 	r.Header.Set("Sec-Fetch-Site", "cross-site")
 	if guestSessionRequest(r) {
 		t.Fatal("explicit cross-site guest request should be rejected")

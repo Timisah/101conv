@@ -392,12 +392,13 @@ func guestSessionRequest(r *http.Request) bool {
 	if sameOriginRequest(r) {
 		return true
 	}
-	// Some LAN reverse proxies remove Origin, Referer, and Fetch Metadata
-	// headers. The web client marks this request with a non-simple header;
-	// a cross-origin browser fetch cannot send it without a preflight, while
-	// an HTML form cannot produce it. Explicit cross-site metadata is still
-	// rejected above.
+	// Some LAN reverse proxies remove Origin and Referer, or rewrite the
+	// Fetch Metadata value. The web client marks this request with a non-simple
+	// header; the JSON content type also cannot be sent by an HTML form and a
+	// cross-origin browser fetch would require a preflight. Accept either form
+	// only when the request is not explicitly cross-site.
+	fetchSite := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
 	return r.Header.Get("Origin") == "" && r.Header.Get("Referer") == "" &&
-		r.Header.Get("Sec-Fetch-Site") == "" &&
-		r.Header.Get("X-101conv-Request") == "guest-session"
+		fetchSite != "cross-site" &&
+		(r.Header.Get("X-101conv-Request") == "guest-session" || strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json"))
 }
