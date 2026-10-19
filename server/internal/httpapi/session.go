@@ -352,7 +352,32 @@ func (a *API) deleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func requestIsSecure(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	return requestScheme(r) == "https"
+}
+
+func forwardedValue(r *http.Request, name string) string {
+	value := strings.TrimSpace(r.Header.Get(name))
+	if comma := strings.IndexByte(value, ','); comma >= 0 {
+		value = value[:comma]
+	}
+	return strings.TrimSpace(value)
+}
+
+func requestHost(r *http.Request) string {
+	if host := forwardedValue(r, "X-Forwarded-Host"); host != "" {
+		return host
+	}
+	return r.Host
+}
+
+func requestScheme(r *http.Request) string {
+	if proto := strings.ToLower(forwardedValue(r, "X-Forwarded-Proto")); proto == "http" || proto == "https" {
+		return proto
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
 }
 
 func sameOriginRequest(r *http.Request) bool {
@@ -378,14 +403,10 @@ func sameOriginRequest(r *http.Request) bool {
 		return fetchSite == "same-origin" || fetchSite == "same-site"
 	}
 	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Host, r.Host) || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Host, requestHost(r)) || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return false
 	}
-	requestScheme := "http"
-	if requestIsSecure(r) {
-		requestScheme = "https"
-	}
-	return strings.EqualFold(parsed.Scheme, requestScheme)
+	return strings.EqualFold(parsed.Scheme, requestScheme(r))
 }
 
 func guestSessionRequest(r *http.Request) bool {

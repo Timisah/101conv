@@ -40,6 +40,7 @@ func TestSameOriginRequestChecksExactOriginAndScheme(t *testing.T) {
 		referer     string
 		fetchSite   string
 		forwarded   string
+		forwardedHost string
 		wantAllowed bool
 	}{
 		{name: "same origin", origin: "http://example.test:5656", fetchSite: "same-origin", wantAllowed: true},
@@ -53,6 +54,7 @@ func TestSameOriginRequestChecksExactOriginAndScheme(t *testing.T) {
 		{name: "different port rejected", origin: "http://example.test:8080", wantAllowed: false},
 		{name: "different scheme rejected", origin: "https://example.test:5656", wantAllowed: false},
 		{name: "forwarded https origin", origin: "https://example.test:5656", forwarded: "https", wantAllowed: true},
+		{name: "forwarded public host", origin: "https://public.example", forwarded: "https", forwardedHost: "public.example", wantAllowed: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -62,6 +64,7 @@ func TestSameOriginRequestChecksExactOriginAndScheme(t *testing.T) {
 			r.Header.Set("Referer", test.referer)
 			r.Header.Set("Sec-Fetch-Site", test.fetchSite)
 			r.Header.Set("X-Forwarded-Proto", test.forwarded)
+			r.Header.Set("X-Forwarded-Host", test.forwardedHost)
 			if got := sameOriginRequest(r); got != test.wantAllowed {
 				t.Fatalf("sameOriginRequest() = %v, want %v", got, test.wantAllowed)
 			}
