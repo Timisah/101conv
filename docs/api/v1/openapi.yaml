@@ -210,7 +210,7 @@ paths:
   /api/v1/auth/guest-session:
     post:
       summary: Start a temporary, isolated anonymous conversion session
-      description: Available only after first-run administrator setup and when guest mode is enabled. A unique 256-bit credential is issued as an HttpOnly, SameSite Strict cookie; only its digest is persisted. The request must be same-origin.
+      description: Available only after first-run administrator setup and when guest mode is enabled. A unique 256-bit credential is issued as an HttpOnly, SameSite Strict cookie; only its digest is persisted. Guest-session creation is public and rate limited; subsequent guest mutations require same-origin browser requests.
       responses:
         '201': { description: Guest session created; cookie and effective guest limits returned }
         '403': { description: Guest access is disabled or setup is incomplete }

@@ -190,10 +190,6 @@ func (a *API) createGuestSession(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "guest_unavailable", "guest access is not configured")
 		return
 	}
-	if !guestSessionRequest(r) {
-		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
-		return
-	}
 	p, token, expires, settings, err := a.accounts.CreateGuestSession(r.Context())
 	if err != nil {
 		if errors.Is(err, auth.ErrRateLimited) {
