@@ -1,0 +1,32 @@
+{
+  "profile": {
+    "schemaVersion": 1,
+    "type": "conversion",
+    "id": "ffmpeg-image-linux-amd64",
+    "version": "1.0.0",
+    "name": "FFmpeg Image Conversion",
+    "description": "Common raster image conversion through the pinned LGPL FFmpeg build. AVIF support depends on the capabilities compiled into that release.",
+    "license": "LGPL-2.1-or-later for FFmpeg; bundled dependencies have separate terms. See the upstream license notices.",
+    "minimumAppVersion": "0.0.1",
+    "maximumAppVersionExclusive": "0.2.0",
+    "priority": 40,
+    "engines": [{"engineId":"ffmpeg","versions":{"minimum":"9.0.0","maximumExclusive":"10.0.0"},"capabilities":["image.decode","image.encode"]}],
+    "rules": [
+      {
+        "engineId":"ffmpeg",
+        "executable":"ffmpeg",
+        "sources":["jpg","jpeg","png","webp","tif","tiff","bmp","gif","avif"],
+        "targets":["jpg","jpeg","png","webp","tif","tiff","bmp","gif","avif"],
+        "arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","-map_metadata","{option:metadata}","-vf","scale={option:width}:{option:height}:force_original_aspect_ratio={option:preserveAspect}","-q:v","{option:quality}","-compression_level","{option:compressionLevel}","{target}"],
+        "options":[
+          {"key":"width","label":"Resize width (px)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"height","label":"Resize height (px)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"preserveAspect","label":"Aspect ratio","type":"select","default":"decrease","choices":["decrease","disable"]},
+          {"key":"quality","label":"Quality (FFmpeg scale)","type":"number","default":"3","min":2,"max":31,"step":1},
+          {"key":"compressionLevel","label":"Compression level","type":"number","default":"6","min":0,"max":9,"step":1},
+          {"key":"metadata","label":"Metadata","type":"select","default":"0","choices":["0","-1"]}
+        ]
+      }
+    ]
+  }
+}

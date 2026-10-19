@@ -11,6 +11,15 @@
       "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/profiles/ffmpeg-linux-amd64.json",
       "minimumAppVersion": "0.0.1",
       "maximumAppVersionExclusive": "0.2.0"
+    },
+    {
+      "id": "ffmpeg-image-linux-amd64",
+      "version": "1.0.0",
+      "name": "FFmpeg Image Conversion",
+      "description": "Common raster image conversion using the pinned LGPL FFmpeg engine with bounded image options.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-image-linux-amd64.json",
+      "minimumAppVersion": "0.0.1",
+      "maximumAppVersionExclusive": "0.2.0"
     }
   ]
 }

@@ -14,7 +14,7 @@ import (
 )
 
 type Definition struct {
-	SchemaVersion              int                 `json:"schemaVersion"`
+	SchemaVersion int `json:"schemaVersion"`
 	// Type separates profiles intended for ordinary conversion from profiles
 	// intended for the compression workflow. An empty value is accepted only
 	// for pre-Type definitions loaded through the legacy compatibility path.
@@ -33,7 +33,7 @@ type Definition struct {
 }
 
 const (
-	TypeConversion = "conversion"
+	TypeConversion  = "conversion"
 	TypeCompression = "compression"
 )
 
@@ -100,6 +100,9 @@ type ConversionRule struct {
 	Targets    []string `json:"targets"`
 	// Arguments are argv tokens, never a shell command string.
 	Arguments []string `json:"arguments"`
+	// Options exposes typed, bounded controls for this source/target mapping.
+	// Values are substituted only into standalone {option:key} argv tokens.
+	Options []OptionDefinition `json:"options,omitempty"`
 	// CompressionArguments replace the {compression.args} marker when this rule
 	// is selected in compression mode. Supported tokens are declared option
 	// placeholders and {compression.videoKbps}, {compression.audioKbps}, and
@@ -201,6 +204,20 @@ func (d Definition) Validate() error {
 		}
 		if strings.TrimSpace(rule.Executable) == "" || len(rule.Sources) == 0 || len(rule.Targets) == 0 {
 			return fmt.Errorf("rule %d must declare an executable, sources, and targets", i)
+		}
+		if err := validateOptions(rule.Options); err != nil {
+			return fmt.Errorf("rule %d options: %w", i, err)
+		}
+		optionKeys := make(map[string]bool, len(rule.Options))
+		for _, option := range rule.Options {
+			optionKeys[option.Key] = true
+		}
+		for _, argument := range rule.Arguments {
+			if strings.Contains(argument, "{option:") {
+				if err := validateOptionPlaceholders(argument, optionKeys); err != nil {
+					return fmt.Errorf("rule %d: %w", i, err)
+				}
+			}
 		}
 		for _, format := range append(append([]string(nil), rule.Sources...), rule.Targets...) {
 			if strings.TrimSpace(format) == "" {
@@ -413,13 +430,98 @@ func ValidateWorkerArguments(arguments []string) error {
 			seenTarget = true
 		case "{compression.args}":
 		default:
+			if strings.Contains(arg, "{option:") {
+				if err := validateOptionPlaceholders(arg, nil); err == nil {
+					continue
+				}
+			}
 			if strings.ContainsAny(arg, "{}") {
-				return fmt.Errorf("only standalone {source}, {target}, and {compression.args} placeholders are supported")
+				return fmt.Errorf("only standalone {source}, {target}, {compression.args}, and {option:key} placeholders are supported")
 			}
 		}
 	}
 	if !seenSource || !seenTarget {
 		return fmt.Errorf("arguments must include standalone {source} and {target} placeholders")
+	}
+	return nil
+}
+
+func validateOptionPlaceholders(argument string, declared map[string]bool) error {
+	remaining := argument
+	for {
+		start := strings.Index(remaining, "{option:")
+		if start < 0 {
+			break
+		}
+		end := strings.IndexByte(remaining[start:], '}')
+		if end < 0 {
+			return fmt.Errorf("unterminated option placeholder")
+		}
+		end += start
+		key := remaining[start+len("{option:") : end]
+		if !safeOptionKey(key) || declared != nil && !declared[key] {
+			return fmt.Errorf("references undeclared option %q", key)
+		}
+		remaining = remaining[end+1:]
+	}
+	if strings.ContainsAny(remaining, "{}") {
+		return fmt.Errorf("unsupported option placeholder")
+	}
+	return nil
+}
+
+// ValidateOptions validates a conversion rule's public option schema. It is
+// deliberately small: every option must be representable as one safe argv
+// token, with server-side range/choice checking before a job is persisted.
+func ValidateOptions(options []OptionDefinition) error { return validateOptions(options) }
+
+func validateOptions(options []OptionDefinition) error {
+	if len(options) > 32 {
+		return fmt.Errorf("at most 32 conversion options are allowed")
+	}
+	seen := map[string]bool{}
+	for _, option := range options {
+		if !safeOptionKey(option.Key) || strings.TrimSpace(option.Label) == "" || seen[option.Key] {
+			return fmt.Errorf("option key and label must be valid and unique")
+		}
+		seen[option.Key] = true
+		switch option.Type {
+		case "number":
+			if option.Min == nil || option.Max == nil || *option.Min > *option.Max {
+				return fmt.Errorf("option %q requires a valid numeric range", option.Key)
+			}
+			value, err := parseOptionNumber(option.Default)
+			if err != nil || value < *option.Min || value > *option.Max {
+				return fmt.Errorf("option %q has an invalid default", option.Key)
+			}
+			if option.Step != nil && (*option.Step <= 0 || math.Mod(value-*option.Min, *option.Step) > 1e-9) {
+				return fmt.Errorf("option %q has an invalid step or default", option.Key)
+			}
+		case "select", "boolean":
+			if option.Type == "boolean" {
+				if option.Default != "true" && option.Default != "false" {
+					return fmt.Errorf("option %q has an invalid boolean default", option.Key)
+				}
+			} else {
+				if len(option.Choices) == 0 || len(option.Choices) > 128 {
+					return fmt.Errorf("option %q requires choices", option.Key)
+				}
+				found := false
+				for _, choice := range option.Choices {
+					if choice == option.Default {
+						found = true
+					}
+					if len(choice) == 0 || len(choice) > 128 || strings.ContainsAny(choice, "{}\x00") {
+						return fmt.Errorf("option %q has an invalid choice", option.Key)
+					}
+				}
+				if !found {
+					return fmt.Errorf("option %q default must be one of its choices", option.Key)
+				}
+			}
+		default:
+			return fmt.Errorf("option %q uses unsupported type %q", option.Key, option.Type)
+		}
 	}
 	return nil
 }

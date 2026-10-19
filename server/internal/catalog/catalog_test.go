@@ -42,8 +42,8 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("catalog should support this app: %v", err)
 	}
-	if len(entries) != 1 || entries[0].ID != "ffmpeg-linux-amd64" {
-		t.Fatalf("expected the official FFmpeg profile, got %+v", entries)
+	if len(entries) != 2 || entries[0].ID != "ffmpeg-linux-amd64" || entries[1].ID != "ffmpeg-image-linux-amd64" {
+		t.Fatalf("expected the official FFmpeg profiles, got %+v", entries)
 	}
 	old, err := New("0.2.0")
 	if err != nil {

@@ -771,7 +771,7 @@ paths:
                 profileId: { type: string }
                 targetFormat: { type: string, pattern: '^[a-z0-9]{1,12}$' }
                 idempotencyKey: { type: string, minLength: 8, maxLength: 128 }
-                options: { type: object, additionalProperties: { type: string } }
+                options: { type: object, additionalProperties: { type: string }, description: Typed profile options such as image width, height, quality, compression level, and metadata policy. Unknown keys and out-of-range values are rejected. }
       responses:
         '202': { description: Compression job accepted; response uses JobSubmission }
         '400': { description: Invalid or out-of-range profile option }
@@ -1346,7 +1346,7 @@ components:
         uploadId: { type: string, format: uuid }
         profileId: { type: string }
         targetFormat: { type: string, pattern: '^[a-z0-9]{1,12}$' }
-        options: { type: object, additionalProperties: { type: string } }
+        options: { type: object, additionalProperties: { type: string }, description: Typed profile options are validated against the selected rule and frozen into the execution specification. }
     Batch:
       type: object
       required: [id, mode, state, total, queued, running, succeeded, failed, cancelled, createdAt, items]

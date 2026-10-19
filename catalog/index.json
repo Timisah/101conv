@@ -22,6 +22,16 @@
       "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/profiles/jpeg-xl-linux-amd64.json",
       "minimumAppVersion": "0.0.1",
       "maximumAppVersionExclusive": "0.2.0"
+    },
+    {
+      "id": "ffmpeg-image-linux-amd64",
+      "version": "1.0.0",
+      "name": "FFmpeg Image Conversion",
+      "description": "Image conversion for common raster formats using the pinned LGPL FFmpeg build, with bounded resize, quality, compression, and metadata controls.",
+      "supportedExtensions": ["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif", "avif"],
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-image-linux-amd64.json",
+      "minimumAppVersion": "0.0.1",
+      "maximumAppVersionExclusive": "0.2.0"
     }
   ]
 }

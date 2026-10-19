@@ -42,7 +42,7 @@ func TestOfficialGoCatalogManifestsValidate(t *testing.T) {
 	if err = json.Unmarshal(indexBytes, &index); err != nil {
 		t.Fatal(err)
 	}
-	if index.SchemaVersion != 1 || len(index.Engines) != 2 || len(index.Profiles) != 4 {
+	if index.SchemaVersion != 1 || len(index.Engines) != 2 || len(index.Profiles) != 5 {
 		t.Fatalf("unexpected Go catalog index: %#v", index)
 	}
 	types := map[string]int{}
@@ -79,8 +79,8 @@ func TestOfficialGoCatalogManifestsValidate(t *testing.T) {
 		}
 		types[manifest.Profile.Type]++
 	}
-	if types[profile.TypeConversion] != 2 || types[profile.TypeCompression] != 2 {
-		t.Fatalf("catalog must expose two profiles of each type, got %v", types)
+	if types[profile.TypeConversion] != 3 || types[profile.TypeCompression] != 2 {
+		t.Fatalf("catalog must expose three conversion and two compression profiles, got %v", types)
 	}
 }
 

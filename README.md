@@ -4,6 +4,8 @@
 
 101conv is a self-hosted file conversion application. The supported application is a React web client, Go Core and restricted Worker, and PostgreSQL, deployed together from [`compose.yaml`](compose.yaml).
 
+The official catalog currently includes pinned LGPL FFmpeg audio/video profiles, JPEG XL profiles, and an FFmpeg image profile for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings supported by the selected build. Image resize, aspect-ratio, quality, compression-level, and metadata controls are validated by Core and stored in each job's immutable execution specification. The catalog does not currently claim LibreOffice or PDF rasterization support; those require separately reviewed, pinned converter packages.
+
 ## New installation
 
 On a Docker host with Compose and OpenSSL, run:

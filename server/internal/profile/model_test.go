@@ -48,7 +48,9 @@ func TestBundledProfilesSeparateConversionAndCompression(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var manifest struct{ Profile Definition `json:"profile"` }
+		var manifest struct {
+			Profile Definition `json:"profile"`
+		}
 		if err = json.Unmarshal(raw, &manifest); err != nil {
 			t.Fatal(err)
 		}
@@ -96,9 +98,9 @@ func TestExplicitProfileTypeRejectsMixedConfiguration(t *testing.T) {
 	min, max, step := 1.0, 8.0, 1.0
 	definition := Definition{
 		SchemaVersion: 1, Type: TypeConversion, ID: "conversion-test", Version: "1.0.0", Name: "Conversion test",
-		Engines: []EngineRequirement{{EngineID: "ffmpeg"}},
+		Engines:     []EngineRequirement{{EngineID: "ffmpeg"}},
 		Compression: &CompressionConfig{Options: []OptionDefinition{{Key: "quality", Label: "Quality", Type: "number", Default: "4", Min: &min, Max: &max, Step: &step}}},
-		Rules: []ConversionRule{{EngineID: "ffmpeg", Executable: "ffmpeg", Sources: []string{"mp4"}, Targets: []string{"mp4"}, Arguments: []string{"-i", "{source}", "{compression.args}", "{target}"}, CompressionArguments: []string{"-crf", "{option:quality}"}}},
+		Rules:       []ConversionRule{{EngineID: "ffmpeg", Executable: "ffmpeg", Sources: []string{"mp4"}, Targets: []string{"mp4"}, Arguments: []string{"-i", "{source}", "{compression.args}", "{target}"}, CompressionArguments: []string{"-crf", "{option:quality}"}}},
 	}
 	if err := definition.Validate(); err == nil {
 		t.Fatal("explicit conversion profile must reject compression configuration")
@@ -159,5 +161,22 @@ func TestValidateWorkerArguments(t *testing.T) {
 		if err := ValidateWorkerArguments(invalid); err == nil {
 			t.Errorf("expected invalid arguments rejected: %#v", invalid)
 		}
+	}
+}
+
+func TestConversionRuleOptionsAreTypedAndBoundToArgv(t *testing.T) {
+	min, max, step := 0.0, 10000.0, 1.0
+	d := Definition{SchemaVersion: 1, Type: TypeConversion, ID: "image", Version: "1.0.0", Name: "Image",
+		Engines: []EngineRequirement{{EngineID: "ffmpeg"}}, Rules: []ConversionRule{{
+			EngineID: "ffmpeg", Executable: "ffmpeg", Sources: []string{"png"}, Targets: []string{"jpg"},
+			Arguments: []string{"-vf", "scale={option:width}:0", "{source}", "{target}"},
+			Options:   []OptionDefinition{{Key: "width", Label: "Width", Type: "number", Default: "0", Min: &min, Max: &max, Step: &step}},
+		}}}
+	if err := d.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	d.Rules[0].Arguments[1] = "scale={option:unknown}:0"
+	if err := d.Validate(); err == nil {
+		t.Fatal("undeclared embedded option should be rejected")
 	}
 }

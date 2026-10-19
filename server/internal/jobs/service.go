@@ -769,9 +769,6 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	if mode != "convert" && mode != "compress" {
 		return Job{}, false, fmt.Errorf("%w: mode must be convert or compress", ErrInvalidInput)
 	}
-	if mode == "convert" && len(req.Options) != 0 {
-		return Job{}, false, fmt.Errorf("%w: options are only accepted for compression jobs", ErrInvalidInput)
-	}
 	var upload Upload
 	err := s.db.QueryRowContext(ctx, `SELECT id,file_name,extension,size_bytes,sha256,created_at FROM conv_uploads WHERE id=$1 AND owner_id=$2 AND NOT cleanup_pending AND original_deleted_at IS NULL`, req.UploadID, ownerID).Scan(&upload.ID, &upload.FileName, &upload.Extension, &upload.Size, &upload.SHA256, &upload.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -810,6 +807,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	var targetSizeBytes int64
 	var probeRelative string
 	var audioBitrateKbps, minimumVideoKbps int
+	optionValues := map[string]string{}
 	if mode == "compress" {
 		if profileDef.Compression == nil || len(rule.CompressionArguments) == 0 {
 			return Job{}, false, fmt.Errorf("%w: profile does not provide compression for %s to %s", ErrUnsupported, upload.Extension, target)
@@ -831,6 +829,12 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			audioBitrateKbps, minimumVideoKbps = profileDef.Compression.AudioBitrateKbps, profileDef.Compression.MinimumVideoKbps
 		}
 	}
+	if mode == "convert" {
+		optionValues, err = validateConversionOptions(rule.Options, req.Options)
+		if err != nil {
+			return Job{}, false, err
+		}
+	}
 	rel := engineDef.Executables[rule.Executable]
 	if !safeExecutableRelative(rel) {
 		return Job{}, false, fmt.Errorf("profile executable mapping is unsafe")
@@ -838,6 +842,12 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	args, err := validateArguments(rule.Arguments)
 	if err != nil {
 		return Job{}, false, err
+	}
+	if mode == "convert" {
+		args, err = expandConversionOptions(args, optionValues)
+		if err != nil {
+			return Job{}, false, err
+		}
 	}
 	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && profileDef.Compression != nil && profileDef.Compression.RequireSmaller}
 	specBytes, err := json.Marshal(spec)
@@ -1052,6 +1062,73 @@ func validateCompressionOptions(config profile.CompressionConfig, requested map[
 		values[option.Key] = value
 	}
 	return values, targetBytes, nil
+}
+
+func validateConversionOptions(definitions []profile.OptionDefinition, requested map[string]string) (map[string]string, error) {
+	byKey := make(map[string]profile.OptionDefinition, len(definitions))
+	for _, option := range definitions {
+		byKey[option.Key] = option
+	}
+	for key := range requested {
+		if _, ok := byKey[key]; !ok {
+			return nil, fmt.Errorf("%w: unknown conversion option %q", ErrInvalidInput, key)
+		}
+	}
+	values := make(map[string]string, len(definitions))
+	for _, option := range definitions {
+		value := option.Default
+		if supplied, ok := requested[option.Key]; ok {
+			value = strings.TrimSpace(supplied)
+		}
+		switch option.Type {
+		case "number":
+			number, err := strconv.ParseFloat(value, 64)
+			if option.Min == nil || option.Max == nil || err != nil || math.IsNaN(number) || math.IsInf(number, 0) || number < *option.Min || number > *option.Max {
+				return nil, fmt.Errorf("%w: option %q must be between %v and %v", ErrInvalidInput, option.Key, option.Min, option.Max)
+			}
+			if option.Step != nil && math.Mod(number-*option.Min, *option.Step) > 1e-9 {
+				return nil, fmt.Errorf("%w: option %q does not match its allowed step", ErrInvalidInput, option.Key)
+			}
+			value = strconv.FormatFloat(number, 'f', -1, 64)
+		case "select":
+			valid := false
+			for _, choice := range option.Choices {
+				if value == choice {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return nil, fmt.Errorf("%w: invalid value for option %q", ErrInvalidInput, option.Key)
+			}
+		case "boolean":
+			if value != "true" && value != "false" {
+				return nil, fmt.Errorf("%w: option %q must be true or false", ErrInvalidInput, option.Key)
+			}
+		default:
+			return nil, fmt.Errorf("%w: unsupported conversion option type", ErrInvalidInput)
+		}
+		if strings.ContainsAny(value, "{}\x00") {
+			return nil, fmt.Errorf("%w: invalid option value", ErrInvalidInput)
+		}
+		values[option.Key] = value
+	}
+	return values, nil
+}
+
+func expandConversionOptions(arguments []string, values map[string]string) ([]string, error) {
+	result := make([]string, len(arguments))
+	for i, arg := range arguments {
+		value := arg
+		for key, replacement := range values {
+			value = strings.ReplaceAll(value, "{option:"+key+"}", replacement)
+		}
+		if strings.ContainsAny(strings.ReplaceAll(strings.ReplaceAll(value, "{source}", ""), "{target}", ""), "{}") {
+			return nil, fmt.Errorf("%w: unsupported conversion argument placeholder", ErrInvalidInput)
+		}
+		result[i] = value
+	}
+	return result, nil
 }
 
 func expandCompressionOptions(arguments []string, values map[string]string) ([]string, error) {

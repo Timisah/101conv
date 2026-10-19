@@ -10,6 +10,7 @@ The Go catalog exposes separate conversion and compression profiles:
 
 - **FFmpeg Audio/Video Conversion** and **FFmpeg Audio/Video Compression** share one FFmpeg engine installation.
 - **JPEG XL Image Conversion** and **JPEG XL Image Compression** share one JPEG XL engine installation.
+- **FFmpeg Image Conversion** uses the same pinned LGPL FFmpeg engine for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings exposed by that build. Its resize, aspect-ratio, quality, compression-level, and metadata controls are typed and bounded in the rule schema.
 
 Their engine/profile manifests live under `catalog/targets/`. The package SHA-256 values were checked against the upstream release bytes. FFmpeg is the LGPL BtbN build; JPEG XL is the upstream BSD-3-Clause build. Review the upstream notices and local legal obligations before publishing.
 
@@ -105,6 +106,10 @@ go test ./cmd/catalog-repo ./internal/profile ./internal/repositorymanager
 ```
 
 Only after validation should maintainers run `catalog-repo publish`. The publish step verifies upstream package bytes and signs the TUF metadata. Test an actual conversion with each new profile and supported engine build before release: structural validation cannot prove that converter-specific flags, codecs, or output behavior are correct.
+
+Conversion rules may declare `options` using the same bounded `number`, `select`, or `boolean` schema used by compression profiles. `arguments` can contain `{option:key}` placeholders, including inside one argv token; Core validates the declared key and range/choice, expands the value into the immutable execution specification, and the Worker never invokes a shell. Existing profiles without options keep their previous behavior.
+
+The current catalog does not ship LibreOffice or PDF rasterization. A secure, pinned multi-architecture LibreOffice build with a reviewed license and artifact provenance is still required before adding DOCX/ODT/XLSX/PPTX to the marketplace. PDF-to-image needs a separately reviewed renderer; it is not represented as LibreOffice support.
 
 The manifest schema and validation behavior are versioned by `schemaVersion`. Additive optional fields can be introduced without a Core patch; changing placeholder semantics or execution behavior requires a schema/Worker compatibility change and should be documented as such. Third-party repositories should test against the oldest supported 101conv version named by their catalog bounds.
 
