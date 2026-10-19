@@ -302,7 +302,11 @@ func (a *API) requireCapability(w http.ResponseWriter, r *http.Request, scope st
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return auth.Principal{}, false
 	}
-	if (method == "session" || method == "guest") && r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOriginRequest(r) {
+	originOK := sameOriginRequest(r)
+	if method == "guest" {
+		originOK = guestSessionRequest(r)
+	}
+	if (method == "session" || method == "guest") && r.Method != http.MethodGet && r.Method != http.MethodHead && !originOK {
 		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
 		return auth.Principal{}, false
 	}

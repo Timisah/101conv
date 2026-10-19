@@ -334,12 +334,16 @@ func (a *API) deleteSession(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "sign-in required")
 		return
 	}
-	if r.Header.Get("Authorization") == "" && !sameOriginRequest(r) {
-		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
+	if p.Guest {
+		if !guestSessionRequest(r) {
+			writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
+			return
+		}
+		a.deleteGuestSession(w, r)
 		return
 	}
-	if p.Guest {
-		a.deleteGuestSession(w, r)
+	if r.Header.Get("Authorization") == "" && !sameOriginRequest(r) {
+		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
 		return
 	}
 	if a.sessions == nil {
@@ -390,6 +394,9 @@ func sameOriginRequest(r *http.Request) bool {
 	if fetchSite == "cross-site" {
 		return false
 	}
+	if fetchSite == "same-origin" {
+		return true
+	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		origin = r.Header.Get("Referer")
@@ -413,13 +420,12 @@ func guestSessionRequest(r *http.Request) bool {
 	if sameOriginRequest(r) {
 		return true
 	}
-	// Some LAN reverse proxies remove Origin and Referer, or rewrite the
-	// Fetch Metadata value. The web client marks this request with a non-simple
-	// header; the JSON content type also cannot be sent by an HTML form and a
-	// cross-origin browser fetch would require a preflight. Accept either form
-	// only when the request is not explicitly cross-site.
+	// Some LAN reverse proxies rewrite the public Origin or host. The web client
+	// marks guest mutations with a non-simple header; a cross-origin browser
+	// fetch cannot send it without a preflight, and an HTML form cannot produce
+	// it. JSON also cannot be submitted by an HTML form. Explicit cross-site
+	// Fetch Metadata remains rejected.
 	fetchSite := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
-	return r.Header.Get("Origin") == "" && r.Header.Get("Referer") == "" &&
-		fetchSite != "cross-site" &&
+	return fetchSite != "cross-site" &&
 		(r.Header.Get("X-101conv-Request") == "guest-session" || strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json"))
 }

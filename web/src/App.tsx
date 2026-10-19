@@ -37,7 +37,8 @@ const api = async <T,>(path:string, init:RequestInit={}):Promise<T> => {
   return data as T;
 };
 const createGuestSession=()=>api<Session>('/auth/guest-session',{method:'POST',body:json({}),headers:{'X-101conv-Request':'guest-session'}});
-const uploadWithProgress = <T,>(file:File,onProgress:(percent:number)=>void):Promise<T> => new Promise((resolve,reject)=>{
+const guestHeaders=(guest:boolean):Record<string,string>=>guest?{'X-101conv-Request':'guest-session'}:{};
+const uploadWithProgress = <T,>(file:File,onProgress:(percent:number)=>void,guest=false):Promise<T> => new Promise((resolve,reject)=>{
   const form=new FormData();
   form.append('file',file);
   const request=new XMLHttpRequest();
@@ -52,6 +53,7 @@ const uploadWithProgress = <T,>(file:File,onProgress:(percent:number)=>void):Pro
     if(request.status<200||request.status>=300){reject(new Error(data?.error?.message||data?.message||'The upload could not be completed.'));return;}
     resolve(data as T);
   };
+  if(guest)request.setRequestHeader('X-101conv-Request','guest-session');
   request.send(form);
 });
 const json=(value:unknown)=>JSON.stringify(value);
@@ -201,8 +203,8 @@ function Convert({notify,session}:{notify:(s:string)=>void;session:Session}){
  async function submit(){
   if((selected&&!profile)||!target||!files.length)return;setBusy(true);const selection=[...files];
   const items:{uploadId:string;targetFormat:string;profileId?:string;options?:Record<string,string>}[]=[];const failures:string[]=[];
-  for(let index=0;index<selection.length;index++){const file=selection[index];setUploadProgress({index:index+1,total:selection.length,name:file.name,percent:0});try{const upload=await uploadWithProgress<{id:string}>(file,percent=>setUploadProgress({index:index+1,total:selection.length,name:file.name,percent}));const item:{uploadId:string;targetFormat:string;profileId?:string;options?:Record<string,string>}={uploadId:upload.id,targetFormat:target};if(profile){item.profileId=profile.definition.id;if(profileOptions.length)item.options=options;}items.push(item);}catch(e){failures.push(file.name+': '+explain((e as Error).message));}}
-  let created:Batch|undefined;try{if(items.length){const response=await api<{batch:Batch}>('/batches',{method:'POST',body:json({mode:'convert',idempotencyKey:idempotencyKey(),items})});created=response.batch;const batchIDs=JSON.parse(localStorage.getItem('101conv-batch-ids')||'[]') as string[];batchIDs.push(created.id);localStorage.setItem('101conv-batch-ids',JSON.stringify(batchIDs.slice(-100)));const jobIDs=JSON.parse(localStorage.getItem('101conv-job-ids')||'[]') as string[];for(const item of created.items)if(item.jobId)jobIDs.push(item.jobId);localStorage.setItem('101conv-job-ids',JSON.stringify(jobIDs.slice(-100)));}}catch(e){failures.push(explain((e as Error).message));}setBusy(false);setUploadProgress(null);if(created){setFiles([]);setTarget('');await track();}if(created){const details=failures.length?' '+failures.join('; '):created.failed?` ${created.failed} item(s) need attention in Jobs & history.`:'';notify(`Batch created: ${created.succeeded+created.queued+created.running} item(s) submitted.${details}`);}else if(failures.length)notify(failures.join('; '));}
+  for(let index=0;index<selection.length;index++){const file=selection[index];setUploadProgress({index:index+1,total:selection.length,name:file.name,percent:0});try{const upload=await uploadWithProgress<{id:string}>(file,percent=>setUploadProgress({index:index+1,total:selection.length,name:file.name,percent}),session.guest);const item:{uploadId:string;targetFormat:string;profileId?:string;options?:Record<string,string>}={uploadId:upload.id,targetFormat:target};if(profile){item.profileId=profile.definition.id;if(profileOptions.length)item.options=options;}items.push(item);}catch(e){failures.push(file.name+': '+explain((e as Error).message));}}
+  let created:Batch|undefined;try{if(items.length){const response=await api<{batch:Batch}>('/batches',{method:'POST',body:json({mode:'convert',idempotencyKey:idempotencyKey(),items}),headers:guestHeaders(session.guest===true)});created=response.batch;const batchIDs=JSON.parse(localStorage.getItem('101conv-batch-ids')||'[]') as string[];batchIDs.push(created.id);localStorage.setItem('101conv-batch-ids',JSON.stringify(batchIDs.slice(-100)));const jobIDs=JSON.parse(localStorage.getItem('101conv-job-ids')||'[]') as string[];for(const item of created.items)if(item.jobId)jobIDs.push(item.jobId);localStorage.setItem('101conv-job-ids',JSON.stringify(jobIDs.slice(-100)));}}catch(e){failures.push(explain((e as Error).message));}setBusy(false);setUploadProgress(null);if(created){setFiles([]);setTarget('');await track();}if(created){const details=failures.length?' '+failures.join('; '):created.failed?` ${created.failed} item(s) need attention in Jobs & history.`:'';notify(`Batch created: ${created.succeeded+created.queued+created.running} item(s) submitted.${details}`);}else if(failures.length)notify(failures.join('; '));}
  const drop=(e:DragEvent)=>{e.preventDefault();setDrag(false);if(!accessLocked&&e.dataTransfer.files.length)addFiles(e.dataTransfer.files);};
  return <><PageHeading title="What are we converting?" description="Drop a file, choose a format, and let your converters do the work."/>
  {error&&<div className="banner error"><CircleAlert size={18}/><div><b>Couldn’t load conversion profiles</b><span>{error}</span></div><button className="text-btn" onClick={refresh}>Retry</button></div>}
