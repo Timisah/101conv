@@ -44,8 +44,11 @@ func TestSameOriginRequestChecksExactOriginAndScheme(t *testing.T) {
 	}{
 		{name: "same origin", origin: "http://example.test:5656", fetchSite: "same-origin", wantAllowed: true},
 		{name: "exact origin despite same-site metadata", origin: "http://example.test:5656", fetchSite: "same-site", wantAllowed: true},
+		{name: "same-origin metadata without referrer", fetchSite: "same-origin", wantAllowed: true},
+		{name: "same-site metadata without referrer", fetchSite: "same-site", wantAllowed: true},
 		{name: "same-origin referer fallback", referer: "http://example.test:5656/convert", wantAllowed: true},
 		{name: "cross-site metadata rejected", origin: "http://example.test:5656", fetchSite: "cross-site", wantAllowed: false},
+		{name: "cross-site metadata rejected without referrer", fetchSite: "cross-site", wantAllowed: false},
 		{name: "different host rejected", origin: "http://other.test:5656", wantAllowed: false},
 		{name: "different port rejected", origin: "http://example.test:8080", wantAllowed: false},
 		{name: "different scheme rejected", origin: "https://example.test:5656", wantAllowed: false},

@@ -361,12 +361,21 @@ func sameOriginRequest(r *http.Request) bool {
 	// emitted by browsers/proxies for a request whose exact Origin still matches
 	// this instance. Do not reject those same-origin requests before comparing
 	// the full origin below.
-	if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+	fetchSite := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
+	if fetchSite == "cross-site" {
 		return false
 	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		origin = r.Header.Get("Referer")
+	}
+	// Chromium can omit both Origin and Referer for same-origin fetches when
+	// the response uses Referrer-Policy: no-referrer. Fetch Metadata is still
+	// present in that case and distinguishes a same-origin request from a
+	// cross-site request. Cookies remain host-only and SameSite=Strict, so a
+	// same-site request from another host cannot use an authenticated session.
+	if origin == "" {
+		return fetchSite == "same-origin" || fetchSite == "same-site"
 	}
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Host, r.Host) || (parsed.Scheme != "http" && parsed.Scheme != "https") {
