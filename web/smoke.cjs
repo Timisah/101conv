@@ -88,20 +88,20 @@ const assert = require('node:assert/strict');
     // Exercise the real automation flow end to end. Core is the only process
     // with these test mounts; the isolated conversion Worker has no mount.
     await page.goto(base + '/drives', { waitUntil: 'networkidle' });
-    await page.getByRole('heading', { name: 'Mounted drives' }).waitFor();
+    await page.getByRole('heading', { name: 'Mounted drives', level: 1 }).waitFor();
     await page.getByLabel('Name', { exact: true }).fill('Smoke incoming');
-    await page.getByLabel('Container path').fill(process.env.SMOKE_MOUNT_ROOT + '/incoming');
+    await page.getByLabel('Container path').fill('/mounts/incoming');
     await page.getByLabel('Access').selectOption('read');
     await page.getByRole('button', { name: 'Register drive' }).click();
     await page.getByText('Smoke incoming', { exact: true }).waitFor();
     await page.getByLabel('Name', { exact: true }).fill('Smoke converted');
-    await page.getByLabel('Container path').fill(process.env.SMOKE_MOUNT_ROOT + '/converted');
+    await page.getByLabel('Container path').fill('/mounts/converted');
     await page.getByLabel('Access').selectOption('read_write');
     await page.getByRole('button', { name: 'Register drive' }).click();
     await page.getByText('Smoke converted', { exact: true }).waitFor();
 
     await page.goto(base + '/automations', { waitUntil: 'networkidle' });
-    await page.getByRole('heading', { name: 'Automations' }).waitFor();
+    await page.getByRole('heading', { name: 'Automations', level: 1 }).waitFor();
     await page.getByLabel('Blueprint').selectOption('automatic-folder-conversion');
     await page.getByLabel('Name', { exact: true }).fill('Smoke folder conversion');
     await page.getByLabel('Input folder').selectOption({ label: 'Smoke incoming · ' + '/mounts/incoming' });
@@ -112,18 +112,48 @@ const assert = require('node:assert/strict');
     await page.getByLabel('Scan interval (seconds)').fill('30');
     await page.getByLabel('Stable for (seconds)').fill('5');
     await page.getByLabel('Concurrent files (1–8)').fill('1');
+    // Exercise the API's omitted-version policy through the real blueprint UI.
+    await page.route('**/api/v1/blueprints/automatic-folder-conversion/install', async route => {
+      const body = route.request().postDataJSON();
+      delete body.profileVersion;
+      await route.continue({ postData: JSON.stringify(body) });
+    });
     await page.getByRole('button', { name: 'Install blueprint' }).click();
     const automation = page.locator('.automation-card').filter({ hasText: 'Smoke folder conversion' });
     await automation.waitFor({ timeout: 15000 });
+    async function scanAutomationViaUI() {
+      const [response] = await Promise.all([
+        page.waitForResponse(response => /\/api\/v1\/automations\/[^/]+\/run$/.test(response.url()) && response.request().method() === 'POST'),
+        automation.getByRole('button', { name: 'Run now' }).click(),
+      ]);
+      assert.equal(response.status(), 202, 'automation scan accepted: ' + (response.ok() ? '' : await response.text()));
+    }
     await automation.getByRole('button', { name: 'Enable automation' }).click();
     await automation.getByRole('button', { name: 'Preview' }).click();
-    await page.getByRole('heading', { name: 'Dry-run preview' }).waitFor();
-    await automation.getByRole('button', { name: 'Run now' }).click(); // establishes empty initial scan
+    await page.getByRole('heading', { name: 'Current-file match preview' }).waitFor();
+    await scanAutomationViaUI(); // establishes empty initial scan
     await fs.writeFile(process.env.SMOKE_MOUNT_ROOT + '/incoming/automation-input.ppm', ppm);
-    await automation.getByRole('button', { name: 'Run now' }).click(); // first observation of the new file
+    await scanAutomationViaUI(); // first observation of the new file
+    // The shell kills Core after the first persisted observation. Baseline
+    // and observed-file state must survive; in-memory login sessions expire.
+    await fs.writeFile('/smoke-output/automation-restart-ready', 'ready');
+    let restarted = false;
+    for (let i = 0; i < 120; i++) {
+      try { await fs.access('/smoke-output/automation-restarted'); restarted = true; break; } catch {}
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    assert.ok(restarted, 'Core was restarted between automation observation and submission');
+    const restoredLogin = await page.request.post(base + '/api/v1/auth/session', {
+      headers: { Origin: base }, data: { username: 'smokeadmin', password: 'smoke-test-password-123' },
+    });
+    assert.equal(restoredLogin.status(), 201, 'same administrator can sign in after Core restart');
+    await page.goto(base + '/automations', { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { name: 'Automations', level: 1 }).waitFor();
     await new Promise(resolve => setTimeout(resolve, 5500));
-    await automation.getByRole('button', { name: 'Run now' }).click(); // stability window elapsed
-    const automationID = (await page.evaluate(() => fetch('/api/v1/automations').then(r => r.json()))).automations.find(a => a.name === 'Smoke folder conversion')?.id;
+    await scanAutomationViaUI(); // stability window elapsed
+    const savedAutomation = (await page.evaluate(() => fetch('/api/v1/automations').then(r => r.json()))).automations.find(a => a.name === 'Smoke folder conversion');
+    assert.equal(savedAutomation?.definition.action.profileVersion, '1.0.0', 'omitted blueprint version is persisted exactly');
+    const automationID = savedAutomation?.id;
     assert.ok(automationID, 'blueprint installed a persistent automation');
     let runs = [];
     for (let i = 0; i < 90; i++) {
@@ -135,11 +165,17 @@ const assert = require('node:assert/strict');
     assert.ok(completedAutomationRun, 'stable file was converted exactly once by the automation');
     assert.equal(runs.filter(run => run.fileName === 'automation-input.ppm').length, 1, 'unchanged input is not processed repeatedly');
     const automatedOutput = await fs.readFile(process.env.SMOKE_MOUNT_ROOT + '/converted/automation-input.pgm', 'utf8');
-    assert.match(automatedOutput, /^P2\n2 1\n255\n/);
+    assert.deepEqual(automatedOutput.trim().split(/\s+/), ['P2', '2', '1', '255', '76', '150'], 'automation output includes the exact expected grayscale pixels after Core recovery');
+    await scanAutomationViaUI();
+    await scanAutomationViaUI();
+    const recoveredRuns = await page.evaluate(async id => (await fetch('/api/v1/automations/' + id + '/history').then(r => r.json())).runs, automationID);
+    assert.equal(recoveredRuns.filter(run => run.jobId).length, 1, 'restart and repeated scans retain exactly one submitted job');
+    assert.deepEqual((await fs.readdir(process.env.SMOKE_MOUNT_ROOT + '/converted')).filter(name => !name.startsWith('.101conv-')), ['automation-input.pgm'], 'restart produces exactly one published output');
     await automation.getByRole('button', { name: 'History' }).click();
     await page.getByText('automation-input.ppm', { exact: true }).waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'automation editor fits mobile viewport');
+    await page.setViewportSize({ width: 1440, height: 1000 });
 
     await page.goto(base + '/convert', { waitUntil: 'networkidle' });
     await page.getByRole('heading', { name: 'What are we converting?' }).waitFor();
@@ -155,10 +191,10 @@ const assert = require('node:assert/strict');
     await page.getByRole('link', { name: 'Jobs & history' }).click();
     const conversionBatch=page.locator('.batch-history-card').filter({hasText:'Conversion batch'}).first();
     await conversionBatch.waitFor({timeout:15000});
-    const conversionBatchID=(await conversionBatch.locator('summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(conversionBatchID,'20-file batch id is displayed');
+    const conversionBatchID=(await conversionBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(conversionBatchID,'20-file batch id is displayed');
     if(process.env.SMOKE_OUTPUT_DIR)await fs.writeFile(process.env.SMOKE_OUTPUT_DIR+'/batch-id',conversionBatchID);
     await page.waitForFunction(()=>[...document.querySelectorAll('.batch-history-card')].some(card=>card.innerText.includes('20 done')),null,{timeout:60000});
-    await conversionBatch.locator('summary').click();
+    await conversionBatch.locator(':scope > summary').click();
     const [batchDownload]=await Promise.all([page.waitForEvent('download'),conversionBatch.getByRole('button',{name:'Download successful files (.zip)'}).click()]);
     const zipPath=await batchDownload.path();assert.ok(zipPath,'successful batch archive downloaded');
     const zipBytes=await fs.readFile(zipPath);assert.equal(zipBytes.subarray(0,2).toString(),'PK','batch archive is a ZIP file');assert.ok(zipBytes.includes(Buffer.from('item-001-')),'archive contains a generated safe item filename');
@@ -176,9 +212,9 @@ const assert = require('node:assert/strict');
     const partialBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
     await partialBatch.waitFor({timeout:15000});
     await page.waitForFunction(()=>[...document.querySelectorAll('.batch-history-card')].some(card=>card.innerText.includes('1 done · 1 failed')),null,{timeout:60000});
-    await partialBatch.locator('summary').click();
+    await partialBatch.locator(':scope > summary').click();
     await partialBatch.getByText('partial-corrupt.ppm',{exact:true}).waitFor();
-    const partialID=(await partialBatch.locator('summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(partialID,'partial batch id is shown');
+    const partialID=(await partialBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(partialID,'partial batch id is shown');
     const beforeRetry=await page.evaluate(async id=>fetch('/api/v1/batches/'+id).then(r=>r.json()),partialID);
     const successfulJobID=beforeRetry.items.find(item=>item.state==='succeeded')?.jobId;assert.ok(successfulJobID,'successful member has a job');
     assert.equal(beforeRetry.items.filter(item=>item.state==='failed').length,1,'invalid input is isolated to its own item');
@@ -200,10 +236,10 @@ const assert = require('node:assert/strict');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
     await page.getByRole('link',{name:'Jobs & history'}).click();
     const itemCancelBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
-    await itemCancelBatch.locator('summary').click();
+    await itemCancelBatch.locator(':scope > summary').click();
     await itemCancelBatch.getByText('cancel-one.ppm',{exact:true}).waitFor();
     await itemCancelBatch.getByRole('button',{name:'Cancel this file'}).first().click();
-    const itemCancelID=(await itemCancelBatch.locator('summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(itemCancelID);
+    const itemCancelID=(await itemCancelBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(itemCancelID);
     await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.cancelled===1&&b.succeeded===1;},itemCancelID,{timeout:60000});
 
     await page.goto(base + '/convert', { waitUntil: 'networkidle' });
@@ -216,7 +252,7 @@ const assert = require('node:assert/strict');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
     await page.getByRole('link',{name:'Jobs & history'}).click();
     const wholeCancelBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
-    const wholeCancelID=(await wholeCancelBatch.locator('summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(wholeCancelID);
+    const wholeCancelID=(await wholeCancelBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(wholeCancelID);
     await wholeCancelBatch.getByRole('button',{name:'Cancel batch'}).click();
     await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.queued===0&&b.running===0&&b.cancelled===2;},wholeCancelID,{timeout:60000});
 
@@ -245,6 +281,8 @@ const assert = require('node:assert/strict');
     const userContext=await browser.newContext({viewport:{width:1280,height:900}});const userPage=await userContext.newPage();
     userPage.on('pageerror',error=>errors.push(error.message));
     await userPage.goto(base,{waitUntil:'networkidle'});
+    await userPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await userPage.getByRole('heading', { name: 'Sign in', exact: true }).waitFor();
     await userPage.getByLabel(/User name/).fill('smokeuser');
     await userPage.getByLabel('Password').fill('smoke-user-password-123');
     await userPage.getByRole('button',{name:/Sign in/}).click();
@@ -354,10 +392,10 @@ const assert = require('node:assert/strict');
     await guestPage.getByRole('link', { name: 'Jobs' }).click();
     const guestBatch = guestPage.locator('.batch-history-card').filter({ hasText: '2 files' }).first();
     await guestBatch.waitFor({ timeout: 15000 });
-    const guestBatchID = (await guestBatch.locator('summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];
+    const guestBatchID = (await guestBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];
     assert.ok(guestBatchID, 'guest batch is visible in this browser session');
     await guestPage.waitForFunction(async id => { const response = await fetch('/api/v1/batches/' + id); return response.ok && (await response.json()).batch.succeeded === 2; }, guestBatchID, { timeout: 60000 });
-    await guestBatch.locator('summary').click();
+    await guestBatch.locator(':scope > summary').click();
     const guestBatchData = await guestPage.evaluate(async id => (await fetch('/api/v1/batches/' + id).then(r => r.json())).batch, guestBatchID);
     const guestJobID = guestBatchData.items.find(item => item.state === 'succeeded')?.jobId;
     assert.ok(guestJobID, 'guest batch retains individual job references');
@@ -397,6 +435,8 @@ const assert = require('node:assert/strict');
     activePage = mobilePage;
     mobilePage.on('pageerror', error => errors.push(error.message));
     await mobilePage.goto(base + '/convert', { waitUntil: 'networkidle' });
+    await mobilePage.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await mobilePage.getByRole('heading', { name: 'Sign in', exact: true }).waitFor();
     await mobilePage.getByLabel('Password').fill(process.env.ENGINE_ADMIN_TOKEN);
     await mobilePage.getByRole('button', { name: /^Sign in$/ }).click();
     await mobilePage.getByRole('heading', { name: 'What are we converting?' }).waitFor();

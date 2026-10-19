@@ -509,6 +509,12 @@ func (s *Service) RecentCleanup(ctx context.Context) ([]CleanupEvent, error) {
 func (s *Service) CleanupRetainedFiles(ctx context.Context, limit int) (CleanupReport, error) {
 	s.retentionMu.RLock()
 	defer s.retentionMu.RUnlock()
+	return s.cleanupRetainedFilesLocked(ctx, limit)
+}
+
+// The scheduler already holds retentionMu across its complete policy snapshot.
+// Do not recursively acquire a read lock: a queued policy writer blocks it.
+func (s *Service) cleanupRetainedFilesLocked(ctx context.Context, limit int) (CleanupReport, error) {
 	if limit < 1 || limit > 100 {
 		return CleanupReport{}, ErrInvalidInput
 	}
@@ -815,7 +821,7 @@ func (s *Service) RunRetention(ctx context.Context) {
 				}
 			}
 		}
-		if _, err := s.CleanupRetainedFiles(ctx, 100); err != nil {
+		if _, err := s.cleanupRetainedFilesLocked(ctx, 100); err != nil {
 			log.Printf("retention: scheduled cleanup incomplete: %v", err)
 		}
 	}

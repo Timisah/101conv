@@ -64,26 +64,39 @@ func TestConditionTreeEvaluationAndBounds(t *testing.T) {
 	}
 }
 
-func TestPublishFileIsAtomicAndNeverOverwrites(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("original"), 0600); err != nil {
+func TestStagePublicationValidatesContentsAndReceipt(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := publishFile(root, "photo.jpg", "create", strings.NewReader("converted"), 9); err == nil {
-		t.Fatal("create replaced an existing output")
+	defer root.Close()
+	digest, err := stagePublication(root, "receipt", strings.NewReader("converted"), 9)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(filepath.Join(root, "photo.jpg")); string(b) != "original" {
-		t.Fatalf("existing output was changed: %q", b)
+	if got, err := root.ReadFile("receipt"); err != nil || !bytes.Equal(got, []byte("converted")) {
+		t.Fatalf("receipt=%q %v", got, err)
 	}
-	name, err := publishFile(root, "photo.jpg", "unique", strings.NewReader("converted"), 9)
-	if err != nil || name != "photo (2).jpg" {
-		t.Fatalf("unique publication: %q %v", name, err)
+	if repeated, err := stagePublication(root, "receipt", strings.NewReader("converted"), 9); err != nil || repeated != digest {
+		t.Fatalf("recovery digest=%q %v", repeated, err)
 	}
-	if b, err := os.ReadFile(filepath.Join(root, name)); err != nil || !bytes.Equal(b, []byte("converted")) {
-		t.Fatalf("published data invalid: %q %v", b, err)
+	if _, err = stagePublication(root, "receipt", strings.NewReader("different"), 9); err == nil {
+		t.Fatal("adopted changed receipt")
 	}
-	if _, err := publishFile(root, "../escaped.jpg", "unique", strings.NewReader("x"), 1); err == nil {
-		t.Fatal("accepted unsafe output path")
+	if _, err = stagePublication(root, "invalid", strings.NewReader("short"), 9); err == nil {
+		t.Fatal("accepted incorrect output size")
+	}
+	if err = root.Link("receipt", "output"); err != nil {
+		t.Fatal(err)
+	}
+	if !samePublication(root, "receipt", "output", digest) {
+		t.Fatal("did not recognize own publication")
+	}
+	if err = root.WriteFile("foreign", []byte("converted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if samePublication(root, "receipt", "foreign", digest) {
+		t.Fatal("adopted an equal-content foreign file")
 	}
 }
 

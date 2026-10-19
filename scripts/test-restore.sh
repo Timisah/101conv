@@ -219,7 +219,7 @@ for service in postgres core worker; do
 done
 # Probe the restored application from its private network. The optional fixture
 # conversion is separate from generic restore consistency checks.
-docker run --rm --network "$project"_private -e RESTORE_ADMIN_TOKEN -e RESTORE_ORIGINAL_PROJECT="$original_project" -e RESTORE_CONVERSION_SMOKE="$conversion_smoke" -e RESTORE_EXPIRED_UPLOADS="$expired_uploads" -e RESTORE_EXPIRED_RESULTS="$expired_results" "$BROWSER_IMAGE" node - <<'NODE'
+docker run --rm -i --network "$project"_private -e RESTORE_ADMIN_TOKEN -e RESTORE_ORIGINAL_PROJECT="$original_project" -e RESTORE_CONVERSION_SMOKE="$conversion_smoke" -e RESTORE_EXPIRED_UPLOADS="$expired_uploads" -e RESTORE_EXPIRED_RESULTS="$expired_results" "$BROWSER_IMAGE" node - <<'NODE'
 const assert = require('node:assert/strict');
 const base = 'http://core:5656';
 const headers = { Authorization: 'Bearer ' + process.env.RESTORE_ADMIN_TOKEN };

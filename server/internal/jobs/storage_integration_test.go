@@ -360,3 +360,82 @@ func TestSuccessfulRetentionExpiresFilesButPreservesJobHistory(t *testing.T) {
 		t.Fatalf("database and reserved input measurements are inconsistent: %+v", overview)
 	}
 }
+
+// Force a guest-policy writer between the scheduler's outer read lock and
+// retained-file cleanup. Recursive RLock would deadlock once a writer queues.
+func TestRetentionStartupAllowsQueuedPolicyWriter(t *testing.T) {
+	dsn := integrationDatabaseURL()
+	if dsn == "" {
+		t.Skip("set TEST_DATABASE_URL for retention scheduler regression")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("retention_lock_%d", time.Now().UnixNano())
+	if _, err = admin.ExecContext(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
+	address, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := address.Query()
+	q.Set("search_path", schema)
+	address.RawQuery = q.Encode()
+	db, err := sql.Open("pgx", address.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	svc := &Service{db: db}
+	if err = svc.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `LOCK TABLE conv_storage_settings IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); svc.RunRetention(ctx) }()
+	until := time.Now().Add(5 * time.Second)
+	for svc.retentionMu.TryLock() {
+		svc.retentionMu.Unlock()
+		if time.Now().After(until) {
+			t.Fatal("scheduler did not acquire read lock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	acquired := make(chan struct{})
+	go func() { unlock := svc.LockGuestRetention(); defer unlock(); close(acquired) }()
+	until = time.Now().Add(5 * time.Second)
+	for svc.retentionMu.TryRLock() {
+		svc.retentionMu.RUnlock()
+		if time.Now().After(until) {
+			t.Fatal("guest writer did not queue")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-acquired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued policy writer deadlocked retention startup")
+	}
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("retention scheduler did not stop")
+	}
+}

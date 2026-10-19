@@ -89,12 +89,43 @@ CREATE INDEX IF NOT EXISTS conv_automation_runs_pending_idx ON conv_automation_r
 ALTER TABLE conv_automation_runs ADD COLUMN IF NOT EXISTS source_path TEXT NOT NULL DEFAULT '';
 ALTER TABLE conv_automation_runs ADD COLUMN IF NOT EXISTS upload_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE conv_automation_runs ADD COLUMN IF NOT EXISTS execution_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE conv_automation_runs ADD COLUMN IF NOT EXISTS scan_generation BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE conv_automation_runs ADD COLUMN IF NOT EXISTS source_digest TEXT NOT NULL DEFAULT '';
+ALTER TABLE conv_automation_runs ADD COLUMN IF NOT EXISTS publication_digest TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS conv_automation_runs_source_idx ON conv_automation_runs(automation_id,scan_generation,source_path,first_seen DESC);
+CREATE TABLE IF NOT EXISTS conv_automation_scans (
+ automation_id TEXT PRIMARY KEY REFERENCES conv_automations(id) ON DELETE CASCADE,
+ input_drive TEXT NOT NULL, input_path TEXT NOT NULL, generation BIGINT NOT NULL DEFAULT 1,
+ cutoff TIMESTAMPTZ NOT NULL DEFAULT now(), baseline_complete BOOLEAN NOT NULL DEFAULT false,
+ cursor TEXT NOT NULL DEFAULT '', process_existing BOOLEAN NOT NULL DEFAULT false, request_revision INTEGER NOT NULL
+);
+ALTER TABLE conv_automation_scans ADD COLUMN IF NOT EXISTS inventory_ready BOOLEAN NOT NULL DEFAULT false;
+CREATE TABLE IF NOT EXISTS conv_automation_baseline (
+ automation_id TEXT NOT NULL REFERENCES conv_automations(id) ON DELETE CASCADE,
+ generation BIGINT NOT NULL, source_name TEXT NOT NULL,
+ PRIMARY KEY(automation_id,generation,source_name)
+);
+-- A legacy last_scan cannot prove its first scan finished. Rebaseline safely,
+-- without replaying a possibly consumed process-existing request.
+INSERT INTO conv_automation_scans(automation_id,input_drive,input_path,request_revision)
+ SELECT a.id,d.id,d.path,a.current_revision FROM conv_automations a
+ JOIN conv_automation_revisions r ON r.automation_id=a.id AND r.revision=a.current_revision
+ JOIN conv_mounted_drives d ON d.id=r.definition->'trigger'->>'inputDriveId'
+ WHERE a.last_scan IS NOT NULL ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS conv_generated_files (
  drive_id TEXT NOT NULL REFERENCES conv_mounted_drives(id) ON DELETE CASCADE, fingerprint TEXT NOT NULL,
  automation_id TEXT NOT NULL REFERENCES conv_automations(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  PRIMARY KEY(drive_id,fingerprint)
 );
 `)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE conv_automations a SET enabled=false,status='blocked',diagnostic='Profile version is not pinned. Edit and save this automation to pin the installed version before executing.' FROM conv_automation_revisions r WHERE r.automation_id=a.id AND r.revision=a.current_revision AND COALESCE(r.definition->'action'->>'profileVersion','')=''`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE conv_automation_runs SET state='blocked',error='Legacy retry requires review; its historical request was not durable. Save an explicitly pinned revision for future files.',finished_at=now() WHERE state='retry_wait'`)
 	return err
 }
 
@@ -148,13 +179,52 @@ func (s *Service) UpdateDrive(ctx context.Context, id, name, path, access string
 	if err != nil {
 		return Drive{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE conv_mounted_drives SET name=$2,path=$3,access_mode=$4,enabled=$5,updated_at=now() WHERE id=$1`, id, strings.TrimSpace(name), resolved, access, enabled)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Drive{}, err
 	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
+	defer tx.Rollback()
+	var previousPath string
+	if err = tx.QueryRowContext(ctx, `SELECT path FROM conv_mounted_drives WHERE id=$1 FOR UPDATE`, id).Scan(&previousPath); errors.Is(err, sql.ErrNoRows) {
 		return Drive{}, ErrNotFound
+	} else if err != nil {
+		return Drive{}, err
+	}
+	if previousPath != resolved {
+		// Invalidate at edit time, including A->B->A edits between scheduler ticks.
+		// Serialize with scans before touching their mutable progress rows.
+		rows, e := tx.QueryContext(ctx, `SELECT automation_id FROM conv_automation_scans WHERE input_drive=$1 ORDER BY automation_id`, id)
+		if e != nil {
+			return Drive{}, e
+		}
+		var ids []string
+		for rows.Next() {
+			var a string
+			if e = rows.Scan(&a); e != nil {
+				rows.Close()
+				return Drive{}, e
+			}
+			ids = append(ids, a)
+		}
+		e = rows.Err()
+		rows.Close()
+		if e != nil {
+			return Drive{}, e
+		}
+		for _, a := range ids {
+			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "automation:"+a); err != nil {
+				return Drive{}, err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE conv_automation_scans s SET generation=generation+1,input_path=$2,cutoff=now(),cursor='',inventory_ready=false,baseline_complete=false,process_existing=false,request_revision=a.current_revision FROM conv_automations a WHERE s.automation_id=a.id AND s.input_drive=$1`, id, resolved); err != nil {
+			return Drive{}, err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE conv_mounted_drives SET name=$2,path=$3,access_mode=$4,enabled=$5,updated_at=now() WHERE id=$1`, id, strings.TrimSpace(name), resolved, access, enabled); err != nil {
+		return Drive{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Drive{}, err
 	}
 	return s.CheckDrive(ctx, id)
 }
@@ -165,7 +235,7 @@ func (s *Service) ListDrives(ctx context.Context) ([]Drive, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Drive
+	out := make([]Drive, 0)
 	for rows.Next() {
 		var d Drive
 		if err = rows.Scan(&d.ID, &d.Name, &d.Path, &d.Access, &d.Enabled, &d.CreatedAt, &d.UpdatedAt, &d.AutomationCount); err != nil {
@@ -244,6 +314,9 @@ func (s *Service) CreateAutomation(ctx context.Context, owner, name string, def 
 	if err := s.validateOwner(ctx, owner, def.Action.Mode); err != nil {
 		return Automation{}, err
 	}
+	if err := s.pinProfile(ctx, &def); err != nil {
+		return Automation{}, err
+	}
 	if err := s.ValidateDefinition(ctx, def); err != nil {
 		return Automation{}, err
 	}
@@ -276,6 +349,9 @@ func (s *Service) UpdateAutomation(ctx context.Context, id, owner, name string, 
 	if err := s.validateOwner(ctx, owner, def.Action.Mode); err != nil {
 		return Automation{}, err
 	}
+	if err := s.pinProfile(ctx, &def); err != nil {
+		return Automation{}, err
+	}
 	if err := s.ValidateDefinition(ctx, def); err != nil {
 		return Automation{}, err
 	}
@@ -285,13 +361,25 @@ func (s *Service) UpdateAutomation(ctx context.Context, id, owner, name string, 
 		return Automation{}, err
 	}
 	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "automation:"+id); err != nil {
+		return Automation{}, err
+	}
 	var revision int
 	if err = tx.QueryRowContext(ctx, `SELECT current_revision FROM conv_automations WHERE id=$1 AND ($2='' OR owner_id=$2) FOR UPDATE`, id, owner).Scan(&revision); errors.Is(err, sql.ErrNoRows) {
 		return Automation{}, ErrNotFound
 	} else if err != nil {
 		return Automation{}, err
 	}
+	var previousInput string
+	if err = tx.QueryRowContext(ctx, `SELECT definition->'trigger'->>'inputDriveId' FROM conv_automation_revisions WHERE automation_id=$1 AND revision=$2`, id, revision).Scan(&previousInput); err != nil {
+		return Automation{}, err
+	}
 	revision++
+	if previousInput != def.Trigger.InputDriveID {
+		if _, err = tx.ExecContext(ctx, `UPDATE conv_automation_scans SET generation=generation+1,input_drive=$2,input_path=(SELECT path FROM conv_mounted_drives WHERE id=$2),cutoff=now(),cursor='',inventory_ready=false,baseline_complete=false,process_existing=$3,request_revision=$4 WHERE automation_id=$1`, id, def.Trigger.InputDriveID, def.Trigger.ProcessExistingOnNext, revision); err != nil {
+			return Automation{}, err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO conv_automation_revisions(automation_id,revision,definition,block_versions) VALUES($1,$2,$3,$4)`, id, revision, raw, blockVersions()); err != nil {
 		return Automation{}, err
 	}
@@ -326,7 +414,7 @@ func (s *Service) ListAutomations(ctx context.Context, owner string) ([]Automati
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Automation
+	out := make([]Automation, 0)
 	for rows.Next() {
 		var a Automation
 		var raw []byte
@@ -342,6 +430,15 @@ func (s *Service) ListAutomations(ctx context.Context, owner string) ([]Automati
 }
 
 func (s *Service) SetEnabled(ctx context.Context, id, owner string, enabled bool) (Automation, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Automation{}, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "automation:"+id); err != nil {
+		return Automation{}, err
+	}
+
 	if enabled {
 		a, e := s.GetAutomation(ctx, id, owner)
 		if e != nil {
@@ -355,13 +452,16 @@ func (s *Service) SetEnabled(ctx context.Context, id, owner string, enabled bool
 			return Automation{}, e
 		}
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE conv_automations SET enabled=$3,status=CASE WHEN $3 THEN 'ready' ELSE 'paused' END,diagnostic='',updated_at=now() WHERE id=$1 AND ($2='' OR owner_id=$2)`, id, owner, enabled)
+	result, err := tx.ExecContext(ctx, `UPDATE conv_automations SET enabled=$3,status=CASE WHEN $3 THEN 'ready' ELSE 'paused' END,diagnostic='',updated_at=now() WHERE id=$1 AND ($2='' OR owner_id=$2)`, id, owner, enabled)
 	if err != nil {
 		return Automation{}, err
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
 		return Automation{}, ErrNotFound
+	}
+	if err = tx.Commit(); err != nil {
+		return Automation{}, err
 	}
 	return s.GetAutomation(ctx, id, owner)
 }
@@ -394,7 +494,15 @@ func (s *Service) validateOwner(ctx context.Context, ownerID, mode string) error
 }
 
 func (s *Service) DeleteAutomation(ctx context.Context, id, owner string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM conv_automations WHERE id=$1 AND ($2='' OR owner_id=$2) AND NOT EXISTS(SELECT 1 FROM conv_automation_runs r WHERE r.automation_id=$1 AND r.state IN ('queued','running'))`, id, owner)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "automation:"+id); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM conv_automations WHERE id=$1 AND ($2='' OR owner_id=$2) AND NOT EXISTS(SELECT 1 FROM conv_automation_runs r WHERE r.automation_id=$1 AND r.state IN ('submitting','queued','running'))`, id, owner)
 	if err != nil {
 		return err
 	}
@@ -402,7 +510,7 @@ func (s *Service) DeleteAutomation(ctx context.Context, id, owner string) error 
 	if n == 0 {
 		return ErrConflict
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Service) History(ctx context.Context, id, owner string, limit int) ([]Run, error) {
@@ -421,7 +529,7 @@ func (s *Service) History(ctx context.Context, id, owner string, limit int) ([]R
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Run
+	out := make([]Run, 0)
 	for rows.Next() {
 		var v Run
 		if err = rows.Scan(&v.ID, &v.AutomationID, &v.Revision, &v.FileName, &v.State, &v.JobID, &v.OutputName, &v.Error, &v.StartedAt, &v.FinishedAt); err != nil {
@@ -432,7 +540,31 @@ func (s *Service) History(ctx context.Context, id, owner string, limit int) ([]R
 	return out, rows.Err()
 }
 
+func (s *Service) pinProfile(ctx context.Context, d *Definition) error {
+	if d.Action.ProfileVersion != "" {
+		return nil
+	}
+	if s.management == nil {
+		return errors.New("profile management is unavailable")
+	}
+	profiles, err := s.management.ListProfiles(ctx)
+	if err != nil {
+		return err
+	}
+	for _, installed := range profiles {
+		if installed.Definition.ID == d.Action.ProfileID {
+			d.Action.ProfileVersion = installed.Definition.Version
+			return nil
+		}
+	}
+	return errors.New("selected profile is not installed")
+}
+
 func (s *Service) ValidateDefinition(ctx context.Context, d Definition) error {
+	if d.Action.ProfileVersion == "" {
+		return errors.New("profile version is not pinned; edit and save this automation before executing")
+	}
+
 	if d.Trigger.Type != "folder.scan" && d.Trigger.Type != "manual" {
 		return errors.New("trigger must be folder.scan or manual")
 	}

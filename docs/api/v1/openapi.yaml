@@ -1113,7 +1113,7 @@ paths:
       summary: Preview matching top-level files without submitting jobs
       security: [{ adminSession: [] }]
       responses:
-        '200': { description: Bounded file match preview }
+        '200': { description: 'Current-file match preview only; scope is current_file_matches_only and truncated reports omitted entries. Stability, baseline, duplicates, permissions and concurrency are checked at execution.' }
   /api/v1/automations/{id}/run:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }
@@ -1180,14 +1180,14 @@ components:
         inputDriveId: { type: string }
         outputDriveId: { type: string }
         profileId: { type: string }
-        profileVersion: { type: string }
+        profileVersion: { type: string, description: Omission resolves and persists the exact installed profile version }
         targetFormat: { type: string, pattern: '^[a-z0-9]{1,12}$' }
         condition: { $ref: '#/components/schemas/AutomationCondition' }
         extensions: { type: array, items: { type: string } }
         nameGlob: { type: string }
         minBytes: { type: integer, minimum: 0 }
         maxBytes: { type: integer, minimum: 0 }
-        processExistingOnNextScan: { type: boolean, default: false }
+        processExistingOnNextScan: { type: boolean, default: false, description: One-time request per saved revision to observe existing files on the next inventory traversal; prior submissions remain deduplicated }
         outputBehavior: { type: string, enum: [create, skip_existing, unique], default: unique }
         intervalSeconds: { type: integer, minimum: 30, maximum: 86400, default: 60 }
         stabilitySeconds: { type: integer, minimum: 5, maximum: 3600, default: 30 }
@@ -1205,7 +1205,7 @@ components:
             intervalSeconds: { type: integer, minimum: 30, maximum: 86400 }
             stabilitySeconds: { type: integer, minimum: 5, maximum: 3600 }
             maxConcurrent: { type: integer, minimum: 1, maximum: 8, default: 1 }
-            processExistingOnNextScan: { type: boolean, default: false }
+            processExistingOnNextScan: { type: boolean, default: false, description: One-time request per saved revision to observe existing files on the next inventory traversal; prior submissions remain deduplicated }
         filter:
           type: object
           properties:
@@ -1220,7 +1220,7 @@ components:
           properties:
             mode: { type: string, enum: [convert, compress] }
             profileId: { type: string }
-            profileVersion: { type: string, description: Exact profile version captured by this revision }
+            profileVersion: { type: string, description: Exact profile version captured by this revision; omission on save resolves and persists the installed version }
             targetFormat: { type: string }
             outputDriveId: { type: string }
             outputBehavior: { type: string, enum: [create, skip_existing, unique] }

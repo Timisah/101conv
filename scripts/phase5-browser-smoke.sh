@@ -142,6 +142,7 @@ fi
 
 cleanup() {
   status=$?
+  if [[ -n "${automation_restart_pid:-}" ]]; then kill "$automation_restart_pid" 2>/dev/null || true; wait "$automation_restart_pid" 2>/dev/null || true; fi
   if [[ "$status" -ne 0 ]]; then
     if docker inspect "$BROWSER_CONTAINER" >/dev/null 2>&1; then
       docker cp "$BROWSER_CONTAINER:/smoke-output/." "$tmp_root/smoke-output/" >/dev/null 2>&1 || true
@@ -155,6 +156,7 @@ cleanup() {
     if [[ -f "$tmp_root/browser.log" ]]; then redact_file "$tmp_root/browser.log" || true; fi
     if [[ -f "$tmp_root/cleanup-browser.log" ]]; then redact_file "$tmp_root/cleanup-browser.log" || true; fi
     if [[ -f "$tmp_root/worker-crash-recovery.log" ]]; then redact_file "$tmp_root/worker-crash-recovery.log" || true; fi
+    if [[ -f "$tmp_root/automation-restart.log" ]]; then redact_file "$tmp_root/automation-restart.log" || true; fi
     if [[ -n "${SMOKE_ARTIFACT_DIR:-}" ]]; then
       mkdir -p "$SMOKE_ARTIFACT_DIR"
       cp -a "$tmp_root/smoke-output" "$SMOKE_ARTIFACT_DIR/" 2>/dev/null || true
@@ -162,6 +164,7 @@ cleanup() {
       cp -a "$tmp_root/browser.log" "$SMOKE_ARTIFACT_DIR/" 2>/dev/null || true
       cp -a "$tmp_root/cleanup-browser.log" "$SMOKE_ARTIFACT_DIR/" 2>/dev/null || true
       cp -a "$tmp_root/worker-crash-recovery.log" "$SMOKE_ARTIFACT_DIR/" 2>/dev/null || true
+      cp -a "$tmp_root/automation-restart.log" "$SMOKE_ARTIFACT_DIR/" 2>/dev/null || true
       printf 'exit_status=%s\nrun_id=%s\n' "$status" "$run_id" > "$SMOKE_ARTIFACT_DIR/run.txt"
     fi
     cat "$tmp_root/compose.log" >&2 || true
@@ -178,6 +181,9 @@ cleanup() {
   if [[ "$status" -ne 0 && "${SMOKE_KEEP_FAILED:-0}" == 1 ]]; then
     echo "Failed smoke test files retained at $tmp_root" >&2
   else
+    # The suite assigned this disposable mount to Core's UID. Restore ownership
+    # only on this run's mount before removing its temporary directory.
+    docker run --rm --network none -v "$AUTOMATION_HOST_PATH:/cleanup" --entrypoint chown postgres:17-alpine -R "$(id -u):$(id -g)" /cleanup >/dev/null 2>&1 || true
     rm -rf "$tmp_root"
   fi
   df -h "$repo_root"
@@ -294,7 +300,11 @@ docker run --rm --network none --user 65532:65532 --volumes-from "$worker_contai
   test -d /var/lib/101conv/engines
   test -r /var/lib/101conv/engines
   test -r /var/lib/101conv/imports/ppm-pgm
-  if test -w /var/lib/101conv/engines; then
+  # Some runtimes answer access(W_OK) from mode bits even on a read-only
+  # mount. Exercise an actual write so the isolation assertion is meaningful.
+  marker="/var/lib/101conv/engines/.101conv-readonly-probe-$$"
+  if ( : > "$marker" ) 2>/dev/null; then
+    rm -f "$marker"
     echo "Worker engine directory must be read-only." >&2
     exit 1
   fi
@@ -302,7 +312,7 @@ docker run --rm --network none --user 65532:65532 --volumes-from "$worker_contai
 '
 docker inspect "$web_container" | python3 -c 'import json,sys; c=json.load(sys.stdin)[0]; p=c["HostConfig"]["PortBindings"]["5656/tcp"]; assert p and p[0]["HostPort"] == sys.argv[1], p' "$port_num"
 docker build "${proxy_cert_mount[@]}" "${proxy_build_args[@]}" -f "$repo_root/web/Dockerfile.e2e" -t "$BROWSER_IMAGE" "$repo_root/web"
-docker run --rm --network "${COMPOSE_PROJECT_NAME}_web-core" "$BROWSER_IMAGE" node - <<'NODE'
+docker run --rm -i --network "${COMPOSE_PROJECT_NAME}_web-core" "$BROWSER_IMAGE" node - <<'NODE'
 const assert = require('node:assert/strict');
 (async () => {
   const base = 'http://web:5656';
@@ -310,13 +320,38 @@ const assert = require('node:assert/strict');
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-cache, must-revalidate');
   const html = await response.text();
-  const asset = html.match(/(?:src|href)="([^"]+\/assets\/[^"]+)"/);
+  const asset = html.match(/(?:src|href)="([^"]*\/assets\/[^"]+)"/);
   assert.ok(asset, 'HTML references a fingerprinted asset');
   const assetResponse = await fetch(new URL(asset[1], base));
   assert.equal(assetResponse.status, 200);
   assert.equal(assetResponse.headers.get('cache-control'), 'public, max-age=31536000, immutable');
 })().catch(error => { console.error(error); process.exit(1); });
 NODE
+# A handshake keeps the Core crash deterministic, after the browser has
+# persisted an automation observation and before it requests submission.
+automation_restart() {
+  for _ in $(seq 1 600); do
+    if docker exec "$BROWSER_CONTAINER" test -f /smoke-output/automation-restart-ready >/dev/null 2>&1; then
+      compose kill -s SIGKILL core
+      compose start core
+      for _ in $(seq 1 60); do
+        if [[ "$(docker inspect --format '{{.State.Health.Status}}' "$core_container" 2>/dev/null || true)" == healthy ]]; then
+          docker exec "$BROWSER_CONTAINER" touch /smoke-output/automation-restarted
+          echo 'Automation observation recovered after Core SIGKILL/restart.'
+          return 0
+        fi
+        sleep 1
+      done
+      echo 'Core did not become healthy after automation restart.' >&2
+      return 1
+    fi
+    sleep 1
+  done
+  echo 'Browser did not reach the automation restart handshake.' >&2
+  return 1
+}
+automation_restart > "$tmp_root/automation-restart.log" 2>&1 &
+automation_restart_pid=$!
 if docker run --name "$BROWSER_CONTAINER" --shm-size=1g --network "${COMPOSE_PROJECT_NAME}_web-core" \
   -v "$AUTOMATION_HOST_PATH:/smoke-mounts" \
   -e SMOKE_BASE=http://web:5656 -e SMOKE_OUTPUT_DIR=/smoke-output -e ENGINE_ADMIN_TOKEN \
@@ -327,6 +362,14 @@ if docker run --name "$BROWSER_CONTAINER" --shm-size=1g --network "${COMPOSE_PRO
 else
   browser_status=$?
 fi
+if [[ "$browser_status" -eq 0 ]]; then
+  wait "$automation_restart_pid" || browser_status=$?
+else
+  kill "$automation_restart_pid" 2>/dev/null || true
+  wait "$automation_restart_pid" 2>/dev/null || true
+fi
+automation_restart_pid=''
+cat "$tmp_root/automation-restart.log"
 if docker inspect "$BROWSER_CONTAINER" >/dev/null 2>&1; then
   docker cp "$BROWSER_CONTAINER:/smoke-output/." "$tmp_root/smoke-output/" >/dev/null 2>&1 || true
   docker rm "$BROWSER_CONTAINER" >/dev/null
@@ -335,7 +378,7 @@ redact_file "$tmp_root/browser.log"
 cat "$tmp_root/browser.log"
 [[ "$browser_status" -eq 0 ]] || exit "$browser_status"
 worker_crash_log="$tmp_root/worker-crash-recovery.log"
-if docker run --name "$CRASH_CHECK_CONTAINER" --network "${COMPOSE_PROJECT_NAME}_web-core" \
+if docker run -i --name "$CRASH_CHECK_CONTAINER" --network "${COMPOSE_PROJECT_NAME}_web-core" \
   -e ENGINE_ADMIN_TOKEN -e NO_PROXY=web,localhost,127.0.0.1 -e no_proxy=web,localhost,127.0.0.1 "$BROWSER_IMAGE" node - <<'NODE' >"$worker_crash_log" 2>&1; then
 const assert = require('node:assert/strict');
 const base='http://web:5656';
@@ -364,7 +407,7 @@ NODE
     sleep 1
   done
   [[ "$worker_health" == healthy ]] || { compose logs --no-color --tail 80 worker >&2; echo 'Worker did not recover after the forced container crash.' >&2; exit 1; }
-  if docker run --name "$CRASH_WAIT_CONTAINER" --network "${COMPOSE_PROJECT_NAME}_web-core" \
+  if docker run -i --name "$CRASH_WAIT_CONTAINER" --network "${COMPOSE_PROJECT_NAME}_web-core" \
     -e ENGINE_ADMIN_TOKEN -e SMOKE_JOB_ID="$crash_job_id" "$BROWSER_IMAGE" node - <<'NODE' >>"$worker_crash_log" 2>&1; then
 const assert=require('node:assert/strict');
 const base='http://web:5656';const headers={Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN};
@@ -423,7 +466,7 @@ done
 [[ "$(docker inspect --format '{{.State.Health.Status}}' "$core_container")" == "healthy" ]]
 persisted_batch_id="$(cat "$tmp_root/smoke-output/batch-id")"
 [[ "$persisted_batch_id" =~ ^[0-9a-f-]{36}$ ]] || { echo 'Browser smoke did not provide a valid batch ID.' >&2; exit 1; }
-docker run --rm --network "${COMPOSE_PROJECT_NAME}_web-core" -e ENGINE_ADMIN_TOKEN -e SMOKE_BATCH_ID="$persisted_batch_id" "$BROWSER_IMAGE" node - <<'NODE'
+docker run --rm -i --network "${COMPOSE_PROJECT_NAME}_web-core" -e ENGINE_ADMIN_TOKEN -e SMOKE_BATCH_ID="$persisted_batch_id" "$BROWSER_IMAGE" node - <<'NODE'
 const assert = require('node:assert/strict');
 (async () => {
   const base = 'http://web:5656';
@@ -434,7 +477,7 @@ const assert = require('node:assert/strict');
   assert.ok(data.total >= 1);
   const batchResponse = await fetch(base + '/api/v1/batches/' + process.env.SMOKE_BATCH_ID, { headers });
   assert.equal(batchResponse.status, 200, 'batch status persists across application restart');
-  const batch = (await batchResponse.json()).batch;
+  const batch = await batchResponse.json();
   assert.equal(batch.succeeded, 20, 'all 20 mixed-format items remain successful after restart');
   assert.equal(batch.total, 20);
   const job = data.jobs.find(item => item.state === 'succeeded');

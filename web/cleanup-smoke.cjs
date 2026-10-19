@@ -7,11 +7,13 @@ const assert = require('node:assert/strict');
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const page = await context.newPage();
     page.on('pageerror', error => { throw error; });
+    // Setup enables guest access. Authenticate this protected-page fixture
+    // explicitly instead of assuming a fresh browser opens a login form.
+    const login = await context.request.post(process.env.SMOKE_BASE + '/api/v1/auth/session', {
+      headers: { Origin: process.env.SMOKE_BASE }, data: { password: process.env.ENGINE_ADMIN_TOKEN },
+    });
+    assert.equal(login.status(), 201, 'cleanup fixture administrator signs in');
     await page.goto(process.env.SMOKE_BASE + '/storage', { waitUntil: 'networkidle' });
-    if (await page.getByLabel('Password').isVisible().catch(() => false)) {
-      await page.getByLabel('Password').fill(process.env.ENGINE_ADMIN_TOKEN);
-      await page.getByRole('button', { name: /^Sign in$/ }).click();
-    }
     await page.getByRole('heading', { name: 'Storage', exact: true }).waitFor();
     const row = page.locator('.retention-policy-row').filter({ hasText: 'Successful results' });
     await page.getByLabel('Successful results policy').selectOption('after_days');
