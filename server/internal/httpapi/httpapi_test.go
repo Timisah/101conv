@@ -69,6 +69,19 @@ func TestSameOriginRequestChecksExactOriginAndScheme(t *testing.T) {
 	}
 }
 
+func TestGuestSessionRequestAllowsHeaderStrippedBrowserJSON(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "http://example.test:5656/api/v1/auth/guest-session", strings.NewReader(`{}`))
+	r.Host = "example.test:5656"
+	r.Header.Set("Content-Type", "application/json")
+	if !guestSessionRequest(r) {
+		t.Fatal("header-stripped browser JSON request should be accepted")
+	}
+	r.Header.Set("Sec-Fetch-Site", "cross-site")
+	if guestSessionRequest(r) {
+		t.Fatal("explicit cross-site guest request should be rejected")
+	}
+}
+
 func TestManagementRESTLifecycleAndRestart(t *testing.T) {
 	ctxDir := t.TempDir()
 	sourceDir := filepath.Join(ctxDir, "imports")

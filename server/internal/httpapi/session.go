@@ -190,7 +190,7 @@ func (a *API) createGuestSession(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "guest_unavailable", "guest access is not configured")
 		return
 	}
-	if !sameOriginRequest(r) {
+	if !guestSessionRequest(r) {
 		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
 		return
 	}
@@ -214,7 +214,7 @@ func (a *API) createGuestSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteGuestSession(w http.ResponseWriter, r *http.Request) {
-	if !sameOriginRequest(r) {
+	if !guestSessionRequest(r) {
 		writeAPIError(w, http.StatusForbidden, "csrf_rejected", "request origin did not match this site")
 		return
 	}
@@ -386,4 +386,18 @@ func sameOriginRequest(r *http.Request) bool {
 		requestScheme = "https"
 	}
 	return strings.EqualFold(parsed.Scheme, requestScheme)
+}
+
+func guestSessionRequest(r *http.Request) bool {
+	if sameOriginRequest(r) {
+		return true
+	}
+	// Some LAN reverse proxies remove Origin, Referer, and Fetch Metadata
+	// headers. The web client sends JSON for this unauthenticated endpoint;
+	// a cross-origin browser fetch cannot send that content type without a
+	// preflight, while an HTML form cannot produce it. Explicit cross-site
+	// metadata is still rejected above.
+	return r.Header.Get("Origin") == "" && r.Header.Get("Referer") == "" &&
+		r.Header.Get("Sec-Fetch-Site") == "" &&
+		strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json")
 }
