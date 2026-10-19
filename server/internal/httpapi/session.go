@@ -393,11 +393,11 @@ func guestSessionRequest(r *http.Request) bool {
 		return true
 	}
 	// Some LAN reverse proxies remove Origin, Referer, and Fetch Metadata
-	// headers. The web client sends JSON for this unauthenticated endpoint;
-	// a cross-origin browser fetch cannot send that content type without a
-	// preflight, while an HTML form cannot produce it. Explicit cross-site
-	// metadata is still rejected above.
+	// headers. The web client marks this request with a non-simple header;
+	// a cross-origin browser fetch cannot send it without a preflight, while
+	// an HTML form cannot produce it. Explicit cross-site metadata is still
+	// rejected above.
 	return r.Header.Get("Origin") == "" && r.Header.Get("Referer") == "" &&
 		r.Header.Get("Sec-Fetch-Site") == "" &&
-		strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json")
+		r.Header.Get("X-101conv-Request") == "guest-session"
 }

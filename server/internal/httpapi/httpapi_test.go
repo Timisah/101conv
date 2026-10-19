@@ -73,6 +73,7 @@ func TestGuestSessionRequestAllowsHeaderStrippedBrowserJSON(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "http://example.test:5656/api/v1/auth/guest-session", strings.NewReader(`{}`))
 	r.Host = "example.test:5656"
 	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-101conv-Request", "guest-session")
 	if !guestSessionRequest(r) {
 		t.Fatal("header-stripped browser JSON request should be accepted")
 	}
