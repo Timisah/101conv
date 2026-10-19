@@ -26,7 +26,7 @@ paths:
               properties:
                 bootstrapToken: { type: string, writeOnly: true }
                 username: { type: string, minLength: 3, maxLength: 64 }
-                password: { type: string, minLength: 12, maxLength: 256, writeOnly: true }
+                password: { type: string, minLength: 5, maxLength: 256, writeOnly: true }
       responses:
         '201': { description: Administrator created and HttpOnly session set }
         '401': { description: Bootstrap secret rejected }
@@ -230,7 +230,7 @@ paths:
     post:
       summary: Change the signed-in user's password
       security: [{ adminSession: [] }]
-      description: Requires an interactive user session, current password, and a new password of at least 12 characters.
+      description: Requires an interactive user session, current password, and a new password of at least 5 characters.
       requestBody:
         required: true
         content:
@@ -240,7 +240,7 @@ paths:
               required: [currentPassword, newPassword]
               properties:
                 currentPassword: { type: string, writeOnly: true }
-                newPassword: { type: string, minLength: 12, maxLength: 256, writeOnly: true }
+                newPassword: { type: string, minLength: 5, maxLength: 256, writeOnly: true }
       responses:
         '204': { description: Password changed }
         '401': { description: Current password is incorrect }
@@ -297,7 +297,7 @@ paths:
               required: [username, password, quotas]
               properties:
                 username: { type: string, minLength: 3, maxLength: 64 }
-                password: { type: string, minLength: 12, maxLength: 256, writeOnly: true }
+                password: { type: string, minLength: 5, maxLength: 256, writeOnly: true }
                 roleId: { type: string, description: Reusable permission role id }
                 quotas:
                   $ref: '#/components/schemas/QuotaSettings'
@@ -323,7 +323,7 @@ paths:
                 groupIds: { type: array, items: { type: string } }
                 permissionOverrides: { type: object, additionalProperties: { oneOf: [{type: boolean},{type: 'null'}] }, description: Null removes a user override and inherits policy }
                 quotas: { $ref: '#/components/schemas/QuotaSettings' }
-                password: { type: string, minLength: 12, maxLength: 256, writeOnly: true, description: Optional administrator password reset }
+                password: { type: string, minLength: 5, maxLength: 256, writeOnly: true, description: Optional administrator password reset }
       responses:
         '200': { description: Updated user account }
         '404': { description: User not found }

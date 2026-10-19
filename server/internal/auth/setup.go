@@ -22,7 +22,7 @@ func (s *Service) InitialSetupStatus(ctx context.Context) (SetupStatus, error) {
 // transaction leaves the instance unclaimed, including its audit record.
 func (s *Service) CreateInitialAdmin(ctx context.Context, username, password string) (Principal, error) {
 	username = strings.ToLower(strings.TrimSpace(username))
-	if !usernamePattern.MatchString(username) || len(password) < 12 || len(password) > 256 {
+	if !usernamePattern.MatchString(username) || len(password) < minPasswordLength || len(password) > maxPasswordLength {
 		return Principal{}, ErrInvalidInput
 	}
 	salt := make([]byte, 16)

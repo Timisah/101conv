@@ -65,7 +65,7 @@ func (a *API) claimInitialAdministrator(w http.ResponseWriter, r *http.Request) 
 		case errors.Is(err, auth.ErrConflict):
 			writeAPIError(w, http.StatusConflict, "setup_claimed", "this instance already has an administrator")
 		case errors.Is(err, auth.ErrInvalidInput):
-			writeAPIError(w, http.StatusUnprocessableEntity, "invalid_account", "username must be 3–64 letters, digits, dots, dashes or underscores; password must be 12–256 characters")
+			writeAPIError(w, http.StatusUnprocessableEntity, "invalid_account", "username must be 3–64 letters, digits, dots, dashes or underscores; password must be 5–256 characters")
 		default:
 			writeAPIError(w, http.StatusInternalServerError, "setup_failed", "could not create the administrator account")
 		}

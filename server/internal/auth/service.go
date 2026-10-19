@@ -23,6 +23,9 @@ const (
 	RoleAdmin = "admin"
 	RoleUser  = "user"
 
+	minPasswordLength = 5
+	maxPasswordLength = 256
+
 	ScopeUpload                  = "conversion:upload"
 	ScopeSubmit                  = "conversion:submit"
 	ScopeRead                    = "jobs:read"
@@ -273,7 +276,7 @@ CREATE INDEX IF NOT EXISTS conv_guest_rate_buckets_bucket_idx ON conv_guest_rate
 
 func (s *Service) CreateUser(ctx context.Context, input NewUser) (User, error) {
 	input.Username = strings.ToLower(strings.TrimSpace(input.Username))
-	if !usernamePattern.MatchString(input.Username) || len(input.Password) < 12 || len(input.Password) > 256 || input.Quotas == nil {
+	if !usernamePattern.MatchString(input.Username) || len(input.Password) < minPasswordLength || len(input.Password) > maxPasswordLength || input.Quotas == nil {
 		return User{}, ErrInvalidInput
 	}
 	q := *input.Quotas
@@ -645,7 +648,7 @@ func (s *Service) UpdateUserBy(ctx context.Context, actorID, id string, update U
 	}
 	var salt, hash []byte
 	if update.Password != nil {
-		if len(*update.Password) < 12 || len(*update.Password) > 256 {
+		if len(*update.Password) < minPasswordLength || len(*update.Password) > maxPasswordLength {
 			return User{}, ErrInvalidInput
 		}
 		salt = make([]byte, 16)
@@ -1230,7 +1233,7 @@ func passwordHash(password string, salt []byte) []byte {
 }
 
 func (s *Service) ChangePassword(ctx context.Context, id, current, newPassword string) error {
-	if len(newPassword) < 12 || len(newPassword) > 256 {
+	if len(newPassword) < minPasswordLength || len(newPassword) > maxPasswordLength {
 		return ErrInvalidInput
 	}
 	var salt, expected []byte
