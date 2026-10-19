@@ -100,7 +100,7 @@ function App(){
  if(!sessionReady||(!setupStatus&&!setupError))return <div className="splash"><div className="brand-mark">101</div><LoaderCircle className="spin"/></div>;
  if(setupError)return <main className="login-page"><div className="login-card"><h1>Setup unavailable</h1><p>{setupError}</p><button className="primary" onClick={()=>window.location.reload()}>Retry</button></div></main>;
  if(setupStatus&&!setupStatus.completed&&!setupStatus.administratorCreated)return <SetupClaim onClaim={(claimed)=>{setSession(claimed);setSetupStatus({completed:false,administratorCreated:true});}}/>;
- if(!session.authenticated){if(location.pathname==='/login')return <Login onLogin={setSession} notify={setToast}/>;return <VisitorConversion session={session} guestError={guestStartError} guestStarting={guestStarting} onRetryGuest={startGuest} onLogin={()=>navigate('/login')} onNotify={setToast} theme={theme} setTheme={setTheme}/>;}
+ if(!session.authenticated){if(location.pathname==='/login')return <Login onLogin={setSession} notify={setToast}/>;return <Navigate to="/login" replace/>;}
  if(setupStatus&&!setupStatus.completed)return <SetupReview onComplete={()=>setSetupStatus({completed:true,administratorCreated:true})}/>;
  return <div className="app-shell">
    <aside className="sidebar">
