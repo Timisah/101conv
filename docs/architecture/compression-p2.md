@@ -81,8 +81,13 @@ Inspector workspace. It streams the multipart input into a short-lived scan
 file, verifies its digest, applies bounded image/document checks, reuses the
 typed media probe, deletes the file before responding, and never creates a
 conversion upload record. Reports retain the fullest bounded metadata
-available, including location and device tags; the response is private because
-the report may contain that sensitive data.
+available, including location and device tags. Image scans preserve native
+JPEG APP payloads (EXIF/TIFF, XMP, IPTC/Photoshop, ICC, JFIF and comments),
+PNG text/EXIF/ICC/chunks, WebP metadata chunks, TIFF/DNG tags, and AVIF/HEIC/
+JXL metadata boxes; PDF scans inspect bounded first/last file windows for Info
+and XMP metadata. Media scans request ffprobe private data, programs, streams,
+chapters, container tags and the complete bounded JSON document. The response
+is private because the report may contain that sensitive data.
 
 ## Verification
 

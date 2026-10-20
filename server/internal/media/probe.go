@@ -17,18 +17,23 @@ import (
 
 const (
 	ProbeTimeout   = 30 * time.Second
-	MaxProbeOutput = 4 << 20
+	MaxProbeOutput = 32 << 20
 )
 
 var pixelBitDepthRE = regexp.MustCompile(`p([0-9]{2})(?:le|be)?$`)
 
 type Probe struct {
+	Filename   string            `json:"filename,omitempty"`
+	StartTime  float64           `json:"startTime,omitempty"`
+	Size       float64           `json:"size,omitempty"`
+	ProbeScore int               `json:"probeScore,omitempty"`
 	Duration   float64           `json:"duration,omitempty"`
 	BitRate    float64           `json:"bitRate,omitempty"`
 	Format     string            `json:"format,omitempty"`
 	LongName   string            `json:"longName,omitempty"`
 	FormatTags map[string]string `json:"formatTags,omitempty"`
 	Streams    []Stream          `json:"streams"`
+	Programs   []Program         `json:"programs,omitempty"`
 	Chapters   []Chapter         `json:"chapters,omitempty"`
 	// RawJSON is the bounded, complete ffprobe document. It is returned by
 	// inspection to the authorized requester so format-specific metadata is not
@@ -43,29 +48,55 @@ type Chapter struct {
 	Tags      map[string]string `json:"tags,omitempty"`
 }
 
+type Program struct {
+	ID            int64             `json:"id"`
+	ProgramNumber int64             `json:"programNumber,omitempty"`
+	PMTPID        int64             `json:"pmtPid,omitempty"`
+	PCRPID        int64             `json:"pcrPid,omitempty"`
+	Name          string            `json:"name,omitempty"`
+	StartTime     float64           `json:"startTime,omitempty"`
+	EndTime       float64           `json:"endTime,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty"`
+	StreamIndexes []int             `json:"streamIndexes,omitempty"`
+}
+
 type Stream struct {
-	Index            int               `json:"index"`
-	CodecType        string            `json:"codec_type"`
-	CodecName        string            `json:"codec_name,omitempty"`
-	CodecLongName    string            `json:"codec_long_name,omitempty"`
-	CodecTagString   string            `json:"codec_tag_string,omitempty"`
-	Width            int               `json:"width,omitempty"`
-	Height           int               `json:"height,omitempty"`
-	ColorPrimaries   string            `json:"color_primaries,omitempty"`
-	ColorTransfer    string            `json:"color_transfer,omitempty"`
-	ColorSpace       string            `json:"color_space,omitempty"`
-	ColorRange       string            `json:"color_range,omitempty"`
-	BitsPerRawSample string            `json:"bits_per_raw_sample,omitempty"`
-	PixelFormat      string            `json:"pix_fmt,omitempty"`
-	Channels         int               `json:"channels,omitempty"`
-	ChannelLayout    string            `json:"channel_layout,omitempty"`
-	SampleRate       string            `json:"sample_rate,omitempty"`
-	FrameRate        string            `json:"r_frame_rate,omitempty"`
-	BitRate          float64           `json:"bitRate,omitempty"`
-	Duration         float64           `json:"duration,omitempty"`
-	Disposition      map[string]int    `json:"disposition,omitempty"`
-	Tags             map[string]string `json:"tags,omitempty"`
-	SideData         []SideData        `json:"sideData,omitempty"`
+	Index              int               `json:"index"`
+	ID                 string            `json:"id,omitempty"`
+	CodecType          string            `json:"codec_type"`
+	CodecName          string            `json:"codec_name,omitempty"`
+	CodecLongName      string            `json:"codec_long_name,omitempty"`
+	Profile            string            `json:"profile,omitempty"`
+	Level              int               `json:"level,omitempty"`
+	CodecTagString     string            `json:"codec_tag_string,omitempty"`
+	CodecTimeBase      string            `json:"codecTimeBase,omitempty"`
+	TimeBase           string            `json:"timeBase,omitempty"`
+	Width              int               `json:"width,omitempty"`
+	Height             int               `json:"height,omitempty"`
+	SampleAspectRatio  string            `json:"sampleAspectRatio,omitempty"`
+	DisplayAspectRatio string            `json:"displayAspectRatio,omitempty"`
+	FieldOrder         string            `json:"fieldOrder,omitempty"`
+	ColorPrimaries     string            `json:"color_primaries,omitempty"`
+	ColorTransfer      string            `json:"color_transfer,omitempty"`
+	ColorSpace         string            `json:"color_space,omitempty"`
+	ColorRange         string            `json:"color_range,omitempty"`
+	BitsPerRawSample   string            `json:"bits_per_raw_sample,omitempty"`
+	PixelFormat        string            `json:"pix_fmt,omitempty"`
+	Channels           int               `json:"channels,omitempty"`
+	ChannelLayout      string            `json:"channel_layout,omitempty"`
+	SampleRate         string            `json:"sample_rate,omitempty"`
+	FrameRate          string            `json:"r_frame_rate,omitempty"`
+	StartPTS           int64             `json:"startPts,omitempty"`
+	StartTime          float64           `json:"startTime,omitempty"`
+	DurationTS         int64             `json:"durationTs,omitempty"`
+	BitRate            float64           `json:"bitRate,omitempty"`
+	Duration           float64           `json:"duration,omitempty"`
+	NbFrames           int64             `json:"nbFrames,omitempty"`
+	NBReadFrames       int64             `json:"nbReadFrames,omitempty"`
+	ExtradataSize      int               `json:"extradataSize,omitempty"`
+	Disposition        map[string]int    `json:"disposition,omitempty"`
+	Tags               map[string]string `json:"tags,omitempty"`
+	SideData           []SideData        `json:"sideData,omitempty"`
 }
 
 type SideData struct {
@@ -75,39 +106,70 @@ type SideData struct {
 
 type probeDocument struct {
 	Format struct {
-		Name     string            `json:"format_name"`
-		LongName string            `json:"format_long_name"`
-		Duration json.RawMessage   `json:"duration"`
-		BitRate  json.RawMessage   `json:"bit_rate"`
-		Tags     map[string]string `json:"tags"`
+		Filename   string            `json:"filename"`
+		Name       string            `json:"format_name"`
+		LongName   string            `json:"format_long_name"`
+		StartTime  json.RawMessage   `json:"start_time"`
+		Duration   json.RawMessage   `json:"duration"`
+		BitRate    json.RawMessage   `json:"bit_rate"`
+		Size       json.RawMessage   `json:"size"`
+		ProbeScore int               `json:"probe_score"`
+		Tags       map[string]string `json:"tags"`
 	} `json:"format"`
 	Streams  []probeStream  `json:"streams"`
+	Programs []probeProgram `json:"programs"`
 	Chapters []probeChapter `json:"chapters"`
 }
 
 type probeStream struct {
-	Index            int                          `json:"index"`
-	CodecType        string                       `json:"codec_type"`
-	CodecName        string                       `json:"codec_name"`
-	CodecLongName    string                       `json:"codec_long_name"`
-	CodecTagString   string                       `json:"codec_tag_string"`
-	Width            int                          `json:"width"`
-	Height           int                          `json:"height"`
-	ColorPrimaries   string                       `json:"color_primaries"`
-	ColorTransfer    string                       `json:"color_transfer"`
-	ColorSpace       string                       `json:"color_space"`
-	ColorRange       string                       `json:"color_range"`
-	BitsPerRawSample string                       `json:"bits_per_raw_sample"`
-	PixelFormat      string                       `json:"pix_fmt"`
-	Channels         int                          `json:"channels"`
-	ChannelLayout    string                       `json:"channel_layout"`
-	SampleRate       string                       `json:"sample_rate"`
-	FrameRate        string                       `json:"r_frame_rate"`
-	BitRate          json.RawMessage              `json:"bit_rate"`
-	Duration         json.RawMessage              `json:"duration"`
-	Disposition      map[string]int               `json:"disposition"`
-	Tags             map[string]string            `json:"tags"`
-	SideData         []map[string]json.RawMessage `json:"side_data_list"`
+	Index              int                          `json:"index"`
+	ID                 string                       `json:"id"`
+	CodecType          string                       `json:"codec_type"`
+	CodecName          string                       `json:"codec_name"`
+	CodecLongName      string                       `json:"codec_long_name"`
+	Profile            string                       `json:"profile"`
+	Level              int                          `json:"level"`
+	CodecTagString     string                       `json:"codec_tag_string"`
+	CodecTimeBase      string                       `json:"codec_time_base"`
+	TimeBase           string                       `json:"time_base"`
+	Width              int                          `json:"width"`
+	Height             int                          `json:"height"`
+	SampleAspectRatio  string                       `json:"sample_aspect_ratio"`
+	DisplayAspectRatio string                       `json:"display_aspect_ratio"`
+	FieldOrder         string                       `json:"field_order"`
+	ColorPrimaries     string                       `json:"color_primaries"`
+	ColorTransfer      string                       `json:"color_transfer"`
+	ColorSpace         string                       `json:"color_space"`
+	ColorRange         string                       `json:"color_range"`
+	BitsPerRawSample   string                       `json:"bits_per_raw_sample"`
+	PixelFormat        string                       `json:"pix_fmt"`
+	Channels           int                          `json:"channels"`
+	ChannelLayout      string                       `json:"channel_layout"`
+	SampleRate         string                       `json:"sample_rate"`
+	FrameRate          string                       `json:"r_frame_rate"`
+	StartPTS           int64                        `json:"start_pts"`
+	StartTime          json.RawMessage              `json:"start_time"`
+	DurationTS         int64                        `json:"duration_ts"`
+	BitRate            json.RawMessage              `json:"bit_rate"`
+	Duration           json.RawMessage              `json:"duration"`
+	NbFrames           json.RawMessage              `json:"nb_frames"`
+	NBReadFrames       json.RawMessage              `json:"nb_read_frames"`
+	ExtradataSize      int                          `json:"extradata_size"`
+	Disposition        map[string]int               `json:"disposition"`
+	Tags               map[string]string            `json:"tags"`
+	SideData           []map[string]json.RawMessage `json:"side_data_list"`
+}
+
+type probeProgram struct {
+	ID            int64             `json:"program_id"`
+	ProgramNumber int64             `json:"program_num"`
+	PMTPID        int64             `json:"pmt_pid"`
+	PCRPID        int64             `json:"pcr_pid"`
+	Name          string            `json:"program_name"`
+	StartTime     json.RawMessage   `json:"start_time"`
+	EndTime       json.RawMessage   `json:"end_time"`
+	Tags          map[string]string `json:"tags"`
+	Streams       []probeStream     `json:"streams"`
 }
 
 type probeChapter struct {
@@ -118,7 +180,8 @@ type probeChapter struct {
 }
 
 type boundedBuffer struct {
-	data []byte
+	data      []byte
+	truncated bool
 }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
@@ -126,9 +189,12 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	if remaining > 0 {
 		if len(p) > remaining {
 			b.data = append(b.data, p[:remaining]...)
+			b.truncated = true
 		} else {
 			b.data = append(b.data, p...)
 		}
+	} else if len(p) > 0 {
+		b.truncated = true
 	}
 	return len(p), nil
 }
@@ -143,7 +209,7 @@ func ProbeFile(parent context.Context, executable, work, inputPath string) (*Pro
 	}
 	ctx, cancel := context.WithTimeout(parent, ProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, executable, "-v", "error", "-show_streams", "-show_format", "-show_chapters", "-of", "json", inputPath)
+	cmd := exec.CommandContext(ctx, executable, "-v", "error", "-show_private_data", "1", "-show_streams", "-show_programs", "-show_format", "-show_chapters", "-of", "json", inputPath)
 	cmd.Dir = work
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work, "LANG=C.UTF-8"}
 	stdout, stderr := &boundedBuffer{}, &boundedBuffer{}
@@ -154,17 +220,25 @@ func ProbeFile(parent context.Context, executable, work, inputPath string) (*Pro
 		}
 		return nil, fmt.Errorf("media probe failed")
 	}
+	if stdout.truncated {
+		return nil, fmt.Errorf("media probe metadata exceeds the inspection limit")
+	}
 	var document probeDocument
 	if err := json.Unmarshal(stdout.Bytes(), &document); err != nil {
 		return nil, fmt.Errorf("media probe returned invalid metadata")
 	}
-	out := &Probe{Format: document.Format.Name, LongName: document.Format.LongName, FormatTags: allTags(document.Format.Tags), RawJSON: append(json.RawMessage(nil), stdout.Bytes()...)}
+	out := &Probe{Filename: document.Format.Filename, Format: document.Format.Name, LongName: document.Format.LongName, FormatTags: allTags(document.Format.Tags), ProbeScore: document.Format.ProbeScore, RawJSON: append(json.RawMessage(nil), stdout.Bytes()...)}
+	out.StartTime, _ = ParseNumber(document.Format.StartTime)
 	out.Duration, _ = ParseNumber(document.Format.Duration)
 	out.BitRate, _ = ParseNumber(document.Format.BitRate)
+	out.Size, _ = ParseNumber(document.Format.Size)
 	for _, stream := range document.Streams {
-		parsed := Stream{Index: stream.Index, CodecType: stream.CodecType, CodecName: stream.CodecName, CodecLongName: stream.CodecLongName, CodecTagString: stream.CodecTagString, Width: stream.Width, Height: stream.Height, ColorPrimaries: stream.ColorPrimaries, ColorTransfer: stream.ColorTransfer, ColorSpace: stream.ColorSpace, ColorRange: stream.ColorRange, BitsPerRawSample: stream.BitsPerRawSample, PixelFormat: stream.PixelFormat, Channels: stream.Channels, ChannelLayout: stream.ChannelLayout, SampleRate: stream.SampleRate, FrameRate: stream.FrameRate, Disposition: stream.Disposition, Tags: allTags(stream.Tags)}
+		parsed := Stream{Index: stream.Index, ID: stream.ID, CodecType: stream.CodecType, CodecName: stream.CodecName, CodecLongName: stream.CodecLongName, Profile: stream.Profile, Level: stream.Level, CodecTagString: stream.CodecTagString, CodecTimeBase: stream.CodecTimeBase, TimeBase: stream.TimeBase, Width: stream.Width, Height: stream.Height, SampleAspectRatio: stream.SampleAspectRatio, DisplayAspectRatio: stream.DisplayAspectRatio, FieldOrder: stream.FieldOrder, ColorPrimaries: stream.ColorPrimaries, ColorTransfer: stream.ColorTransfer, ColorSpace: stream.ColorSpace, ColorRange: stream.ColorRange, BitsPerRawSample: stream.BitsPerRawSample, PixelFormat: stream.PixelFormat, Channels: stream.Channels, ChannelLayout: stream.ChannelLayout, SampleRate: stream.SampleRate, FrameRate: stream.FrameRate, StartPTS: stream.StartPTS, DurationTS: stream.DurationTS, ExtradataSize: stream.ExtradataSize, Disposition: stream.Disposition, Tags: allTags(stream.Tags)}
 		parsed.BitRate, _ = ParseNumber(stream.BitRate)
 		parsed.Duration, _ = ParseNumber(stream.Duration)
+		parsed.StartTime, _ = ParseNumber(stream.StartTime)
+		parsed.NbFrames, _ = ParseNumberInt(stream.NbFrames)
+		parsed.NBReadFrames, _ = ParseNumberInt(stream.NBReadFrames)
 		for _, raw := range stream.SideData {
 			typeName := ""
 			values := make(map[string]json.RawMessage)
@@ -178,6 +252,15 @@ func ProbeFile(parent context.Context, executable, work, inputPath string) (*Pro
 			parsed.SideData = append(parsed.SideData, SideData{Type: typeName, Values: values})
 		}
 		out.Streams = append(out.Streams, parsed)
+	}
+	for _, program := range document.Programs {
+		parsed := Program{ID: program.ID, ProgramNumber: program.ProgramNumber, PMTPID: program.PMTPID, PCRPID: program.PCRPID, Name: program.Name, Tags: allTags(program.Tags)}
+		parsed.StartTime, _ = ParseNumber(program.StartTime)
+		parsed.EndTime, _ = ParseNumber(program.EndTime)
+		for _, stream := range program.Streams {
+			parsed.StreamIndexes = append(parsed.StreamIndexes, stream.Index)
+		}
+		out.Programs = append(out.Programs, parsed)
 	}
 	for _, chapter := range document.Chapters {
 		start, _ := ParseNumber(chapter.StartTime)
@@ -204,6 +287,25 @@ func ParseNumber(raw json.RawMessage) (float64, error) {
 		return 0, fmt.Errorf("invalid probe number")
 	}
 	return number, nil
+}
+
+func ParseNumberInt(raw json.RawMessage) (int64, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, nil
+	}
+	var text string
+	if raw[0] == '"' {
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return 0, err
+		}
+	} else {
+		text = string(raw)
+	}
+	value, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return value, nil
 }
 
 func (s Stream) BitDepth() int {

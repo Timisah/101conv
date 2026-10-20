@@ -5,6 +5,7 @@ package analysis
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
@@ -25,6 +26,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/timisah/101conv/server/internal/limits"
 	"github.com/timisah/101conv/server/internal/management"
@@ -35,7 +37,7 @@ const (
 	MaxHeaderBytes      = 4 << 20
 	MaxOfficeEntries    = 10000
 	MaxOfficeExpanded   = 256 << 20
-	MaxAnalysisRawBytes = 12 << 20
+	MaxAnalysisRawBytes = 64 << 20
 )
 
 var ErrInvalidFile = errors.New("file could not be safely inspected")
@@ -77,20 +79,24 @@ type FileSummary struct {
 }
 
 type ImageSummary struct {
-	Width       int            `json:"width"`
-	Height      int            `json:"height"`
-	ColorModel  string         `json:"colorModel,omitempty"`
-	EXIFPresent bool           `json:"exifPresent,omitempty"`
-	ICCProfile  bool           `json:"iccProfile,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	Width                 int            `json:"width"`
+	Height                int            `json:"height"`
+	ColorModel            string         `json:"colorModel,omitempty"`
+	EXIFPresent           bool           `json:"exifPresent,omitempty"`
+	ICCProfile            bool           `json:"iccProfile,omitempty"`
+	Metadata              map[string]any `json:"metadata,omitempty"`
+	MetadataBytesScanned  int            `json:"metadataBytesScanned,omitempty"`
+	MetadataScanTruncated bool           `json:"metadataScanTruncated,omitempty"`
 }
 
 type DocumentSummary struct {
-	Kind           string            `json:"kind"`
-	PDFVersion     string            `json:"pdfVersion,omitempty"`
-	PackageEntries int               `json:"packageEntries,omitempty"`
-	ExpandedBytes  uint64            `json:"expandedBytes,omitempty"`
-	Metadata       map[string]string `json:"metadata,omitempty"`
+	Kind                  string         `json:"kind"`
+	PDFVersion            string         `json:"pdfVersion,omitempty"`
+	PackageEntries        int            `json:"packageEntries,omitempty"`
+	ExpandedBytes         uint64         `json:"expandedBytes,omitempty"`
+	Metadata              map[string]any `json:"metadata,omitempty"`
+	MetadataBytesScanned  int            `json:"metadataBytesScanned,omitempty"`
+	MetadataScanTruncated bool           `json:"metadataScanTruncated,omitempty"`
 }
 
 func NewService(managementService *management.Service, uploadRoot string) (*Service, error) {
@@ -168,6 +174,9 @@ func (s *Service) Analyze(ctx context.Context, file File) (Report, error) {
 		if report.Media, err = s.probeFile(ctx, path); err != nil {
 			report.Warnings = append(report.Warnings, "Container-specific image metadata could not be extracted by the installed media probe.")
 		}
+		if report.Image.MetadataScanTruncated {
+			report.Warnings = append(report.Warnings, "Image metadata scan reached its bounded byte limit; the report identifies the scanned size and retains all metadata found before the limit.")
+		}
 	case isMedia(file.Extension):
 		probeErr := error(nil)
 		report.Media, probeErr = s.probeFile(ctx, path)
@@ -178,11 +187,14 @@ func (s *Service) Analyze(ctx context.Context, file File) (Report, error) {
 			report.Summary = mediaSummary(*report.Media)
 		}
 	case file.Extension == "pdf":
-		report.Document, err = inspectPDF(header)
+		report.Document, err = inspectPDFFile(path, header)
 		if err != nil {
 			return Report{}, fmt.Errorf("%w: %v", ErrInvalidFile, err)
 		}
 		report.Summary = "PDF document"
+		if report.Document.MetadataScanTruncated {
+			report.Warnings = append(report.Warnings, "PDF metadata scan used bounded first/last windows; the report identifies the scanned size and retains all metadata found in those windows.")
+		}
 	case isOffice(file.Extension):
 		report.Document, err = inspectOffice(path, file.Extension)
 		if err != nil {
@@ -190,7 +202,12 @@ func (s *Service) Analyze(ctx context.Context, file File) (Report, error) {
 		}
 		report.Summary = "Office document package"
 	default:
-		report.Summary = "Uploaded file"
+		if report.Media, err = s.probeFile(ctx, path); err == nil {
+			report.Summary = mediaSummary(*report.Media)
+		} else {
+			report.Summary = "Uploaded file"
+			report.Warnings = append(report.Warnings, "No bounded media parser recognized this file; the report contains the file identity and available generic metadata only.")
+		}
 	}
 	// Raw JSON is a bounded view of this report. It excludes only the recursive
 	// RawJSON field; otherwise it retains the complete bounded parser output.
@@ -358,7 +375,7 @@ func readHeader(path string) ([]byte, error) {
 
 func isImage(ext string) bool {
 	switch ext {
-	case "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp", "avif", "jxl":
+	case "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "dng", "webp", "avif", "heic", "heif", "jp2", "j2k", "jpf", "jxl":
 		return true
 	}
 	return false
@@ -381,8 +398,22 @@ func isOffice(ext string) bool {
 }
 
 func inspectImage(path, extension string, header []byte) (*ImageSummary, error) {
-	exifMetadata := parseJPEGEXIF(header)
-	summary := &ImageSummary{EXIFPresent: len(exifMetadata) > 0 || strings.Contains(string(header), "Exif\x00\x00"), ICCProfile: strings.Contains(string(header), "ICC_PROFILE") || strings.Contains(string(header), "iCCP"), Metadata: exifMetadata}
+	metadata, truncated := inspectImageMetadata(path, extension, header)
+	exifPresent := false
+	iccPresent := false
+	for key := range metadata {
+		exifPresent = exifPresent || strings.Contains(strings.ToLower(key), "exif") || strings.HasPrefix(key, "IFD0.") || strings.HasPrefix(key, "EXIF.") || strings.HasPrefix(key, "GPS.")
+		iccPresent = iccPresent || strings.Contains(strings.ToLower(key), "icc")
+	}
+	if extension == "tif" || extension == "tiff" || extension == "dng" {
+		exifPresent = exifPresent || metadata["TIFF.Tags"] != nil
+	}
+	summary := &ImageSummary{EXIFPresent: exifPresent || strings.Contains(string(header), "Exif\x00\x00"), ICCProfile: iccPresent || strings.Contains(string(header), "ICC_PROFILE") || strings.Contains(string(header), "iCCP"), Metadata: metadata, MetadataBytesScanned: len(header), MetadataScanTruncated: truncated}
+	if !truncated {
+		if info, err := os.Stat(path); err == nil && info.Size() < int64(^uint(0)>>1) {
+			summary.MetadataBytesScanned = int(info.Size())
+		}
+	}
 	f, err := os.Open(path)
 	if err == nil {
 		config, _, decodeErr := image.DecodeConfig(io.LimitReader(f, MaxHeaderBytes))
@@ -411,6 +442,55 @@ func inspectPDF(header []byte) (*DocumentSummary, error) {
 	return &DocumentSummary{Kind: "pdf", PDFVersion: version, Metadata: pdfMetadata(header)}, nil
 }
 
+const maxPDFMetadataBytes = 16 << 20
+
+func inspectPDFFile(path string, fallback []byte) (*DocumentSummary, error) {
+	data, truncated := readPDFMetadataWindow(path, fallback)
+	report, err := inspectPDF(data)
+	if err != nil {
+		return nil, err
+	}
+	report.MetadataBytesScanned = len(data)
+	report.MetadataScanTruncated = truncated
+	if truncated {
+		if report.Metadata == nil {
+			report.Metadata = map[string]any{}
+		}
+		report.Metadata["_inspection.metadataTruncated"] = true
+		report.Metadata["_inspection.metadataBytesScanned"] = len(data)
+	}
+	return report, nil
+}
+
+func readPDFMetadataWindow(path string, fallback []byte) ([]byte, bool) {
+	file, err := os.Open(path)
+	if err != nil {
+		return fallback, false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.Size() <= maxPDFMetadataBytes {
+		data, readErr := io.ReadAll(io.LimitReader(file, maxPDFMetadataBytes))
+		if readErr != nil {
+			return fallback, false
+		}
+		return data, info.Size() > maxPDFMetadataBytes
+	}
+	window := int64(maxPDFMetadataBytes / 2)
+	first, err := io.ReadAll(io.LimitReader(file, window))
+	if err != nil {
+		return fallback, false
+	}
+	if _, err = file.Seek(-window, io.SeekEnd); err != nil {
+		return first, true
+	}
+	last, err := io.ReadAll(io.LimitReader(file, window))
+	if err != nil {
+		return first, true
+	}
+	return append(append(first, '\n', '\n'), last...), true
+}
+
 func inspectOffice(path, extension string) (*DocumentSummary, error) {
 	if extension == "doc" || extension == "xls" || extension == "ppt" || extension == "rtf" || extension == "txt" {
 		return &DocumentSummary{Kind: extension}, nil
@@ -421,7 +501,7 @@ func inspectOffice(path, extension string) (*DocumentSummary, error) {
 	}
 	defer z.Close()
 	var expanded uint64
-	metadata := map[string]string{}
+	metadata := map[string]any{}
 	for _, entry := range z.File {
 		if len(z.File) > MaxOfficeEntries || entry.UncompressedSize64 > MaxOfficeExpanded || expanded > MaxOfficeExpanded-entry.UncompressedSize64 {
 			return nil, fmt.Errorf("%s package exceeds inspection limit", extension)
@@ -432,6 +512,7 @@ func inspectOffice(path, extension string) (*DocumentSummary, error) {
 				metadata[entry.Name+":"+key] = value
 			}
 		}
+		metadata["Package.Entry."+entry.Name] = map[string]any{"compressedSize": entry.CompressedSize64, "uncompressedSize": entry.UncompressedSize64, "crc32": fmt.Sprintf("%08x", entry.CRC32), "method": entry.Method}
 	}
 	if len(metadata) == 0 {
 		metadata = nil
@@ -441,24 +522,54 @@ func inspectOffice(path, extension string) (*DocumentSummary, error) {
 
 var pdfMetadataRE = regexp.MustCompile(`/([A-Za-z][A-Za-z0-9]+)\s*(?:\(([^()]*)\)|<([0-9A-Fa-f]+)>)`)
 
-func pdfMetadata(header []byte) map[string]string {
-	metadata := map[string]string{}
-	for _, match := range pdfMetadataRE.FindAllSubmatch(header, 256) {
+func pdfMetadata(header []byte) map[string]any {
+	metadata := map[string]any{}
+	for _, match := range pdfMetadataRE.FindAllSubmatch(header, 4096) {
 		value := string(match[2])
 		if len(match[3]) > 0 {
 			decoded, err := hex.DecodeString(string(match[3]))
 			if err == nil {
-				value = string(decoded)
+				value = decodePDFText(decoded)
 			}
 		}
 		if value != "" {
 			metadata[string(match[1])] = value
 		}
 	}
+	start := bytes.Index(header, []byte("<x:xmpmeta"))
+	endMarker := []byte("</x:xmpmeta>")
+	if start < 0 {
+		start = bytes.Index(header, []byte("<rdf:RDF"))
+		endMarker = []byte("</rdf:RDF>")
+	}
+	if start >= 0 {
+		end := bytes.Index(header[start:], endMarker)
+		if end >= 0 {
+			xmp := header[start : start+end+len(endMarker)]
+			if len(xmp) > 4<<20 {
+				xmp = xmp[:4<<20]
+			}
+			metadata["XMP.Raw"] = string(xmp)
+			for key, value := range xmlMetadata(xmp) {
+				metadata["XMP."+key] = value
+			}
+		}
+	}
 	if len(metadata) == 0 {
 		return nil
 	}
 	return metadata
+}
+
+func decodePDFText(data []byte) string {
+	if len(data) >= 2 && data[0] == 0xfe && data[1] == 0xff && len(data)%2 == 0 {
+		values := make([]uint16, 0, (len(data)-2)/2)
+		for offset := 2; offset+1 < len(data); offset += 2 {
+			values = append(values, uint16(data[offset])<<8|uint16(data[offset+1]))
+		}
+		return string(utf16.Decode(values))
+	}
+	return string(data)
 }
 
 func zipXMLMetadata(entry *zip.File) map[string]string {

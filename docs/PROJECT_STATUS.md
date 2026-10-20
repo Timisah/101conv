@@ -100,6 +100,10 @@ The P2 scope is implemented and source-verified in this worktree:
   ordered preview, browser-local raster-image PDF generation, source
   preparation, and manifest download. Server-side PDF/Office expansion and
   merging plus saved projects remain open.
+  Native image metadata sources are retained as raw bounded APP/chunk/box
+  payloads alongside normalized EXIF/XMP/IPTC/ICC/GPS fields; media scans
+  request ffprobe private data/programs, and PDF scans include bounded
+  first/last windows so tail Info/XMP properties are not silently missed.
 - Successful jobs expose input/output savings, and batch allocations remain
   independently frozen per item for deterministic retry behavior.
 
