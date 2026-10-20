@@ -159,6 +159,12 @@ func (s *Service) Update(ctx context.Context, ownerID, id string, request WriteR
 	if item.Shared {
 		request.Shared = true
 	}
+	// Clearing a default is an explicit operation through SetDefault. A normal
+	// edit must not silently unset a user's or administrator's saved default
+	// because the boolean is omitted from a form update.
+	if item.Default && !request.Default {
+		request.Default = true
+	}
 	normalizeWrite(&request)
 	if err = validateWrite(request); err != nil {
 		return Preset{}, err
@@ -215,6 +221,9 @@ func (s *Service) SetDefault(ctx context.Context, ownerID, id string, administra
 		return Preset{}, err
 	}
 	if item.OwnerID() != ownerID && !(administrator && item.Shared) {
+		return Preset{}, ErrForbidden
+	}
+	if item.Shared && item.OwnerID() != ownerID && !administrator {
 		return Preset{}, ErrForbidden
 	}
 	if enabled {
