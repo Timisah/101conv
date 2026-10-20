@@ -193,3 +193,13 @@ jobs:
           path: ${{ runner.temp }}/101conv-restore-artifacts/
           if-no-files-found: warn
           retention-days: 7
+
+  document-conversion:
+    name: Pinned LibreOffice and PDF platform
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check runner capacity
+        run: ./scripts/ci-resource-check.sh 4 2048
+      - name: Verify document runtimes, managed packages, guest batches and folder automation
+        run: ./scripts/verify-documents.sh

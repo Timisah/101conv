@@ -63,3 +63,11 @@ New local installs can instead use [`scripts/install.sh`](../../scripts/install.
 ## Data and migration boundary
 
 This release runs only the Go/React application. Account, profile, job, and engine data are stored in PostgreSQL, named uploads/results volumes, and the Go data directory. Those stores are retained by keeping the same stack and storage configuration. No automatic importer exists for data from other application formats; any such data remains untouched on disk and is not used by this application. This guide does not perform data deletion or volume migration.
+
+### Office and PDF runtime (D.2)
+
+Rebuild the Worker with `server/Dockerfile.worker` from the current Compose
+stack before installing the Office or PDF profiles. Core keeps its existing
+image. No new port or mount is required. The Worker includes pinned LibreOffice,
+Poppler, runtime dependencies and fallback fonts. See
+[document deployment and runtime details](../architecture/documents-d2.md).

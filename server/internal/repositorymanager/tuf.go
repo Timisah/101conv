@@ -138,10 +138,21 @@ func downloadPackageVerified(ctx context.Context, up *updater.Updater, artifact 
 // SHA-256, and relies on the existing safe archive extractor. These checks
 // detect corruption but do not authenticate the publisher.
 func downloadPackageUnsigned(ctx context.Context, artifact *engine.Artifact, max int64) ([]byte, error) {
-	if artifact == nil || artifact.DownloadURL == "" {
-		return nil, fmt.Errorf("unsigned official engine manifest has no download URL")
+	if artifact == nil {
+		return nil, fmt.Errorf("unsigned official engine manifest has no artifact")
 	}
-	if err := validateExternalArtifactURL(artifact.DownloadURL); err != nil {
+	// Small adapters can be shipped as same-origin catalog targets. Keep their
+	// download inside the built-in official repository, with no origin-changing
+	// redirects; external releases retain the existing GitHub allowlist.
+	downloadURL := artifact.DownloadURL
+	client := secureArtifactHTTPClient
+	if downloadURL == "" {
+		if !safeTarget(artifact.URL) || strings.ContainsAny(artifact.URL, "%?#:") {
+			return nil, fmt.Errorf("unsafe official package target")
+		}
+		downloadURL = officialURL + "/targets/" + artifact.URL
+		client = secureRepositoryHTTPClient
+	} else if err := validateExternalArtifactURL(downloadURL); err != nil {
 		return nil, err
 	}
 	if artifact.SizeBytes <= 0 || artifact.SizeBytes > max {
@@ -153,11 +164,11 @@ func downloadPackageUnsigned(ctx context.Context, artifact *engine.Artifact, max
 	if _, err := hex.DecodeString(artifact.SHA256); err != nil {
 		return nil, fmt.Errorf("unsigned package manifest has invalid SHA-256: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, artifact.DownloadURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	response, err := secureArtifactHTTPClient.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("download unsigned GitHub release: %w", err)
 	}

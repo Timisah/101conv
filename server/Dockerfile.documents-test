@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.27.2-alpine AS tests
+WORKDIR /src
+COPY server/ ./
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    if [ -f /run/secrets/proxy_ca ]; then \
+      cat /etc/ssl/certs/ca-certificates.crt /run/secrets/proxy_ca >/tmp/101conv-ca.pem; \
+      export SSL_CERT_FILE=/tmp/101conv-ca.pem; \
+    fi && CGO_ENABLED=0 go test -c -o /tests/worker.test ./internal/worker && CGO_ENABLED=0 go test -c -o /tests/httpapi.test ./internal/httpapi
+FROM 101conv-document-worker:dev
+COPY --from=tests /tests /tests
+COPY --chown=65532:65532 catalog /repo/catalog
+COPY --chown=65532:65532 engines /repo/engines
+ADD catalog/targets/packages/libreoffice-25.2.3+deb13u8.1-linux-amd64.tar.gz /repo/test-engines/libreoffice/25.2.3+deb13u8.1/
+ADD catalog/targets/packages/poppler-25.3.0+deb13u4.1-linux-amd64.tar.gz /repo/test-engines/poppler/25.3.0+deb13u4.1/
+ENV TEST_DOCUMENT_RUNTIME=1 DOCUMENT_REPOSITORY_ROOT=/repo DOCUMENT_ENGINE_ROOT=/repo/test-engines
+ENTRYPOINT ["/tests/worker.test", "-test.v", "-test.run", "TestDocumentRuntimeConversions|TestPDFPublicationGuard"]

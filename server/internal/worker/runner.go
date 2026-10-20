@@ -45,6 +45,7 @@ type Invocation struct {
 	MinimumVideoKbps            int
 	RequireSmaller              bool
 	TargetExtension             string
+	SourceExtension             string
 	ExpectedInputSHA256         string
 	ExpectedInputSize           int64
 }
@@ -121,6 +122,11 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	}
 	if hex.EncodeToString(inputHash.Sum(nil)) != in.ExpectedInputSHA256 {
 		return Result{}, fmt.Errorf("job input digest does not match uploaded content")
+	}
+	if in.EngineID == "libreoffice" {
+		if err = validateOfficeInput(inputPath, in.SourceExtension); err != nil {
+			return Result{}, err
+		}
 	}
 	if err = os.MkdirAll(r.WorkRoot, 0700); err != nil {
 		return Result{}, err
@@ -237,8 +243,12 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 // validateImageSignature catches a converter that exits successfully after
 // writing a text file, an empty container, or an output with the wrong format.
 // It intentionally applies only to the image extensions understood by the
-// built-in image profiles; other engines may produce arbitrary media formats.
+// built-in image profiles, plus a PDF publication guard. Other formats are
+// governed by their engine adapters.
 func validateImageSignature(path, extension string) error {
+	if extension == "pdf" {
+		return validatePDFSignature(path)
+	}
 	known := map[string]bool{"jpg": true, "jpeg": true, "png": true, "webp": true, "tif": true, "tiff": true, "bmp": true, "gif": true, "avif": true}
 	if !known[extension] {
 		return nil
@@ -271,6 +281,37 @@ func validateImageSignature(path, extension string) error {
 	}
 	if !valid {
 		return fmt.Errorf("converter output failed %s image signature validation", extension)
+	}
+	return nil
+}
+
+// This is a cheap publication guard, not a complete PDF parser. The document
+// adapter also runs pdfinfo before returning a result to the Worker.
+func validatePDFSignature(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	header := make([]byte, 8)
+	if _, err = io.ReadFull(f, header); err != nil ||
+		!(string(header[:7]) == "%PDF-1." && header[7] >= '0' && header[7] <= '7' || string(header) == "%PDF-2.0") {
+		return fmt.Errorf("converter output failed PDF header validation")
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	start := info.Size() - 1024
+	if start < 0 {
+		start = 0
+	}
+	if _, err = f.Seek(start, io.SeekStart); err != nil {
+		return err
+	}
+	tail, err := io.ReadAll(io.LimitReader(f, 1024))
+	if err != nil || !strings.HasSuffix(strings.TrimSpace(string(tail)), "%%EOF") {
+		return fmt.Errorf("converter output failed PDF trailer validation")
 	}
 	return nil
 }

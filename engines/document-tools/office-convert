@@ -1,0 +1,55 @@
+#!/bin/sh
+# MIT License
+#
+# Copyright (c) 2026 101conv contributors
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Managed LibreOffice adapter. Only the Worker supplies paths and validated options.
+set -eu
+fail() { echo "$*" >&2; exit 1; }
+[ "$#" -eq 6 ] || fail 'Invalid Office conversion arguments'
+for package in libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress; do
+ [ "$(dpkg-query -W -f='${Version}' "$package")" = '4:25.2.3-2+deb13u8' ] || fail 'LibreOffice runtime mismatch; rebuild the document worker'
+done
+source=$1 target=$2 extension=$3 quality=$4 tagged=$5 pdfa=$6
+case "$extension" in docx|doc|odt|rtf|txt) filter=writer_pdf_Export;; xlsx|xls|ods) filter=calc_pdf_Export;; pptx|ppt|odp) filter=impress_pdf_Export;; *) fail 'Unsupported Office source';; esac
+case "$quality" in ''|*[!0-9]*) fail 'Invalid PDF quality';; esac
+[ "$quality" -ge 1 ] && [ "$quality" -le 100 ] || fail 'PDF quality must be 1–100'
+case "$tagged" in true|false) ;; *) fail 'Invalid tagged PDF setting';; esac
+case "$pdfa" in standard) pdfversion=0;; pdfa-2b) pdfversion=2;; *) fail 'Invalid PDF conformance';; esac
+# HOME is the unique, size-limited Worker attempt directory. No shared LO server.
+mkdir -m 700 "$HOME/profile" "$HOME/out"
+cat > "$HOME/profile/registrymodifications.xcu" <<'CONFIG'
+<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry">
+ <item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop><prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop></item>
+ <item oor:path="/org.openoffice.Office.Writer/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>0</value></prop></item>
+ <item oor:path="/org.openoffice.Office.Calc/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>1</value></prop></item>
+ <item oor:path="/org.openoffice.Office.Common/Misc"><prop oor:name="FirstRun" oor:op="fuse"><value>false</value></prop></item>
+</oor:items>
+CONFIG
+cp -- "$source" "$HOME/input.$extension"
+export SAL_USE_VCLPLUGIN=svp SAL_DISABLE_OPENCL=1 OMP_NUM_THREADS=1
+/usr/bin/libreoffice "-env:UserInstallation=file://$HOME/profile" --headless --nologo --nodefault --nofirststartwizard --norestore \
+ --convert-to "pdf:$filter:{\"Quality\":{\"type\":\"long\",\"value\":\"$quality\"},\"UseTaggedPDF\":{\"type\":\"boolean\",\"value\":\"$tagged\"},\"SelectPdfVersion\":{\"type\":\"long\",\"value\":\"$pdfversion\"}}" \
+ --outdir "$HOME/out" "$HOME/input.$extension"
+[ -s "$HOME/out/input.pdf" ] || fail 'LibreOffice produced no PDF; the document may be corrupt, encrypted, or unsupported'
+/usr/bin/pdfinfo "$HOME/out/input.pdf" >/dev/null || fail 'LibreOffice produced an invalid PDF'
+mv -- "$HOME/out/input.pdf" "$target"

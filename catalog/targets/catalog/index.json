@@ -3,15 +3,79 @@
   "minimumAppVersion": "0.1.0",
   "maximumAppVersionExclusive": "1.0.0",
   "engines": [
-    {"id":"ffmpeg","version":"9.0.2-28-g669f5ab083+101conv.1","name":"FFmpeg LGPL (Linux x86-64)","manifestTarget":"engines/ffmpeg-linux-amd64.json"},
-    {"id":"jpeg-xl","version":"0.12.0","name":"JPEG XL tools (Linux x86-64)","manifestTarget":"engines/jpeg-xl-linux-amd64.json"}
+    {
+      "id": "ffmpeg",
+      "version": "9.0.2-28-g669f5ab083+101conv.1",
+      "name": "FFmpeg LGPL (Linux x86-64)",
+      "manifestTarget": "engines/ffmpeg-linux-amd64.json"
+    },
+    {
+      "id": "jpeg-xl",
+      "version": "0.12.0",
+      "name": "JPEG XL tools (Linux x86-64)",
+      "manifestTarget": "engines/jpeg-xl-linux-amd64.json"
+    },
+    {
+      "id": "libreoffice",
+      "version": "25.2.3+deb13u8.1",
+      "name": "LibreOffice document runtime (Linux x86-64)",
+      "manifestTarget": "engines/libreoffice-linux-amd64.json"
+    },
+    {
+      "id": "poppler",
+      "version": "25.3.0+deb13u4.1",
+      "name": "Poppler document runtime (Linux x86-64)",
+      "manifestTarget": "engines/poppler-linux-amd64.json"
+    }
   ],
   "profiles": [
-    {"id":"ffmpeg-linux-amd64","version":"1.2.0","name":"FFmpeg Audio/Video Conversion","manifestTarget":"profiles/ffmpeg-linux-amd64.json"},
-    {"id":"ffmpeg-image-linux-amd64","version":"1.0.0","name":"FFmpeg Image Conversion","manifestTarget":"profiles/ffmpeg-image-linux-amd64.json"},
-    {"id":"ffmpeg-image-linux-amd64","version":"1.1.0","name":"FFmpeg Image Conversion","manifestTarget":"profiles/ffmpeg-image-linux-amd64-1.1.0.json"},
-    {"id":"jpeg-xl-linux-amd64","version":"1.2.0","name":"JPEG XL Image Conversion","manifestTarget":"profiles/jpeg-xl-linux-amd64.json"},
-    {"id":"ffmpeg-compression-linux-amd64","version":"1.0.0","name":"FFmpeg Audio/Video Compression","manifestTarget":"profiles/ffmpeg-compression-linux-amd64.json"},
-    {"id":"jpeg-xl-compression-linux-amd64","version":"1.0.0","name":"JPEG XL Image Compression","manifestTarget":"profiles/jpeg-xl-compression-linux-amd64.json"}
+    {
+      "id": "ffmpeg-linux-amd64",
+      "version": "1.2.0",
+      "name": "FFmpeg Audio/Video Conversion",
+      "manifestTarget": "profiles/ffmpeg-linux-amd64.json"
+    },
+    {
+      "id": "ffmpeg-image-linux-amd64",
+      "version": "1.0.0",
+      "name": "FFmpeg Image Conversion",
+      "manifestTarget": "profiles/ffmpeg-image-linux-amd64.json"
+    },
+    {
+      "id": "ffmpeg-image-linux-amd64",
+      "version": "1.1.0",
+      "name": "FFmpeg Image Conversion",
+      "manifestTarget": "profiles/ffmpeg-image-linux-amd64-1.1.0.json"
+    },
+    {
+      "id": "jpeg-xl-linux-amd64",
+      "version": "1.2.0",
+      "name": "JPEG XL Image Conversion",
+      "manifestTarget": "profiles/jpeg-xl-linux-amd64.json"
+    },
+    {
+      "id": "ffmpeg-compression-linux-amd64",
+      "version": "1.0.0",
+      "name": "FFmpeg Audio/Video Compression",
+      "manifestTarget": "profiles/ffmpeg-compression-linux-amd64.json"
+    },
+    {
+      "id": "jpeg-xl-compression-linux-amd64",
+      "version": "1.0.0",
+      "name": "JPEG XL Image Compression",
+      "manifestTarget": "profiles/jpeg-xl-compression-linux-amd64.json"
+    },
+    {
+      "id": "libreoffice-pdf-linux-amd64",
+      "version": "1.0.0",
+      "name": "Office Documents to PDF",
+      "manifestTarget": "profiles/libreoffice-pdf-linux-amd64.json"
+    },
+    {
+      "id": "poppler-pdf-linux-amd64",
+      "version": "1.0.0",
+      "name": "PDF Rendering & Text Extraction",
+      "manifestTarget": "profiles/poppler-pdf-linux-amd64.json"
+    }
   ]
 }

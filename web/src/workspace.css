@@ -67,7 +67,11 @@ h1, h2, h3, .brand, .jobs-summary b, .section-row h3, .options-heading h3 { font
 .supported-formats { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: -2px; }
 .supported-formats > span { font-size: 10px; letter-spacing: 1.25px; text-transform: uppercase; color: var(--muted); }
 .supported-formats > div { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
-.supported-formats > div > span { font-size: 10px; font-weight: 600; color: var(--sub); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; }
+.supported-formats > div > span, .supported-formats details span, .supported-formats summary { font-size: 10px; font-weight: 600; color: var(--sub); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; }
+.supported-formats details { text-align: center; }
+.supported-formats details[open] { flex-basis: 100%; }
+.supported-formats summary { cursor: pointer; display: inline-block; }
+.supported-formats details > div { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
 .upload-privacy { display: flex; align-items: center; justify-content: center; gap: 7px; color: var(--sub); font-size: 11px; text-align: center; }
 .upload-privacy svg { flex: none; color: var(--accent); }
 .file-list-panel, .quick-job-card, .conversion-options, .admin-panel, .converter-card, .market-card, .engine-card, .jobs-table-wrap { border-radius: 12px; box-shadow: var(--shadow); }

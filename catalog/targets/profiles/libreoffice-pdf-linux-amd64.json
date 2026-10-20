@@ -1,0 +1,566 @@
+{
+  "profile": {
+    "schemaVersion": 1,
+    "type": "conversion",
+    "id": "libreoffice-pdf-linux-amd64",
+    "version": "1.0.0",
+    "name": "Office Documents to PDF",
+    "description": "Word, Excel, PowerPoint, OpenDocument, RTF and text to PDF. Requires the document Worker image. Fonts may be substituted; review complex layouts. Password-protected documents are unsupported.",
+    "minimumAppVersion": "0.0.1",
+    "maximumAppVersionExclusive": "0.2.0",
+    "priority": 50,
+    "engines": [
+      {
+        "engineId": "libreoffice",
+        "versions": {
+          "minimum": "25.2.3+deb13u8.1",
+          "maximumExclusive": "25.2.4"
+        },
+        "capabilities": [
+          "document.pdf"
+        ]
+      }
+    ],
+    "rules": [
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "docx"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "docx",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      },
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "doc"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "doc",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      },
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "odt"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "odt",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      },
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "xlsx"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "xlsx",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      },
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "xls"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "xls",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      },
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "ods"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "ods",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      },
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "pptx"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "pptx",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      },
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "ppt"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "ppt",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      },
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "odp"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "odp",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      },
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "rtf"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "rtf",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      },
+      {
+        "engineId": "libreoffice",
+        "executable": "office-convert",
+        "sources": [
+          "txt"
+        ],
+        "targets": [
+          "pdf"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "txt",
+          "{option:quality}",
+          "{option:tagged}",
+          "{option:conformance}"
+        ],
+        "options": [
+          {
+            "key": "quality",
+            "label": "PDF image quality (1\u2013100)",
+            "type": "number",
+            "default": "90",
+            "min": 1,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "tagged",
+            "label": "Tagged PDF",
+            "type": "select",
+            "default": "true",
+            "choices": [
+              "true",
+              "false"
+            ]
+          },
+          {
+            "key": "conformance",
+            "label": "PDF conformance",
+            "type": "select",
+            "default": "standard",
+            "choices": [
+              "standard",
+              "pdfa-2b"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

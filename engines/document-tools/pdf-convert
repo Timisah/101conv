@@ -1,0 +1,47 @@
+#!/bin/sh
+# MIT License
+#
+# Copyright (c) 2026 101conv contributors
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+set -eu
+fail() { echo "$*" >&2; exit 1; }
+[ "$#" -ge 3 ] || fail 'Invalid PDF arguments'
+[ "$(dpkg-query -W -f='${Version}' poppler-utils)" = '25.03.0-5+deb13u4' ] || fail 'Poppler runtime mismatch; rebuild the document worker'
+source=$1 target=$2 mode=$3
+info=$(/usr/bin/pdfinfo "$source") || fail 'PDF cannot be parsed; it may be corrupt or password protected'
+if printf '%s\n' "$info" | LC_ALL=C grep -Eq '^Encrypted:[[:space:]]+yes'; then fail 'Encrypted PDFs are not supported'; fi
+case "$mode" in
+ text)
+  [ "$#" -eq 4 ] || fail 'Invalid text extraction arguments'
+  case "$4" in layout) /usr/bin/pdftotext -layout -enc UTF-8 "$source" "$target";; plain) /usr/bin/pdftotext -enc UTF-8 "$source" "$target";; *) fail 'Invalid text layout';; esac
+  LC_ALL=C grep -q '[^[:space:]]' "$target" || fail 'PDF contains no extractable text; OCR is not supported'
+  ;;
+ png|jpeg)
+  [ "$#" -eq 5 ] || fail 'Invalid PDF rendering arguments'
+  page=$4 edge=$5
+  case "$page:$edge" in *[!0-9:]*|:*|*:) fail 'Invalid PDF page or dimensions';; esac
+  [ "$page" -ge 1 ] && [ "$page" -le 10000 ] || fail 'Invalid page number'
+  [ "$edge" -ge 512 ] && [ "$edge" -le 4096 ] || fail 'Invalid maximum edge'
+  /usr/bin/pdftoppm -f "$page" -l "$page" -singlefile -scale-to "$edge" -"$mode" "$source" "$HOME/rendered"
+  case "$mode" in png) mv -- "$HOME/rendered.png" "$target";; jpeg) mv -- "$HOME/rendered.jpg" "$target";; esac
+  ;;
+ *) fail 'Unsupported PDF operation';;
+esac

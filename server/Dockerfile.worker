@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+# Keep Core minimal; document libraries exist only in the isolated Worker.
+FROM golang:1.27.2-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY . .
+ARG APP_VERSION=0.1.0
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    if [ -f /run/secrets/proxy_ca ]; then \
+      cat /etc/ssl/certs/ca-certificates.crt /run/secrets/proxy_ca >/tmp/101conv-ca.pem; \
+      export SSL_CERT_FILE=/tmp/101conv-ca.pem; \
+    fi && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.buildVersion=${APP_VERSION}" -o /out/101conv ./cmd/101conv
+
+FROM debian:13.1-slim@sha256:a347fd7510ee31a84387619a492ad6c8eb0af2f2682b916ff3e643eb076f925a
+# APT validates Debian's signed Release -> Packages -> .deb SHA-256 chain.
+# Fail closed if these exact security revisions are no longer available.
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    if [ -f /run/secrets/proxy_ca ]; then \
+      printf 'Acquire::https::CaInfo "/run/secrets/proxy_ca";\n' >/etc/apt/apt.conf.d/99-session-ca; \
+    fi && apt-get update && apt-get install -y --no-install-recommends \
+      libreoffice-core=4:25.2.3-2+deb13u8 \
+      libreoffice-writer=4:25.2.3-2+deb13u8 \
+      libreoffice-calc=4:25.2.3-2+deb13u8 \
+      libreoffice-impress=4:25.2.3-2+deb13u8 \
+      poppler-utils=25.03.0-5+deb13u4 \
+      fonts-liberation=1:2.1.5-3 fonts-dejavu-core=2.37-8 ca-certificates \
+    && mkdir -p /usr/share/101conv /var/lib/101conv /work \
+    && dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' >/usr/share/101conv/runtime-packages.tsv \
+    && apt-cache show libreoffice-core=4:25.2.3-2+deb13u8 poppler-utils=25.03.0-5+deb13u4 >/usr/share/101conv/engine-provenance.txt \
+    && fc-cache -f \
+    && chown 65532:65532 /var/lib/101conv /work \
+    && rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/99-session-ca
+COPY --from=build /out/101conv /101conv
+WORKDIR /var/lib/101conv
+USER 65532:65532
+ENV DATA_PATH=/var/lib/101conv WORK_PATH=/work
+ENTRYPOINT ["/101conv"]
+CMD ["worker"]

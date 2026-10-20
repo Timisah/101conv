@@ -84,3 +84,12 @@ The runner respects the selected Docker context and `DOCKER_HOST`, including roo
 The restore rehearsal takes a backup of the synthetic browser deployment, checks its manifest/checksums/archives/PostgreSQL dump, restores into new uniquely named volumes on an internal-only network, checks retained account/job/profile/engine references and expired-result tombstones, starts Core and Worker, and performs and downloads a PPM-to-PGM conversion. It demonstrates this test fixture's application-level restore path; it does not prove production-host permissions, external backup storage, every converter's behavior, disaster-recovery objectives, or a restore over a live Portainer installation. Production restore must remain a deliberate, separate operation.
 
 When preflight fails, first inspect the printed checkout, temp, and Docker-root `df -h` output plus `docker system df`. Free space only by reviewing resources you own; the test scripts intentionally do not prune unrelated Docker content. A failed GitHub check includes the failing job logs and, for the browser/restore stages, uploads redacted Compose logs and screenshots as short-lived artifacts. If a stage is not run because the runner is below threshold, the job fails with the observed capacity and the end-to-end status remains unverified.
+
+## Office documents and PDFs
+
+Milestone D.2 adds Office-to-PDF conversion through pinned LibreOffice and PDF
+page rendering/text extraction through pinned Poppler. Rebuild the Worker from
+the updated Compose stack, then install **Office Documents to PDF** and/or
+**PDF Rendering & Text Extraction** in Marketplace. These profiles work with
+guest uploads, authenticated jobs, batches, and mounted-drive automations.
+See [document deployment, supported formats, security and limitations](docs/architecture/documents-d2.md).

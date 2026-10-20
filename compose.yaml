@@ -107,7 +107,7 @@ services:
   worker:
     build:
       context: ./server
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.worker
       args:
         APP_VERSION: ${APP_VERSION:-0.1.0}
       no_cache: true

@@ -1,0 +1,23 @@
+{
+  "engine": {
+    "schemaVersion": 1,
+    "id": "libreoffice",
+    "version": "25.2.3+deb13u8.1",
+    "name": "LibreOffice document runtime (Linux x86-64)",
+    "description": "Managed adapter for the exact Debian runtime in the document Worker image. Requires Dockerfile.worker; installation does not download a system package.",
+    "license": "MPL-2.0; some components LGPL-3.0-or-later; adapter: MIT; dependency notices in the Worker /usr/share/doc.",
+    "platform": "linux-amd64",
+    "capabilities": [
+      "document.pdf"
+    ],
+    "executables": {
+      "office-convert": "office-convert"
+    },
+    "artifact": {
+      "url": "packages/libreoffice-25.2.3+deb13u8.1-linux-amd64.tar.gz",
+      "sizeBytes": 2091,
+      "sha256": "d1f6dd5922779bc73518ec0afa84e5791cebbb78cb7c04007be551ddd5c4b84c",
+      "format": "tar.gz"
+    }
+  }
+}

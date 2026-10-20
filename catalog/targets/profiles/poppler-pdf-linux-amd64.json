@@ -1,0 +1,166 @@
+{
+  "profile": {
+    "schemaVersion": 1,
+    "type": "conversion",
+    "id": "poppler-pdf-linux-amd64",
+    "version": "1.0.0",
+    "name": "PDF Rendering & Text Extraction",
+    "description": "Render one chosen PDF page to PNG/JPEG, or extract UTF-8 text. Scanned PDFs require OCR, which is not included. Encrypted PDFs are unsupported. Requires the document Worker image.",
+    "minimumAppVersion": "0.0.1",
+    "maximumAppVersionExclusive": "0.2.0",
+    "priority": 50,
+    "engines": [
+      {
+        "engineId": "poppler",
+        "versions": {
+          "minimum": "25.3.0+deb13u4.1",
+          "maximumExclusive": "25.3.1"
+        },
+        "capabilities": [
+          "pdf.process"
+        ]
+      }
+    ],
+    "rules": [
+      {
+        "engineId": "poppler",
+        "executable": "pdf-convert",
+        "sources": [
+          "pdf"
+        ],
+        "targets": [
+          "png"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "png",
+          "{option:page}",
+          "{option:maxEdge}"
+        ],
+        "options": [
+          {
+            "key": "page",
+            "label": "Page to render (starting at 1)",
+            "type": "number",
+            "default": "1",
+            "min": 1,
+            "max": 10000,
+            "step": 1
+          },
+          {
+            "key": "maxEdge",
+            "label": "Maximum image edge (px)",
+            "type": "number",
+            "default": "2048",
+            "min": 512,
+            "max": 4096,
+            "step": 1
+          }
+        ]
+      },
+      {
+        "engineId": "poppler",
+        "executable": "pdf-convert",
+        "sources": [
+          "pdf"
+        ],
+        "targets": [
+          "jpg"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "jpeg",
+          "{option:page}",
+          "{option:maxEdge}"
+        ],
+        "options": [
+          {
+            "key": "page",
+            "label": "Page to render (starting at 1)",
+            "type": "number",
+            "default": "1",
+            "min": 1,
+            "max": 10000,
+            "step": 1
+          },
+          {
+            "key": "maxEdge",
+            "label": "Maximum image edge (px)",
+            "type": "number",
+            "default": "2048",
+            "min": 512,
+            "max": 4096,
+            "step": 1
+          }
+        ]
+      },
+      {
+        "engineId": "poppler",
+        "executable": "pdf-convert",
+        "sources": [
+          "pdf"
+        ],
+        "targets": [
+          "jpeg"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "jpeg",
+          "{option:page}",
+          "{option:maxEdge}"
+        ],
+        "options": [
+          {
+            "key": "page",
+            "label": "Page to render (starting at 1)",
+            "type": "number",
+            "default": "1",
+            "min": 1,
+            "max": 10000,
+            "step": 1
+          },
+          {
+            "key": "maxEdge",
+            "label": "Maximum image edge (px)",
+            "type": "number",
+            "default": "2048",
+            "min": 512,
+            "max": 4096,
+            "step": 1
+          }
+        ]
+      },
+      {
+        "engineId": "poppler",
+        "executable": "pdf-convert",
+        "sources": [
+          "pdf"
+        ],
+        "targets": [
+          "txt"
+        ],
+        "arguments": [
+          "{source}",
+          "{target}",
+          "text",
+          "{option:layout}"
+        ],
+        "options": [
+          {
+            "key": "layout",
+            "label": "Text layout",
+            "type": "select",
+            "default": "layout",
+            "choices": [
+              "layout",
+              "plain"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -40,7 +40,7 @@ export function UploadArea({ mode, files, onFiles, limit, disabled, formats, mes
       <span className="upload-account-hint">Your account or guest limits may be lower.</span>
     </section>
     {message && <div className="banner error selection-message" role="alert"><X size={17} /><span>{message}</span><button className="icon-btn" aria-label="Dismiss file selection warning" onClick={onDismiss}><X size={16} /></button></div>}
-    {!files && formats.length > 0 && <div className="supported-formats"><span>Supported inputs</span><div>{formats.slice(0,10).map(format => <span key={format}>{format.toUpperCase()}</span>)}{formats.length > 10 && <span>+{formats.length - 10} more</span>}</div></div>}
+    {!files && formats.length > 0 && <div className="supported-formats"><span>Supported inputs</span><div>{formats.slice(0,10).map(format => <span key={format}>{format.toUpperCase()}</span>)}{formats.length > 10 && <details><summary>+{formats.length - 10} more</summary><div>{formats.slice(10).map(format => <span key={format}>{format.toUpperCase()}</span>)}</div></details>}</div></div>}
     <div className="upload-privacy"><ShieldCheck size={15} /><span>Processed on this instance. Your files stay in your workspace.</span></div>
   </>;
 }

@@ -1,0 +1,23 @@
+{
+  "engine": {
+    "schemaVersion": 1,
+    "id": "poppler",
+    "version": "25.3.0+deb13u4.1",
+    "name": "Poppler document runtime (Linux x86-64)",
+    "description": "Managed adapter for the exact Debian runtime in the document Worker image. Requires Dockerfile.worker; installation does not download a system package.",
+    "license": "GPL-2.0-only OR GPL-3.0-only; contributions GPL-2.0-or-later; adapter: MIT; dependency notices in the Worker /usr/share/doc.",
+    "platform": "linux-amd64",
+    "capabilities": [
+      "pdf.process"
+    ],
+    "executables": {
+      "pdf-convert": "pdf-convert"
+    },
+    "artifact": {
+      "url": "packages/poppler-25.3.0+deb13u4.1-linux-amd64.tar.gz",
+      "sizeBytes": 1555,
+      "sha256": "14a59be0531f22c323c79158290c907cf8bb2c0e23548410756d1ec63e6e706e",
+      "format": "tar.gz"
+    }
+  }
+}
