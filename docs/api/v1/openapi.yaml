@@ -870,7 +870,7 @@ paths:
       - { $ref: '#/components/parameters/UploadId' }
     get:
       summary: Inspect an owned upload without modifying it
-      description: Performs bounded content and metadata inspection. Location, device, serial-number, and ownership metadata are omitted. The response never contains file content.
+      description: Performs bounded content and metadata inspection for an owned upload. The authorized caller receives the fullest bounded extracted metadata available, which may include location, device, serial-number, ownership, or other sensitive values. The response never contains file content and clients must treat the report as private.
       security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       responses:
         '200':
@@ -1632,12 +1632,12 @@ components:
         image: { type: object, additionalProperties: true, description: Safe image dimensions and profile-presence signals. }
         document: { type: object, additionalProperties: true, description: PDF or Office package details. }
         warnings: { type: array, items: { type: string } }
-        rawJson: { type: object, additionalProperties: true, description: Sanitized bounded report without recursive rawJson or private metadata. }
+        rawJson: { type: object, additionalProperties: true, description: Bounded report without the recursive rawJson field. It may contain sensitive extracted metadata and must be treated as private. }
     AnalysisFile:
       type: object
       required: [id, name, extension, size, sha256]
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, description: Retained upload IDs are UUIDs; ephemeral inspection IDs use an inspection- prefix. }
         name: { type: string }
         extension: { type: string }
         size: { type: integer, minimum: 1, maximum: 1073741824 }

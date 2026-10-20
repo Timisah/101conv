@@ -1,6 +1,9 @@
 package document
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func validManifest() Manifest {
 	return Manifest{
@@ -47,7 +50,7 @@ func TestManifestValidateRejectsPageLimit(t *testing.T) {
 	manifest := validManifest()
 	manifest.Pages = make([]Page, MaxPages+1)
 	for index := range manifest.Pages {
-		manifest.Pages[index] = Page{ID: "page-" + string(rune('a'+index%26)), UploadID: "upload-1", SourcePage: 1}
+		manifest.Pages[index] = Page{ID: fmt.Sprintf("page-%d", index), UploadID: "upload-1", SourcePage: 1}
 	}
 	if err := manifest.Validate(); err == nil {
 		t.Fatal("expected page limit validation error")
