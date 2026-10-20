@@ -117,6 +117,12 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 **Acceptance:** detect Intel Quick Sync/VAAPI, AMD VAAPI, NVIDIA encode/decode capability where configured; allowlisted GPU render nodes/driver requirements, never privileged Worker by default; transparent CPU fallback consistent with HDR/fidelity constraints; performance/fidelity benchmarks and failure reporting.  
 **Dependencies:** FR-011, provider model.
 
+**Current worktree progress:** the Worker has an allowlist-only device/driver
+probe, durable heartbeat diagnostics, administrator Operations visibility, and
+deterministic CPU fallback. Engine-specific hardware arguments, benchmarks,
+codec support, and deployment verification remain open; the base Compose file
+does not map GPU devices.
+
 ### FR-014 — Visual Automations and blueprint library
 
 **Goal:** easy “choose blueprint → configure” plus optional powerful LEGO-style block flow.  

@@ -301,6 +301,7 @@ CREATE TABLE IF NOT EXISTS conv_worker_heartbeats (
 ALTER TABLE conv_worker_heartbeats ADD COLUMN IF NOT EXISTS active_jobs INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE conv_worker_heartbeats ADD COLUMN IF NOT EXISTS configured_concurrency INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE conv_worker_heartbeats ADD COLUMN IF NOT EXISTS batch_concurrency INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE conv_worker_heartbeats ADD COLUMN IF NOT EXISTS acceleration JSONB NOT NULL DEFAULT '{"schemaVersion":1,"hardwareConfigured":false,"cpuFallback":true,"accelerators":[]}'::jsonb;
 `
 	_, err := s.db.ExecContext(ctx, schema)
 	return err

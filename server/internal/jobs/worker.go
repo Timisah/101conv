@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/timisah/101conv/server/internal/acceleration"
 	"github.com/timisah/101conv/server/internal/worker"
 )
 
@@ -21,6 +22,7 @@ type WorkerConfig struct {
 	PollInterval     time.Duration
 	Concurrency      int
 	BatchConcurrency int
+	Acceleration     acceleration.Report
 }
 
 type Worker struct {
@@ -138,8 +140,9 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) recordWorkerHeartbeat(ctx context.Context, activity bool) error {
-	_, err := w.db.ExecContext(ctx, `INSERT INTO conv_worker_heartbeats(worker_id,last_seen,last_activity,active_jobs,configured_concurrency,batch_concurrency) VALUES($1,now(),CASE WHEN $2 THEN now() ELSE NULL END,$3,$4,$5)
-	ON CONFLICT(worker_id) DO UPDATE SET last_seen=now(),last_activity=CASE WHEN $2 THEN now() ELSE conv_worker_heartbeats.last_activity END,active_jobs=$3,configured_concurrency=$4,batch_concurrency=$5`, w.config.ID, activity, w.active.Load(), w.config.Concurrency, w.config.BatchConcurrency)
+	accelerators, _ := json.Marshal(w.config.Acceleration)
+	_, err := w.db.ExecContext(ctx, `INSERT INTO conv_worker_heartbeats(worker_id,last_seen,last_activity,active_jobs,configured_concurrency,batch_concurrency,acceleration) VALUES($1,now(),CASE WHEN $2 THEN now() ELSE NULL END,$3,$4,$5,$6)
+	ON CONFLICT(worker_id) DO UPDATE SET last_seen=now(),last_activity=CASE WHEN $2 THEN now() ELSE conv_worker_heartbeats.last_activity END,active_jobs=$3,configured_concurrency=$4,batch_concurrency=$5,acceleration=$6`, w.config.ID, activity, w.active.Load(), w.config.Concurrency, w.config.BatchConcurrency, accelerators)
 	return err
 }
 

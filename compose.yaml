@@ -132,6 +132,11 @@ services:
       JOB_LEASE: ${JOB_LEASE:-45s}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
       WORKER_BATCH_CONCURRENCY: ${WORKER_BATCH_CONCURRENCY:-2}
+      # Optional, explicit device allowlists. Leave blank for CPU-only mode.
+      # Device mappings belong in a reviewed Compose override; this base file
+      # never grants privileged access or unrestricted /dev visibility.
+      GPU_RENDER_NODES: ${GPU_RENDER_NODES:-}
+      GPU_NVIDIA_DEVICES: ${GPU_NVIDIA_DEVICES:-}
     volumes:
       - type: bind
         source: ${GO_DATA_PATH:-${DATA_PATH:?Set DATA_PATH to the parent of the persistent Go data directory}/go-data}/engines

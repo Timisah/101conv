@@ -125,6 +125,7 @@ paths:
   /api/v1/operations:
     get:
       summary: Inspect Core conversion readiness and operational issues
+      description: The response includes each Worker heartbeat's explicit hardware-acceleration allowlist report. An available device means that the configured device and driver probe passed; it does not claim codec-specific performance or HDR fidelity.
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       responses:
         '200': { description: Worker heartbeat, database, storage, engine/profile and repository status, jobs and leases }

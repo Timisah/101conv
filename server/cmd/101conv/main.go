@@ -16,6 +16,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/timisah/101conv/server/internal/acceleration"
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/automation"
 	"github.com/timisah/101conv/server/internal/catalog"
@@ -245,7 +246,20 @@ func runWorker() error {
 	lease := durationEnv("JOB_LEASE", 45*time.Second)
 	concurrency := intEnv("WORKER_CONCURRENCY", 1)
 	batchConcurrency := intEnv("WORKER_BATCH_CONCURRENCY", 2)
-	runnerService, err := jobs.NewWorker(db, runner, jobs.WorkerConfig{ID: workerID, Lease: lease, PollInterval: time.Second, Concurrency: concurrency, BatchConcurrency: batchConcurrency})
+	accelerationConfig, err := acceleration.ConfigFromEnv(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("configure GPU acceleration: %w", err)
+	}
+	accelerationReport, err := acceleration.Detect(context.Background(), accelerationConfig, acceleration.SystemProbe())
+	if err != nil {
+		return fmt.Errorf("probe GPU acceleration: %w", err)
+	}
+	for _, item := range accelerationReport.Accelerators {
+		if item.Vendor != acceleration.VendorCPU && item.Available {
+			log.Printf("worker acceleration available: %s (%s)", item.ID, item.Reason)
+		}
+	}
+	runnerService, err := jobs.NewWorker(db, runner, jobs.WorkerConfig{ID: workerID, Lease: lease, PollInterval: time.Second, Concurrency: concurrency, BatchConcurrency: batchConcurrency, Acceleration: accelerationReport})
 	if err != nil {
 		return err
 	}

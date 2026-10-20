@@ -55,11 +55,28 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 ## Planned, not yet implemented as generally available
 
 - P1 capability/provider migration and saved presets: implemented in the completion commit. The remaining release gate is remote CI and browser evidence; the deployment continues to retain legacy profile IDs as a migration boundary.
-- Metadata-based automation conditions, richer media controls, and optional GPU workers/device probing.
+- Metadata-based automation conditions, richer media controls, and engine-specific optional GPU execution.
 - Document Creator: the first Build editor now provides non-destructive page ordering, thumbnails, ordered preview, and browser-local PDF generation for raster image pages; server-side PDF/Office expansion and merging, saved/expiring projects, and fidelity-tested exporter output remain planned.
 - Visual Automations blocks/branches and broader blueprint system.
 - Versioned extension installation/compatibility/rollback and Immich connector.
 - New brand/logo, static public pages/SEO and rate-limited public demo.
+
+## P4 progress in the current worktree (not deployment evidence)
+
+- The Worker now performs an explicit allowlist-only acceleration probe for
+  Intel VAAPI/Quick Sync paths, AMD VAAPI paths, and configured NVIDIA devices.
+  It records verified device/driver diagnostics in the durable Worker
+  heartbeat, exposes them to administrators through Operations, and keeps CPU
+  as the deterministic fallback. The base Compose deployment remains
+  CPU-only; no privileged or unrestricted device mapping was added.
+- Hardware selection deliberately excludes unverified HDR-preserving paths and
+  reports the CPU fallback reason. Engine-specific FFmpeg arguments,
+  codec-level support, performance/fidelity benchmarks, and real deployment
+  verification remain open.
+
+Evidence: `server/internal/acceleration/`, the Worker heartbeat migration in
+`server/internal/jobs/`, `docs/architecture/hardware-acceleration-p4.md`,
+and the focused acceleration/jobs tests.
 
 ## P2 progress in the current worktree (not deployment evidence)
 
