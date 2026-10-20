@@ -202,3 +202,48 @@ func TestProcessRunnerCompressesRealMediaToTargetSize(t *testing.T) {
 		t.Fatalf("compressed artifact is not valid media: %v", err)
 	}
 }
+
+func TestProcessRunnerUsesBoundedAdaptiveQualitySearch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("container worker is Linux")
+	}
+	root := t.TempDir()
+	engineDir := filepath.Join(root, "engines", "quality", "1.0.0")
+	if err := os.MkdirAll(engineDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(engineDir, "quality")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "../../testdata/quality-converter")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build quality converter: %v\n%s", err, output)
+	}
+	inputRoot := filepath.Join(root, "uploads")
+	if err := os.MkdirAll(inputRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	inputID := "99999999-9999-4999-8999-999999999999"
+	input := make([]byte, 1000)
+	if err := os.WriteFile(filepath.Join(inputRoot, inputID), input, 0600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(input)
+	runner := &ProcessRunner{EngineRoot: filepath.Join(root, "engines"), UploadRoot: inputRoot, ResultRoot: filepath.Join(root, "results"), WorkRoot: filepath.Join(root, "work"), Timeout: 5 * time.Second}
+	result, err := runner.Run(context.Background(), Invocation{
+		JobID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Attempt: 1, InputID: inputID,
+		EngineID: "quality", EngineVersion: "1.0.0", ExecutableRelativePath: "quality",
+		Arguments:            []string{"{source}", "{compression.args}", "{target}"},
+		CompressionArguments: []string{"--quality={compression.quality}"}, TargetSizeBytes: 256,
+		CompressionQualityMin: 1, CompressionQualityMax: 100, CompressionQualityStep: 1,
+		CompressionQualityHigherBetter: true, CompressionQualityAttempts: 8, RequireSmaller: true,
+		TargetExtension: "jxl", ExpectedInputSHA256: hex.EncodeToString(digest[:]), ExpectedInputSize: int64(len(input)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Size > 256 || result.Size >= int64(len(input)) {
+		t.Fatalf("adaptive output size=%d, input=%d target=%d", result.Size, len(input), 256)
+	}
+	if result.Size < 20+56*4 || result.Size > 20+58*4 {
+		t.Fatalf("quality search did not retain the best fitting quality: output size=%d", result.Size)
+	}
+}

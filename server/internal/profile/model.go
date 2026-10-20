@@ -73,6 +73,12 @@ type CompressionConfig struct {
 	AudioBitrateKbps int                `json:"audioBitrateKbps,omitempty"`
 	MinimumVideoKbps int                `json:"minimumVideoKbps,omitempty"`
 	RequireSmaller   bool               `json:"requireSmallerOutput,omitempty"`
+	// TargetQualityOption enables a bounded quality search when a target-size
+	// option is selected. The option's range is the search domain; the value
+	// supplied by the user caps the best quality that may be attempted.
+	TargetQualityOption       string `json:"targetQualityOption,omitempty"`
+	TargetQualityHigherBetter bool   `json:"targetQualityHigherIsBetter,omitempty"`
+	TargetSizeAttempts        int    `json:"targetSizeAttempts,omitempty"`
 }
 
 type OptionDefinition struct {
@@ -301,13 +307,18 @@ func (d Definition) ValidateCompression() error {
 	if c.AudioBitrateKbps < 0 || c.AudioBitrateKbps > 512 || c.MinimumVideoKbps < 0 || c.MinimumVideoKbps > 10000 {
 		return fmt.Errorf("compression bitrate settings are invalid")
 	}
+	if c.TargetSizeAttempts == 1 || c.TargetSizeAttempts < 0 || c.TargetSizeAttempts > 12 {
+		return fmt.Errorf("compression target-size attempts must be 0 or between 2 and 12")
+	}
 	seen := map[string]bool{}
 	hasTargetSize := false
+	optionsByKey := make(map[string]OptionDefinition, len(c.Options))
 	for _, option := range c.Options {
 		if !safeOptionKey(option.Key) || strings.TrimSpace(option.Label) == "" || seen[option.Key] {
 			return fmt.Errorf("compression option key and label must be valid and unique")
 		}
 		seen[option.Key] = true
+		optionsByKey[option.Key] = option
 		hasTargetSize = hasTargetSize || option.TargetSizeMB
 		switch option.Type {
 		case "number":
@@ -343,17 +354,30 @@ func (d Definition) ValidateCompression() error {
 		default:
 			return fmt.Errorf("compression option %q uses unsupported type %q", option.Key, option.Type)
 		}
-		if option.TargetSizeMB && (option.Type != "number" || c.ProbeExecutable == "" || c.AudioBitrateKbps == 0 || c.MinimumVideoKbps == 0) {
-			return fmt.Errorf("target-size option %q requires a probe executable and bitrate settings", option.Key)
+		if option.TargetSizeMB && (option.Type != "number" || (c.TargetQualityOption == "" && (c.ProbeExecutable == "" || c.AudioBitrateKbps == 0 || c.MinimumVideoKbps == 0))) {
+			return fmt.Errorf("target-size option %q requires either adaptive quality metadata or a probe executable and bitrate settings", option.Key)
+		}
+	}
+	if c.TargetQualityOption != "" {
+		quality, ok := optionsByKey[c.TargetQualityOption]
+		if !ok || quality.Type != "number" || quality.TargetSizeMB {
+			return fmt.Errorf("target quality option %q must name a numeric non-target-size option", c.TargetQualityOption)
+		}
+		if !hasTargetSize {
+			return fmt.Errorf("target quality option requires a target-size option")
 		}
 	}
 	usesTargetSize := false
+	usesTargetQuality := false
+	usesBitrate := false
 	for _, rule := range d.Rules {
 		if len(rule.CompressionArguments) == 0 {
 			continue
 		}
 		for _, arg := range rule.CompressionArguments {
-			usesTargetSize = usesTargetSize || strings.Contains(arg, "{compression.videoKbps}") || strings.Contains(arg, "{compression.audioKbps}") || strings.Contains(arg, "{compression.bufferKbps}")
+			usesBitrate = usesBitrate || strings.Contains(arg, "{compression.videoKbps}") || strings.Contains(arg, "{compression.audioKbps}") || strings.Contains(arg, "{compression.bufferKbps}")
+			usesTargetSize = usesTargetSize || usesBitrate || strings.Contains(arg, "{compression.quality}")
+			usesTargetQuality = usesTargetQuality || strings.Contains(arg, "{compression.quality}")
 			if strings.HasPrefix(arg, "{option:") && strings.HasSuffix(arg, "}") {
 				key := strings.TrimSuffix(strings.TrimPrefix(arg, "{option:"), "}")
 				if !seen[key] {
@@ -361,7 +385,7 @@ func (d Definition) ValidateCompression() error {
 				}
 			} else {
 				unwrapped := arg
-				for _, token := range []string{"{compression.videoKbps}", "{compression.audioKbps}", "{compression.bufferKbps}"} {
+				for _, token := range []string{"{compression.videoKbps}", "{compression.audioKbps}", "{compression.bufferKbps}", "{compression.quality}"} {
 					unwrapped = strings.ReplaceAll(unwrapped, token, "0")
 				}
 				if strings.ContainsAny(unwrapped, "{}") || strings.ContainsRune(unwrapped, '\x00') {
@@ -375,6 +399,12 @@ func (d Definition) ValidateCompression() error {
 	}
 	if usesTargetSize && !hasTargetSize {
 		return fmt.Errorf("compression target-size placeholders require a target-size option")
+	}
+	if usesTargetQuality != (c.TargetQualityOption != "") {
+		return fmt.Errorf("compression quality placeholder and target quality option must be declared together")
+	}
+	if usesTargetQuality && usesBitrate {
+		return fmt.Errorf("compression quality search cannot be combined with bitrate placeholders")
 	}
 	return nil
 }

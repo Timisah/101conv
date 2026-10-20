@@ -111,6 +111,18 @@ Only after validation should maintainers run `catalog-repo publish`. The publish
 
 Conversion rules may declare `options` using the same bounded `number`, `select`, or `boolean` schema used by compression profiles. `arguments` can contain `{option:key}` placeholders, including inside one argv token; Core validates the declared key and range/choice, expands the value into the immutable execution specification, and the Worker never invokes a shell. Existing profiles without options keep their previous behavior.
 
+Compression profiles may mark one numeric option with `targetSizeMb`. A
+duration-based profile must declare `probeExecutable`, `audioBitrateKbps`, and
+`minimumVideoKbps`; its rules may use the bounded
+`{compression.videoKbps}`, `{compression.audioKbps}`, and
+`{compression.bufferKbps}` placeholders. An image-style profile may instead
+declare `targetQualityOption`, set `targetQualityHigherIsBetter` when larger
+values mean better quality, and use `{compression.quality}`. The Worker then
+performs a bounded quality search and hard-checks the final artifact size.
+`targetSizeAttempts` is capped at twelve and defaults to eight. These controls
+do not promise exact sizes for every codec, and unsupported or infeasible
+targets must fail rather than publish an oversized result.
+
 Declared compatibility is a manifest claim. Verified compatibility is limited to the source/target pairs covered by the exact engine artifact test. An unsupported or unverified pair must not be added to `sources` or `targets`. Metadata option `0` requests converter metadata mapping and `-1` requests removal; it does not promise that output formats can carry every input EXIF field, orientation tag, timestamp, or ICC/color-profile record. Profile descriptions must state format-specific limitations.
 
 The target catalog also ships managed LibreOffice Office-to-PDF and Poppler PDF rendering/text extraction adapters for supported Linux AMD64 deployments. Their small adapter archives are pinned and checked against the exact Worker runtime; they do not imply arbitrary Office fidelity, OCR, editable PDF output, or support on other architectures. Keep the document profiles separate: LibreOffice publishes Office-to-PDF rules, while Poppler publishes PDF page rendering and text extraction rules.

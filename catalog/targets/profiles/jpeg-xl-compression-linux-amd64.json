@@ -11,10 +11,19 @@
     "maximumAppVersionExclusive": "1.0.0",
     "priority": 45,
     "engines": [{"engineId":"jpeg-xl","versions":{"minimum":"0.12.0","maximumExclusive":"1.0.0"},"capabilities":["image.decode","image.encode"]}],
-    "compression": {"options":[{"key":"quality","label":"JPEG XL quality","type":"number","default":"85","min":1,"max":100,"step":1}],"requireSmallerOutput":true},
+    "compression": {
+      "options":[
+        {"key":"quality","label":"JPEG XL quality ceiling","type":"number","default":"85","min":1,"max":100,"step":1},
+        {"key":"targetSizeMb","label":"Maximum output size (MB)","type":"number","default":"8","min":1,"max":200,"step":1,"targetSizeMb":true}
+      ],
+      "targetQualityOption":"quality",
+      "targetQualityHigherIsBetter":true,
+      "targetSizeAttempts":8,
+      "requireSmallerOutput":true
+    },
     "rules": [
-      {"engineId":"jpeg-xl","executable":"cjxl","sources":["jpg","jpeg"],"targets":["jxl"],"arguments":["{source}","--lossless_jpeg=0","{compression.args}","{target}"],"compressionArguments":["-q","{option:quality}"]},
-      {"engineId":"jpeg-xl","executable":"cjxl","sources":["png","apng","gif"],"targets":["jxl"],"arguments":["{source}","{compression.args}","{target}"],"compressionArguments":["-q","{option:quality}"]}
+      {"engineId":"jpeg-xl","executable":"cjxl","sources":["jpg","jpeg"],"targets":["jxl"],"arguments":["{source}","--lossless_jpeg=0","{compression.args}","{target}"],"compressionArguments":["-q","{compression.quality}"]},
+      {"engineId":"jpeg-xl","executable":"cjxl","sources":["png","apng","gif"],"targets":["jxl"],"arguments":["{source}","{compression.args}","{target}"],"compressionArguments":["-q","{compression.quality}"]}
     ]
   }
 }

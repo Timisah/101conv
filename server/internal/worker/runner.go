@@ -31,23 +31,28 @@ const (
 var safeSegment = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
 
 type Invocation struct {
-	JobID                       string
-	Attempt                     int
-	InputID                     string
-	EngineID                    string
-	EngineVersion               string
-	ExecutableRelativePath      string
-	Arguments                   []string
-	CompressionArguments        []string
-	TargetSizeBytes             int64
-	ProbeExecutableRelativePath string
-	AudioBitrateKbps            int
-	MinimumVideoKbps            int
-	RequireSmaller              bool
-	TargetExtension             string
-	SourceExtension             string
-	ExpectedInputSHA256         string
-	ExpectedInputSize           int64
+	JobID                          string
+	Attempt                        int
+	InputID                        string
+	EngineID                       string
+	EngineVersion                  string
+	ExecutableRelativePath         string
+	Arguments                      []string
+	CompressionArguments           []string
+	TargetSizeBytes                int64
+	ProbeExecutableRelativePath    string
+	AudioBitrateKbps               int
+	MinimumVideoKbps               int
+	RequireSmaller                 bool
+	CompressionQualityMin          float64
+	CompressionQualityMax          float64
+	CompressionQualityStep         float64
+	CompressionQualityHigherBetter bool
+	CompressionQualityAttempts     int
+	TargetExtension                string
+	SourceExtension                string
+	ExpectedInputSHA256            string
+	ExpectedInputSize              int64
 }
 
 type Result struct {
@@ -78,8 +83,12 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	if !safeExtension(in.TargetExtension) || !safeRelative(in.ExecutableRelativePath) || len(in.Arguments) == 0 || len(in.Arguments) > 128 || len(in.CompressionArguments) > 64 {
 		return Result{}, fmt.Errorf("invalid worker invocation definition")
 	}
-	if in.TargetSizeBytes > 0 && (!safeRelative(in.ProbeExecutableRelativePath) || in.AudioBitrateKbps < 1 || in.MinimumVideoKbps < 1) {
+	adaptiveQuality := in.TargetSizeBytes > 0 && in.CompressionQualityStep > 0
+	if in.TargetSizeBytes > 0 && !adaptiveQuality && (!safeRelative(in.ProbeExecutableRelativePath) || in.AudioBitrateKbps < 1 || in.MinimumVideoKbps < 1) {
 		return Result{}, fmt.Errorf("invalid compression target-size settings")
+	}
+	if adaptiveQuality && (math.IsNaN(in.CompressionQualityMin) || math.IsNaN(in.CompressionQualityMax) || math.IsNaN(in.CompressionQualityStep) || math.IsInf(in.CompressionQualityMin, 0) || math.IsInf(in.CompressionQualityMax, 0) || math.IsInf(in.CompressionQualityStep, 0) || in.CompressionQualityMin > in.CompressionQualityMax || in.CompressionQualityStep <= 0) {
+		return Result{}, fmt.Errorf("invalid adaptive compression quality settings")
 	}
 	engineRoot, err := filepath.EvalSymlinks(r.EngineRoot)
 	if err != nil {
@@ -140,36 +149,13 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 			retErr = errors.Join(retErr, fmt.Errorf("remove attempt workspace: %w", cleanupErr))
 		}
 	}()
-	outputPath := filepath.Join(work, "output."+in.TargetExtension)
 	compressionArgs, err := resolveCompressionArguments(parent, engineRoot, work, inputPath, in)
 	if err != nil {
 		return Result{}, err
 	}
-	args := make([]string, 0, len(in.Arguments)+len(compressionArgs))
-	seenSource, seenTarget, seenCompressionSlot := false, false, false
-	for _, arg := range in.Arguments {
-		switch arg {
-		case "{source}":
-			args = append(args, inputPath)
-			seenSource = true
-		case "{target}":
-			args = append(args, outputPath)
-			seenTarget = true
-		case "{compression.args}":
-			args = append(args, compressionArgs...)
-			seenCompressionSlot = true
-		default:
-			if strings.ContainsAny(arg, "{}") || strings.ContainsRune(arg, '\x00') {
-				return Result{}, fmt.Errorf("unsafe converter argument")
-			}
-			args = append(args, arg)
-		}
-	}
-	if !seenSource || !seenTarget {
-		return Result{}, fmt.Errorf("converter arguments must include source and target placeholders")
-	}
-	if len(in.CompressionArguments) > 0 && !seenCompressionSlot {
-		return Result{}, fmt.Errorf("compression arguments require a {compression.args} marker")
+	maxOutput := r.MaxOutput
+	if maxOutput <= 0 {
+		maxOutput = DefaultMaxOutput
 	}
 	timeout := r.Timeout
 	if timeout <= 0 {
@@ -177,67 +163,199 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, executable, args...)
-	cmd.Dir = work
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work, "LANG=C.UTF-8"}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
+	type candidate struct {
+		path           string
+		size           int64
+		exitCode       int
+		stdout, stderr string
+	}
+	buildArguments := func(outputPath, quality string) ([]string, error) {
+		args := make([]string, 0, len(in.Arguments)+len(compressionArgs))
+		seenSource, seenTarget, seenCompressionSlot := false, false, false
+		appendArgument := func(arg string) error {
+			if strings.Contains(arg, "{compression.quality}") {
+				if quality == "" {
+					return fmt.Errorf("adaptive compression quality was not resolved")
+				}
+				arg = strings.ReplaceAll(arg, "{compression.quality}", quality)
+			}
+			if strings.ContainsAny(arg, "{}") || strings.ContainsRune(arg, '\x00') {
+				return fmt.Errorf("unsafe converter argument")
+			}
+			args = append(args, arg)
 			return nil
 		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		if errors.Is(err, syscall.ESRCH) {
-			return nil
+		for _, arg := range in.Arguments {
+			switch arg {
+			case "{source}":
+				args = append(args, inputPath)
+				seenSource = true
+			case "{target}":
+				args = append(args, outputPath)
+				seenTarget = true
+			case "{compression.args}":
+				for _, compressionArg := range compressionArgs {
+					if err := appendArgument(compressionArg); err != nil {
+						return nil, err
+					}
+				}
+				seenCompressionSlot = true
+			default:
+				if err := appendArgument(arg); err != nil {
+					return nil, err
+				}
+			}
 		}
-		return err
-	}
-	cmd.WaitDelay = 2 * time.Second
-	stdout, stderr := &boundedBuffer{}, &boundedBuffer{}
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	runErr := cmd.Run()
-	exitCode := 0
-	if runErr != nil {
-		if ctx.Err() != nil {
-			return Result{Stdout: stdout.String(), Stderr: stderr.String()}, ctx.Err()
+		if !seenSource || !seenTarget {
+			return nil, fmt.Errorf("converter arguments must include source and target placeholders")
 		}
-		var exit *exec.ExitError
-		if errors.As(runErr, &exit) {
-			exitCode = exit.ExitCode()
-		} else {
-			return Result{Stdout: stdout.String(), Stderr: stderr.String()}, runErr
+		if len(in.CompressionArguments) > 0 && !seenCompressionSlot {
+			return nil, fmt.Errorf("compression arguments require a {compression.args} marker")
 		}
-		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("converter exited with code %d: %w", exitCode, runErr)
+		return args, nil
 	}
-	outputInfo, err := os.Lstat(outputPath)
-	if err != nil {
-		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("converter produced no output: %w", err)
+	runConverter := func(outputPath, quality string) (candidate, error) {
+		args, buildErr := buildArguments(outputPath, quality)
+		if buildErr != nil {
+			return candidate{}, buildErr
+		}
+		cmd := exec.CommandContext(ctx, executable, args...)
+		cmd.Dir = work
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work, "LANG=C.UTF-8"}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return nil
+			}
+			killErr := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if errors.Is(killErr, syscall.ESRCH) {
+				return nil
+			}
+			return killErr
+		}
+		cmd.WaitDelay = 2 * time.Second
+		stdout, stderr := &boundedBuffer{}, &boundedBuffer{}
+		cmd.Stdout, cmd.Stderr = stdout, stderr
+		if runErr := cmd.Run(); runErr != nil {
+			if ctx.Err() != nil {
+				return candidate{stdout: stdout.String(), stderr: stderr.String()}, ctx.Err()
+			}
+			var exit *exec.ExitError
+			if errors.As(runErr, &exit) {
+				return candidate{exitCode: exit.ExitCode(), stdout: stdout.String(), stderr: stderr.String()}, fmt.Errorf("converter exited with code %d: %w", exit.ExitCode(), runErr)
+			}
+			return candidate{stdout: stdout.String(), stderr: stderr.String()}, runErr
+		}
+		outputInfo, statErr := os.Lstat(outputPath)
+		if statErr != nil {
+			return candidate{stdout: stdout.String(), stderr: stderr.String()}, fmt.Errorf("converter produced no output: %w", statErr)
+		}
+		if !outputInfo.Mode().IsRegular() || outputInfo.Mode()&os.ModeSymlink != 0 || outputInfo.Size() <= 0 || outputInfo.Size() > maxOutput {
+			return candidate{stdout: stdout.String(), stderr: stderr.String()}, fmt.Errorf("converter output failed type or size validation")
+		}
+		if signatureErr := validateImageSignature(outputPath, in.TargetExtension); signatureErr != nil {
+			return candidate{exitCode: 0, stdout: stdout.String(), stderr: stderr.String()}, signatureErr
+		}
+		return candidate{path: outputPath, size: outputInfo.Size(), stdout: stdout.String(), stderr: stderr.String()}, nil
 	}
-	maxOutput := r.MaxOutput
-	if maxOutput <= 0 {
-		maxOutput = DefaultMaxOutput
+
+	selectedTarget := in.TargetSizeBytes
+	if in.RequireSmaller && selectedTarget > inputInfo.Size() {
+		selectedTarget = inputInfo.Size()
 	}
-	if !outputInfo.Mode().IsRegular() || outputInfo.Mode()&os.ModeSymlink != 0 || outputInfo.Size() <= 0 || outputInfo.Size() > maxOutput {
-		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("converter output failed type or size validation")
+	selected := candidate{}
+	if adaptiveQuality {
+		difference := in.CompressionQualityMax - in.CompressionQualityMin
+		qualityCount := int(math.Floor(difference/in.CompressionQualityStep+1e-9)) + 1
+		if math.Abs(float64(qualityCount-1)*in.CompressionQualityStep-difference) > 1e-9 {
+			qualityCount++
+		}
+		if qualityCount < 1 || qualityCount > 100000 {
+			return Result{}, fmt.Errorf("adaptive compression quality range is too large")
+		}
+		qualityAt := func(index int) float64 {
+			if index >= qualityCount-1 {
+				if in.CompressionQualityHigherBetter {
+					return in.CompressionQualityMin
+				}
+				return in.CompressionQualityMax
+			}
+			if in.CompressionQualityHigherBetter {
+				return in.CompressionQualityMax - float64(index)*in.CompressionQualityStep
+			}
+			return in.CompressionQualityMin + float64(index)*in.CompressionQualityStep
+		}
+		tryQuality := func(index, attempt int) (candidate, error) {
+			path := filepath.Join(work, fmt.Sprintf("candidate-%02d.%s", attempt, in.TargetExtension))
+			return runConverter(path, strconv.FormatFloat(qualityAt(index), 'f', -1, 64))
+		}
+		attemptLimit := in.CompressionQualityAttempts
+		if attemptLimit <= 0 {
+			attemptLimit = 8
+		}
+		if attemptLimit < 2 {
+			attemptLimit = 2
+		}
+		if attemptLimit > 12 {
+			attemptLimit = 12
+		}
+		attempts := 0
+		selected, err = tryQuality(0, attempts)
+		attempts++
+		if err != nil {
+			return Result{Stdout: selected.stdout, Stderr: selected.stderr}, err
+		}
+		if selected.size > selectedTarget {
+			worstIndex := qualityCount - 1
+			if worstIndex == 0 {
+				return Result{Stdout: selected.stdout, Stderr: selected.stderr}, fmt.Errorf("no quality setting produced an output within the requested target size")
+			}
+			worst, worstErr := tryQuality(worstIndex, attempts)
+			attempts++
+			if worstErr != nil {
+				return Result{Stdout: worst.stdout, Stderr: worst.stderr}, worstErr
+			}
+			if worst.size > selectedTarget {
+				return Result{Stdout: worst.stdout, Stderr: worst.stderr}, fmt.Errorf("no quality setting produced an output within the requested target size")
+			}
+			selected = worst
+			low, high := 1, worstIndex-1
+			for low <= high && attempts < attemptLimit {
+				middle := low + (high-low)/2
+				trial, trialErr := tryQuality(middle, attempts)
+				attempts++
+				if trialErr != nil {
+					return Result{Stdout: trial.stdout, Stderr: trial.stderr}, trialErr
+				}
+				if trial.size <= selectedTarget {
+					selected = trial
+					high = middle - 1
+				} else {
+					low = middle + 1
+				}
+			}
+		}
+	} else {
+		selected, err = runConverter(filepath.Join(work, "output."+in.TargetExtension), "")
+		if err != nil {
+			return Result{Stdout: selected.stdout, Stderr: selected.stderr}, err
+		}
+		if in.TargetSizeBytes > 0 && selected.size > selectedTarget {
+			return Result{ExitCode: selected.exitCode, Stdout: selected.stdout, Stderr: selected.stderr}, fmt.Errorf("converter output exceeded the requested target size")
+		}
 	}
-	if err = validateImageSignature(outputPath, in.TargetExtension); err != nil {
-		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, err
-	}
-	if in.TargetSizeBytes > 0 && outputInfo.Size() > in.TargetSizeBytes {
-		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("converter output exceeded the requested target size")
-	}
-	if in.RequireSmaller && outputInfo.Size() >= inputInfo.Size() {
-		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("compression did not reduce the input size")
+	if in.RequireSmaller && selected.size >= inputInfo.Size() {
+		return Result{ExitCode: selected.exitCode, Stdout: selected.stdout, Stderr: selected.stderr}, fmt.Errorf("compression did not reduce the input size")
 	}
 	resultKey := fmt.Sprintf("%s-%d.bin", in.JobID, in.Attempt)
 	resultPath := filepath.Join(r.ResultRoot, resultKey)
 	if err = os.MkdirAll(r.ResultRoot, 0700); err != nil {
 		return Result{}, err
 	}
-	if err = copyAtomic(outputPath, resultPath, maxOutput); err != nil {
+	if err = copyAtomic(selected.path, resultPath, maxOutput); err != nil {
 		return Result{}, err
 	}
-	return Result{ResultKey: resultKey, Size: outputInfo.Size(), ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, nil
+	return Result{ResultKey: resultKey, Size: selected.size, ExitCode: selected.exitCode, Stdout: selected.stdout, Stderr: selected.stderr}, nil
 }
 
 // validateImageSignature catches a converter that exits successfully after
@@ -249,7 +367,7 @@ func validateImageSignature(path, extension string) error {
 	if extension == "pdf" {
 		return validatePDFSignature(path)
 	}
-	known := map[string]bool{"jpg": true, "jpeg": true, "png": true, "webp": true, "tif": true, "tiff": true, "bmp": true, "gif": true, "avif": true}
+	known := map[string]bool{"jpg": true, "jpeg": true, "png": true, "webp": true, "tif": true, "tiff": true, "bmp": true, "gif": true, "avif": true, "jxl": true}
 	if !known[extension] {
 		return nil
 	}
@@ -278,6 +396,8 @@ func validateImageSignature(path, extension string) error {
 		valid = string(header[:6]) == "GIF87a" || string(header[:6]) == "GIF89a"
 	case "avif":
 		valid = string(header[4:8]) == "ftyp" && (string(header[8:12]) == "avif" || string(header[8:12]) == "avis")
+	case "jxl":
+		valid = (header[0] == 0xff && header[1] == 0x0a) || (string(header) == "\x00\x00\x00\x0cJXL \r\n\x87\n")
 	}
 	if !valid {
 		return fmt.Errorf("converter output failed %s image signature validation", extension)
@@ -321,7 +441,7 @@ func resolveCompressionArguments(parent context.Context, engineRoot, work, input
 		return nil, nil
 	}
 	values := map[string]string{}
-	if in.TargetSizeBytes > 0 {
+	if in.TargetSizeBytes > 0 && in.CompressionQualityStep <= 0 {
 		executable := filepath.Join(engineRoot, in.EngineID, in.EngineVersion, filepath.FromSlash(in.ProbeExecutableRelativePath))
 		if err := rejectSymlinkPath(engineRoot, executable); err != nil {
 			return nil, fmt.Errorf("resolve media probe: %w", err)
@@ -391,7 +511,7 @@ func resolveCompressionArguments(parent context.Context, engineRoot, work, input
 				arg = strings.ReplaceAll(arg, token, value)
 			}
 		}
-		if strings.ContainsAny(arg, "{}") {
+		if strings.ContainsAny(strings.ReplaceAll(arg, "{compression.quality}", "0"), "{}") {
 			return nil, fmt.Errorf("compression argument requires a target-size setting")
 		}
 		result[i] = arg

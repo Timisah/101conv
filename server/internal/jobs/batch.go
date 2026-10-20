@@ -14,9 +14,10 @@ import (
 const MaxBatchItems = 100
 
 type BatchRequest struct {
-	Mode           string             `json:"mode"`
-	IdempotencyKey string             `json:"idempotencyKey"`
-	Items          []BatchItemRequest `json:"items"`
+	Mode                 string             `json:"mode"`
+	IdempotencyKey       string             `json:"idempotencyKey"`
+	CombinedTargetSizeMB int64              `json:"combinedTargetSizeMb,omitempty"`
+	Items                []BatchItemRequest `json:"items"`
 }
 
 type BatchItemRequest struct {
@@ -299,6 +300,9 @@ func (s *Service) CreateBatch(ctx context.Context, req BatchRequest, ownerID str
 	if req.Mode != "convert" && req.Mode != "compress" || !idempotencyRE.MatchString(req.IdempotencyKey) || len(req.Items) < 1 || len(req.Items) > MaxBatchItems {
 		return Batch{}, false, fmt.Errorf("%w: batch mode, idempotency key, or item count is invalid", ErrInvalidInput)
 	}
+	if req.CombinedTargetSizeMB < 0 || req.CombinedTargetSizeMB > maxCombinedTargetSizeMB || (req.CombinedTargetSizeMB > 0 && req.Mode != "compress") {
+		return Batch{}, false, fmt.Errorf("%w: combinedTargetSizeMb must be between 1 and %d for compression batches", ErrInvalidInput, maxCombinedTargetSizeMB)
+	}
 	if limits.Guest && limits.MaxBatchFiles > 0 && len(req.Items) > limits.MaxBatchFiles {
 		return Batch{}, false, ErrGuestCapacity
 	}
@@ -321,6 +325,26 @@ func (s *Service) CreateBatch(ctx context.Context, req BatchRequest, ownerID str
 	}
 	digest := sha256.Sum256(body)
 	hash := fmt.Sprintf("%x", digest[:])
+	var existingID, existingHash string
+	err = s.db.QueryRowContext(ctx, `SELECT id,request_hash FROM conv_batches WHERE owner_id=$1 AND idempotency_key=$2`, ownerID, req.IdempotencyKey).Scan(&existingID, &existingHash)
+	if err == nil {
+		if existingHash != hash {
+			return Batch{}, false, fmt.Errorf("%w: idempotency key was already used for a different batch", ErrConflict)
+		}
+		if err = s.resumeBatch(ctx, existingID, ownerID, limits); err != nil {
+			return Batch{}, true, err
+		}
+		batch, getErr := s.GetBatch(ctx, existingID, ownerID, limits)
+		return batch, true, getErr
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Batch{}, false, err
+	}
+	if req.CombinedTargetSizeMB > 0 {
+		if err := s.applyCombinedCompressionBudget(ctx, &req, ownerID); err != nil {
+			return Batch{}, false, err
+		}
+	}
 	id, err := randomID()
 	if err != nil {
 		return Batch{}, false, err
@@ -344,7 +368,6 @@ func (s *Service) CreateBatch(ctx context.Context, req BatchRequest, ownerID str
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, ownerID); err != nil {
 		return Batch{}, false, err
 	}
-	var existingID, existingHash string
 	err = tx.QueryRowContext(ctx, `SELECT id,request_hash FROM conv_batches WHERE owner_id=$1 AND idempotency_key=$2`, ownerID, req.IdempotencyKey).Scan(&existingID, &existingHash)
 	if err == nil {
 		if existingHash != hash {

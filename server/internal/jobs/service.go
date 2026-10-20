@@ -896,6 +896,9 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	var targetSizeBytes int64
 	var probeRelative string
 	var audioBitrateKbps, minimumVideoKbps int
+	var qualityMin, qualityMax, qualityStep float64
+	var qualityHigherBetter bool
+	var qualityAttempts int
 	optionValues := map[string]string{}
 	if mode == "compress" {
 		if profileDef.Compression == nil || len(rule.CompressionArguments) == 0 {
@@ -912,10 +915,32 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		}
 		if targetSizeBytes > 0 {
 			probeRelative = engineDef.Executables[profileDef.Compression.ProbeExecutable]
-			if !safeExecutableRelative(probeRelative) {
+			if profileDef.Compression.TargetQualityOption == "" && !safeExecutableRelative(probeRelative) {
 				return Job{}, false, fmt.Errorf("%w: compression probe executable is unavailable", ErrUnsupported)
 			}
 			audioBitrateKbps, minimumVideoKbps = profileDef.Compression.AudioBitrateKbps, profileDef.Compression.MinimumVideoKbps
+			if qualityKey := profileDef.Compression.TargetQualityOption; qualityKey != "" {
+				var quality profile.OptionDefinition
+				for _, candidate := range profileDef.Compression.Options {
+					if candidate.Key == qualityKey {
+						quality = candidate
+						break
+					}
+				}
+				if quality.Min == nil || quality.Max == nil || quality.Step == nil || *quality.Step <= 0 {
+					return Job{}, false, fmt.Errorf("%w: compression target quality metadata is invalid", ErrUnsupported)
+				}
+				qualityMin, qualityMax, qualityStep = *quality.Min, *quality.Max, *quality.Step
+				qualityHigherBetter = profileDef.Compression.TargetQualityHigherBetter
+				if selected, parseErr := strconv.ParseFloat(optionValues[qualityKey], 64); parseErr == nil {
+					if qualityHigherBetter {
+						qualityMax = selected
+					} else {
+						qualityMin = selected
+					}
+				}
+				qualityAttempts = profileDef.Compression.TargetSizeAttempts
+			}
 		}
 	}
 	if mode == "convert" {
@@ -938,7 +963,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			return Job{}, false, err
 		}
 	}
-	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && profileDef.Compression != nil && profileDef.Compression.RequireSmaller}
+	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && profileDef.Compression != nil && profileDef.Compression.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts}
 	specBytes, err := json.Marshal(spec)
 	if err != nil {
 		return Job{}, false, err
@@ -1233,7 +1258,7 @@ func expandCompressionOptions(arguments []string, values map[string]string) ([]s
 			continue
 		}
 		unwrapped := arg
-		for _, token := range []string{"{compression.videoKbps}", "{compression.audioKbps}", "{compression.bufferKbps}"} {
+		for _, token := range []string{"{compression.videoKbps}", "{compression.audioKbps}", "{compression.bufferKbps}", "{compression.quality}"} {
 			unwrapped = strings.ReplaceAll(unwrapped, token, "0")
 		}
 		if strings.ContainsAny(unwrapped, "{}") {

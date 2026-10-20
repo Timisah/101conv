@@ -91,19 +91,24 @@ type PreferenceMapping struct {
 }
 
 type ExecutionSpec struct {
-	EngineID                    string   `json:"engineId"`
-	EngineVersion               string   `json:"engineVersion"`
-	ExecutableName              string   `json:"executableName"`
-	ExecutableRelativePath      string   `json:"executableRelativePath"`
-	Arguments                   []string `json:"arguments"`
-	SourceExtension             string   `json:"sourceExtension"`
-	TargetExtension             string   `json:"targetExtension"`
-	CompressionArguments        []string `json:"compressionArguments,omitempty"`
-	TargetSizeBytes             int64    `json:"targetSizeBytes,omitempty"`
-	ProbeExecutableRelativePath string   `json:"probeExecutableRelativePath,omitempty"`
-	AudioBitrateKbps            int      `json:"audioBitrateKbps,omitempty"`
-	MinimumVideoKbps            int      `json:"minimumVideoKbps,omitempty"`
-	RequireSmaller              bool     `json:"requireSmallerOutput,omitempty"`
+	EngineID                       string   `json:"engineId"`
+	EngineVersion                  string   `json:"engineVersion"`
+	ExecutableName                 string   `json:"executableName"`
+	ExecutableRelativePath         string   `json:"executableRelativePath"`
+	Arguments                      []string `json:"arguments"`
+	SourceExtension                string   `json:"sourceExtension"`
+	TargetExtension                string   `json:"targetExtension"`
+	CompressionArguments           []string `json:"compressionArguments,omitempty"`
+	TargetSizeBytes                int64    `json:"targetSizeBytes,omitempty"`
+	ProbeExecutableRelativePath    string   `json:"probeExecutableRelativePath,omitempty"`
+	AudioBitrateKbps               int      `json:"audioBitrateKbps,omitempty"`
+	MinimumVideoKbps               int      `json:"minimumVideoKbps,omitempty"`
+	RequireSmaller                 bool     `json:"requireSmallerOutput,omitempty"`
+	CompressionQualityMin          float64  `json:"compressionQualityMin,omitempty"`
+	CompressionQualityMax          float64  `json:"compressionQualityMax,omitempty"`
+	CompressionQualityStep         float64  `json:"compressionQualityStep,omitempty"`
+	CompressionQualityHigherBetter bool     `json:"compressionQualityHigherIsBetter,omitempty"`
+	CompressionQualityAttempts     int      `json:"compressionQualityAttempts,omitempty"`
 }
 
 type JobDetail struct {

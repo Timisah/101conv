@@ -63,6 +63,31 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 - Versioned extension installation/compatibility/rollback and Immich connector.
 - New brand/logo, static public pages/SEO and rate-limited public demo.
 
+## P2 progress in the current worktree (not deployment evidence)
+
+The first P2 increment is implemented and source-verified in this worktree:
+
+- Compression profiles can declare a numeric target-size option plus an
+  adaptive quality option. Core freezes the quality range and attempt bound in
+  the immutable execution specification.
+- The Worker performs a bounded quality search, validates each candidate's
+  type/signature/size, and refuses to publish an oversized or infeasible result.
+  JPEG XL compression is the first official catalog consumer; the existing
+  duration/bitrate video target-size path remains separate.
+- The UI describes adaptive quality target sizing correctly, and tests cover a
+  real FFmpeg media target, deterministic adaptive-quality behavior, catalog
+  manifest validation, and the frontend typecheck/build.
+- Compression batches can now declare `combinedTargetSizeMb`. Core resolves
+  compatible profiles and freezes proportional per-file target allocations in
+  the durable batch item requests, with hard minimum-budget rejection and
+  best-effort handling when profile maxima are lower than the requested cap.
+
+Evidence: `server/internal/worker/runner.go`,
+`catalog/targets/profiles/jpeg-xl-compression-linux-amd64.json`,
+`docs/architecture/compression-p2.md`, and the focused/full package test runs
+performed in this worktree. Shared file analysis, stream selection, and
+HDR-preserving video re-encoding remain open P2 work.
+
 ## Immediate implementation queue
 
 **Next:** obtain remote CI evidence, tighten the Worker compatibility grants after schema review, and execute the owner-controlled trust-root ceremony when release ownership is ready. Keep the deployment classified as trusted single tenant/small team until those gates and the public-demo threat model are accepted.
