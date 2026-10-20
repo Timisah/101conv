@@ -3,9 +3,9 @@
     "schemaVersion": 1,
     "type": "conversion",
     "id": "ffmpeg-image-linux-amd64",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "name": "FFmpeg Image Conversion",
-    "description": "Common raster image conversion through the pinned LGPL FFmpeg build. AVIF support depends on the capabilities compiled into that release.",
+    "description": "Verified raster image conversion through the pinned LGPL FFmpeg build. Still-image targets take the first frame; WebP and GIF preserve animation. AVIF is encoded as a single still image.",
     "license": "LGPL-2.1-or-later for FFmpeg; bundled dependencies have separate terms. See the upstream license notices.",
     "minimumAppVersion": "0.0.1",
     "maximumAppVersionExclusive": "0.2.0",
@@ -16,15 +16,95 @@
         "engineId":"ffmpeg",
         "executable":"ffmpeg",
         "sources":["jpg","jpeg","png","webp","tif","tiff","bmp","gif","avif"],
-        "targets":["jpg","jpeg","png","webp","tif","tiff","bmp","gif","avif"],
-        "arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","-map_metadata","{option:metadata}","-vf","scale={option:width}:{option:height}:force_original_aspect_ratio={option:preserveAspect}","-q:v","{option:quality}","-compression_level","{option:compressionLevel}","{target}"],
+        "targets":["jpg","jpeg"],
+        "arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","-map_metadata","{option:metadata}","-vf","scale={option:width}:{option:height}:force_original_aspect_ratio={option:preserveAspect}","-frames:v","1","-c:v","mjpeg","-q:v","{option:quality}","{target}"],
         "options":[
-          {"key":"width","label":"Resize width (px)","type":"number","default":"0","min":0,"max":10000,"step":1},
-          {"key":"height","label":"Resize height (px)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"width","label":"Resize width (px; 0 keeps source width)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"height","label":"Resize height (px; 0 keeps source height)","type":"number","default":"0","min":0,"max":10000,"step":1},
           {"key":"preserveAspect","label":"Aspect ratio","type":"select","default":"decrease","choices":["decrease","disable"]},
-          {"key":"quality","label":"Quality (FFmpeg scale)","type":"number","default":"3","min":2,"max":31,"step":1},
-          {"key":"compressionLevel","label":"Compression level","type":"number","default":"6","min":0,"max":9,"step":1},
-          {"key":"metadata","label":"Metadata","type":"select","default":"0","choices":["0","-1"]}
+          {"key":"quality","label":"JPEG quality (lower number is better)","type":"number","default":"3","min":2,"max":31,"step":1},
+          {"key":"metadata","label":"Metadata mapping (0 preserves; -1 strips)","type":"select","default":"0","choices":["0","-1"]}
+        ]
+      },
+      {
+        "engineId":"ffmpeg",
+        "executable":"ffmpeg",
+        "sources":["jpg","jpeg","png","webp","tif","tiff","bmp","gif","avif"],
+        "targets":["png"],
+        "arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","-map_metadata","{option:metadata}","-vf","scale={option:width}:{option:height}:force_original_aspect_ratio={option:preserveAspect}","-frames:v","1","-c:v","png","-compression_level","{option:compressionLevel}","{target}"],
+        "options":[
+          {"key":"width","label":"Resize width (px; 0 keeps source width)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"height","label":"Resize height (px; 0 keeps source height)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"preserveAspect","label":"Aspect ratio","type":"select","default":"decrease","choices":["decrease","disable"]},
+          {"key":"compressionLevel","label":"PNG compression level (0 fastest; 9 smallest)","type":"number","default":"6","min":0,"max":9,"step":1},
+          {"key":"metadata","label":"Metadata mapping (0 preserves; -1 strips)","type":"select","default":"0","choices":["0","-1"]}
+        ]
+      },
+      {
+        "engineId":"ffmpeg",
+        "executable":"ffmpeg",
+        "sources":["jpg","jpeg","png","webp","tif","tiff","bmp","gif","avif"],
+        "targets":["webp"],
+        "arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","-map_metadata","{option:metadata}","-vf","scale={option:width}:{option:height}:force_original_aspect_ratio={option:preserveAspect}","-c:v","libwebp","-quality","{option:quality}","{target}"],
+        "options":[
+          {"key":"width","label":"Resize width (px; 0 keeps source width)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"height","label":"Resize height (px; 0 keeps source height)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"preserveAspect","label":"Aspect ratio","type":"select","default":"decrease","choices":["decrease","disable"]},
+          {"key":"quality","label":"WebP quality (0–100; higher is better)","type":"number","default":"75","min":0,"max":100,"step":1},
+          {"key":"metadata","label":"Metadata mapping (0 preserves; -1 strips)","type":"select","default":"0","choices":["0","-1"]}
+        ]
+      },
+      {
+        "engineId":"ffmpeg",
+        "executable":"ffmpeg",
+        "sources":["jpg","jpeg","png","webp","tif","tiff","bmp","gif","avif"],
+        "targets":["tif","tiff"],
+        "arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","-map_metadata","{option:metadata}","-vf","scale={option:width}:{option:height}:force_original_aspect_ratio={option:preserveAspect}","-frames:v","1","-c:v","tiff","{target}"],
+        "options":[
+          {"key":"width","label":"Resize width (px; 0 keeps source width)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"height","label":"Resize height (px; 0 keeps source height)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"preserveAspect","label":"Aspect ratio","type":"select","default":"decrease","choices":["decrease","disable"]},
+          {"key":"metadata","label":"Metadata mapping (0 preserves; -1 strips)","type":"select","default":"0","choices":["0","-1"]}
+        ]
+      },
+      {
+        "engineId":"ffmpeg",
+        "executable":"ffmpeg",
+        "sources":["jpg","jpeg","png","webp","tif","tiff","bmp","gif","avif"],
+        "targets":["bmp"],
+        "arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","-map_metadata","{option:metadata}","-vf","scale={option:width}:{option:height}:force_original_aspect_ratio={option:preserveAspect}","-frames:v","1","-c:v","bmp","{target}"],
+        "options":[
+          {"key":"width","label":"Resize width (px; 0 keeps source width)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"height","label":"Resize height (px; 0 keeps source height)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"preserveAspect","label":"Aspect ratio","type":"select","default":"decrease","choices":["decrease","disable"]},
+          {"key":"metadata","label":"Metadata mapping (0 preserves; -1 strips)","type":"select","default":"0","choices":["0","-1"]}
+        ]
+      },
+      {
+        "engineId":"ffmpeg",
+        "executable":"ffmpeg",
+        "sources":["jpg","jpeg","png","webp","tif","tiff","bmp","gif","avif"],
+        "targets":["gif"],
+        "arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","-map_metadata","{option:metadata}","-vf","scale={option:width}:{option:height}:force_original_aspect_ratio={option:preserveAspect}","-c:v","gif","{target}"],
+        "options":[
+          {"key":"width","label":"Resize width (px; 0 keeps source width)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"height","label":"Resize height (px; 0 keeps source height)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"preserveAspect","label":"Aspect ratio","type":"select","default":"decrease","choices":["decrease","disable"]},
+          {"key":"metadata","label":"Metadata mapping (0 preserves; -1 strips)","type":"select","default":"0","choices":["0","-1"]}
+        ]
+      },
+      {
+        "engineId":"ffmpeg",
+        "executable":"ffmpeg",
+        "sources":["jpg","jpeg","png","webp","tif","tiff","bmp","gif","avif"],
+        "targets":["avif"],
+        "arguments":["-hide_banner","-loglevel","error","-nostdin","-y","-i","{source}","-map_metadata","{option:metadata}","-vf","scale={option:width}:{option:height}:force_original_aspect_ratio={option:preserveAspect}","-frames:v","1","-c:v","libaom-av1","-crf","{option:quality}","-b:v","0","-still-picture","1","{target}"],
+        "options":[
+          {"key":"width","label":"Resize width (px; 0 keeps source width)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"height","label":"Resize height (px; 0 keeps source height)","type":"number","default":"0","min":0,"max":10000,"step":1},
+          {"key":"preserveAspect","label":"Aspect ratio","type":"select","default":"decrease","choices":["decrease","disable"]},
+          {"key":"quality","label":"AV1 quality / CRF (0–63; lower is better)","type":"number","default":"30","min":0,"max":63,"step":1},
+          {"key":"metadata","label":"Metadata mapping (0 preserves; -1 strips)","type":"select","default":"0","choices":["0","-1"]}
         ]
       }
     ]

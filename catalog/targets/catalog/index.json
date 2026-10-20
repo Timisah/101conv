@@ -8,7 +8,7 @@
   ],
   "profiles": [
     {"id":"ffmpeg-linux-amd64","version":"1.2.0","name":"FFmpeg Audio/Video Conversion","manifestTarget":"profiles/ffmpeg-linux-amd64.json"},
-    {"id":"ffmpeg-image-linux-amd64","version":"1.0.0","name":"FFmpeg Image Conversion","manifestTarget":"profiles/ffmpeg-image-linux-amd64.json"},
+    {"id":"ffmpeg-image-linux-amd64","version":"1.1.0","name":"FFmpeg Image Conversion","manifestTarget":"profiles/ffmpeg-image-linux-amd64.json"},
     {"id":"jpeg-xl-linux-amd64","version":"1.2.0","name":"JPEG XL Image Conversion","manifestTarget":"profiles/jpeg-xl-linux-amd64.json"},
     {"id":"ffmpeg-compression-linux-amd64","version":"1.0.0","name":"FFmpeg Audio/Video Compression","manifestTarget":"profiles/ffmpeg-compression-linux-amd64.json"},
     {"id":"jpeg-xl-compression-linux-amd64","version":"1.0.0","name":"JPEG XL Image Compression","manifestTarget":"profiles/jpeg-xl-compression-linux-amd64.json"}

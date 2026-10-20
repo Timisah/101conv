@@ -101,6 +101,21 @@ jobs:
         working-directory: web
         run: npm run build
 
+  ffmpeg-image-verification:
+    name: Pinned FFmpeg image compatibility matrix
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache verified FFmpeg archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/101conv-ffmpeg-cache
+          key: ffmpeg-image-${{ hashFiles('catalog/targets/engines/ffmpeg-linux-amd64.json') }}
+      - name: Verify the pinned image matrix
+        env:
+          FFMPEG_ARTIFACT_CACHE: ${{ runner.temp }}/101conv-ffmpeg-cache
+        run: ./scripts/verify-ffmpeg-image.sh
+
   browser-integration:
     name: Docker browser acceptance suite
     runs-on: ubuntu-24.04

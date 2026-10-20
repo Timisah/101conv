@@ -10,7 +10,7 @@ The Go catalog exposes separate conversion and compression profiles:
 
 - **FFmpeg Audio/Video Conversion** and **FFmpeg Audio/Video Compression** share one FFmpeg engine installation.
 - **JPEG XL Image Conversion** and **JPEG XL Image Compression** share one JPEG XL engine installation.
-- **FFmpeg Image Conversion** uses the same pinned LGPL FFmpeg engine for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings exposed by that build. Its resize, aspect-ratio, quality, compression-level, and metadata controls are typed and bounded in the rule schema.
+- **FFmpeg Image Conversion 1.1.0** uses the same pinned LGPL FFmpeg engine for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings verified against the selected build. Rules are target-specific: JPEG uses FFmpeg quantizer quality, PNG uses compression level, WebP uses libwebp quality, AVIF uses libaom CRF, and TIFF/BMP/GIF expose no controls that their encoders ignore. Still-image targets select the first frame; WebP and GIF preserve animation; AVIF is encoded as one still image.
 
 Their engine/profile manifests live under `catalog/targets/`. The package SHA-256 values were checked against the upstream release bytes. FFmpeg is the LGPL BtbN build; JPEG XL is the upstream BSD-3-Clause build. Review the upstream notices and local legal obligations before publishing.
 
@@ -105,9 +105,11 @@ go run ./cmd/catalog-repo validate --catalog-root ../catalog
 go test ./cmd/catalog-repo ./internal/profile ./internal/repositorymanager
 ```
 
-Only after validation should maintainers run `catalog-repo publish`. The publish step verifies upstream package bytes and signs the TUF metadata. Test an actual conversion with each new profile and supported engine build before release: structural validation cannot prove that converter-specific flags, codecs, or output behavior are correct.
+Only after validation should maintainers run `catalog-repo publish`. The publish step verifies upstream package bytes and signs the TUF metadata. Test an actual conversion with each new profile and supported engine build before release: structural validation cannot prove that converter-specific flags, codecs, or output behavior are correct. For the pinned FFmpeg image profile, run `scripts/verify-ffmpeg-image.sh`; it checks every declared source/target pair, signatures, dimensions, animation behavior, and corrupt-input failure against the manifest's exact artifact digest.
 
 Conversion rules may declare `options` using the same bounded `number`, `select`, or `boolean` schema used by compression profiles. `arguments` can contain `{option:key}` placeholders, including inside one argv token; Core validates the declared key and range/choice, expands the value into the immutable execution specification, and the Worker never invokes a shell. Existing profiles without options keep their previous behavior.
+
+Declared compatibility is a manifest claim. Verified compatibility is limited to the source/target pairs covered by the exact engine artifact test. An unsupported or unverified pair must not be added to `sources` or `targets`. Metadata option `0` requests converter metadata mapping and `-1` requests removal; it does not promise that output formats can carry every input EXIF field, orientation tag, timestamp, or ICC/color-profile record. Profile descriptions must state format-specific limitations.
 
 The current catalog does not ship LibreOffice or PDF rasterization. A secure, pinned multi-architecture LibreOffice build with a reviewed license and artifact provenance is still required before adding DOCX/ODT/XLSX/PPTX to the marketplace. PDF-to-image needs a separately reviewed renderer; it is not represented as LibreOffice support.
 

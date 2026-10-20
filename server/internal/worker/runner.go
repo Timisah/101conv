@@ -212,6 +212,9 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	if !outputInfo.Mode().IsRegular() || outputInfo.Mode()&os.ModeSymlink != 0 || outputInfo.Size() <= 0 || outputInfo.Size() > maxOutput {
 		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("converter output failed type or size validation")
 	}
+	if err = validateImageSignature(outputPath, in.TargetExtension); err != nil {
+		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, err
+	}
 	if in.TargetSizeBytes > 0 && outputInfo.Size() > in.TargetSizeBytes {
 		return Result{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("converter output exceeded the requested target size")
 	}
@@ -227,6 +230,47 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 		return Result{}, err
 	}
 	return Result{ResultKey: resultKey, Size: outputInfo.Size(), ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, nil
+}
+
+// validateImageSignature catches a converter that exits successfully after
+// writing a text file, an empty container, or an output with the wrong format.
+// It intentionally applies only to the image extensions understood by the
+// built-in image profiles; other engines may produce arbitrary media formats.
+func validateImageSignature(path, extension string) error {
+	known := map[string]bool{"jpg": true, "jpeg": true, "png": true, "webp": true, "tif": true, "tiff": true, "bmp": true, "gif": true, "avif": true}
+	if !known[extension] {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open image output for validation: %w", err)
+	}
+	defer file.Close()
+	header := make([]byte, 12)
+	if _, err = io.ReadFull(file, header); err != nil {
+		return fmt.Errorf("image output failed signature validation: %w", err)
+	}
+	valid := false
+	switch extension {
+	case "jpg", "jpeg":
+		valid = header[0] == 0xff && header[1] == 0xd8 && header[2] == 0xff
+	case "png":
+		valid = string(header[:8]) == "\x89PNG\r\n\x1a\n"
+	case "webp":
+		valid = string(header[:4]) == "RIFF" && string(header[8:12]) == "WEBP"
+	case "tif", "tiff":
+		valid = (string(header[:4]) == "II*\x00" || string(header[:4]) == "MM\x00*" || string(header[:4]) == "II+\x00" || string(header[:4]) == "MM\x00+")
+	case "bmp":
+		valid = string(header[:2]) == "BM"
+	case "gif":
+		valid = string(header[:6]) == "GIF87a" || string(header[:6]) == "GIF89a"
+	case "avif":
+		valid = string(header[4:8]) == "ftyp" && (string(header[8:12]) == "avif" || string(header[8:12]) == "avis")
+	}
+	if !valid {
+		return fmt.Errorf("converter output failed %s image signature validation", extension)
+	}
+	return nil
 }
 
 func resolveCompressionArguments(parent context.Context, engineRoot, work, inputPath string, in Invocation) ([]string, error) {
