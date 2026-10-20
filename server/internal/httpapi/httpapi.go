@@ -13,6 +13,7 @@ import (
 	"github.com/timisah/101conv/server/internal/catalog"
 	"github.com/timisah/101conv/server/internal/jobs"
 	"github.com/timisah/101conv/server/internal/management"
+	"github.com/timisah/101conv/server/internal/presets"
 	"github.com/timisah/101conv/server/internal/repositorymanager"
 )
 
@@ -25,6 +26,7 @@ type API struct {
 	jobs         *jobs.Service
 	accounts     *auth.Service
 	automations  *automation.Service
+	presets      *presets.Service
 	sessions     *sessionStore
 	loginGuard   *loginGuard
 }
@@ -50,7 +52,11 @@ func NewWithAccounts(version string, catalogService *catalog.Service, management
 }
 
 func NewWithAutomation(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, accountService *auth.Service, automationService *automation.Service, adminToken string) http.Handler {
-	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, accounts: accountService, automations: automationService, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
+	return NewWithPresets(version, catalogService, managementService, repositoryService, jobService, accountService, automationService, nil, adminToken)
+}
+
+func NewWithPresets(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, accountService *auth.Service, automationService *automation.Service, presetService *presets.Service, adminToken string) http.Handler {
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, accounts: accountService, automations: automationService, presets: presetService, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
 	if managementService != nil {
 		a.sessions.setTTL(time.Duration(managementService.SessionTimeout()) * time.Minute)
 	}
@@ -123,6 +129,12 @@ func NewWithAutomation(version string, catalogService *catalog.Service, manageme
 	mux.HandleFunc("GET /api/v1/profiles", a.listProfiles)
 	mux.HandleFunc("GET /api/v1/capabilities", a.listCapabilities)
 	mux.HandleFunc("GET /api/v1/capabilities/resolve", a.resolveCapability)
+	mux.HandleFunc("GET /api/v1/presets", a.listPresets)
+	mux.HandleFunc("POST /api/v1/presets", a.createPreset)
+	mux.HandleFunc("PUT /api/v1/presets/{id}", a.updatePreset)
+	mux.HandleFunc("POST /api/v1/presets/{id}/duplicate", a.duplicatePreset)
+	mux.HandleFunc("DELETE /api/v1/presets/{id}", a.deletePreset)
+	mux.HandleFunc("PATCH /api/v1/presets/{id}/default", a.setPresetDefault)
 	mux.HandleFunc("GET /api/v1/profile-preferences", a.listProfilePreferences)
 	mux.HandleFunc("PUT /api/v1/profile-preferences/me/{mode}/{source}/{target}", a.setMyProfilePreference)
 	mux.HandleFunc("DELETE /api/v1/profile-preferences/me/{mode}/{source}/{target}", a.deleteMyProfilePreference)

@@ -1,7 +1,7 @@
 # P1 capability/provider compatibility boundary
 
-The first P1 slice adds a canonical read model beside the persisted profile
-model. `server/internal/capability` adapts installed `profile.Definition` and
+P1 adds a canonical read model beside the persisted profile model.
+`server/internal/capability` adapts installed `profile.Definition` and
 `engine.Definition` records into three safe concepts:
 
 - a **Capability** is a normalized operation and source/target mapping;
@@ -23,7 +23,24 @@ preference when available, and otherwise selects by stable profile/version/
 engine ordering. The response includes candidate reasons so a UI can explain
 disabled, missing, or unavailable providers.
 
-This is a migration seam, not a replacement for profiles. Jobs, preferences,
-automations, and installation APIs still use profile IDs and immutable job
-execution specifications. Presets, file analysis, novice UI migration, and
-the final provider precedence policy remain later P1 work.
+Jobs adapt automatic selection through this resolver and still freeze the
+legacy profile, profile version, engine, and executable details into the
+immutable execution specification at submission time. A supplied legacy
+profile ID remains an advanced override, while the default Convert and
+Compress paths submit no technical provider choice.
+
+`server/internal/presets` stores user intent separately from executable
+manifests. Presets contain a format mapping, optional provider/profile
+preference, profile version, and bounded typed option values. Every read
+rechecks compatibility against the live catalog, so an installed profile or
+engine update produces an explicit warning instead of silently changing a
+saved choice. Personal presets are scoped to an account; administrators can
+create shared presets and guests can read shared compatible presets.
+
+`/api/v1/presets` provides list, create, edit, duplicate, delete, and default
+operations. The web workspaces use a reusable Saved preset control and keep
+the implementation selector inside an Advanced disclosure. Batch items carry
+the selected typed options, and automation revisions can pin a preset's
+validated options into their immutable action definition before execution.
+Legacy profile, preference, automation, and installation APIs remain available
+as migration boundaries.

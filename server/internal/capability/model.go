@@ -274,7 +274,7 @@ func (c Catalog) Resolve(request Request, preferredProviderID string) (Resolutio
 	selected := -1
 	if strings.TrimSpace(preferredProviderID) != "" {
 		for i := range available {
-			if available[i].ID == preferredProviderID {
+			if available[i].ID == preferredProviderID || available[i].ProfileID == preferredProviderID {
 				selected = i
 				strategy = "explicit provider preference"
 				break

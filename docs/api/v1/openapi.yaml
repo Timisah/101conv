@@ -654,6 +654,98 @@ paths:
         '401': { description: Authentication required }
         '403': { description: Conversion or compression permission required }
         '422': { description: No available provider satisfies the requested mapping }
+  /api/v1/presets:
+    get:
+      summary: List personal and shared conversion presets
+      description: Guests can read shared presets; authenticated users see their own presets plus shared presets. Compatibility is evaluated against the currently installed capability catalog.
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters:
+        - { in: query, name: mode, required: false, schema: { type: string, enum: [convert, compress] } }
+      responses:
+        '200':
+          description: Presets visible to the caller, including compatibility status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [presets]
+                properties:
+                  presets: { type: array, items: { $ref: '#/components/schemas/Preset' } }
+        '401': { description: Authentication required }
+    post:
+      summary: Create a personal or administrator-shared preset
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PresetWrite' }
+      responses:
+        '201': { description: Preset created and checked against the installed provider schema, content: { application/json: { schema: { $ref: '#/components/schemas/Preset' } } } }
+        '400': { description: Invalid preset name, mode, format or option shape }
+        '403': { description: Shared presets require administrator access }
+        '422': { description: No compatible provider or typed option schema }
+  /api/v1/presets/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: Edit an owned preset
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PresetWrite' }
+      responses:
+        '200': { description: Updated preset }
+        '403': { description: Preset is not owned by the caller }
+        '404': { description: Preset not found }
+        '422': { description: Updated settings are incompatible }
+    delete:
+      summary: Delete an owned preset
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      responses:
+        '204': { description: Preset deleted }
+        '403': { description: Preset is not owned by the caller }
+        '404': { description: Preset not found }
+  /api/v1/presets/{id}/duplicate:
+    post:
+      summary: Duplicate a visible preset into the caller's personal presets
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 80 }
+      responses:
+        '201': { description: Personal duplicate created }
+        '403': { description: Guest or unauthorized duplicate request }
+        '404': { description: Preset not found }
+        '422': { description: Source preset is no longer compatible }
+  /api/v1/presets/{id}/default:
+    patch:
+      summary: Set or clear a default for a source/target operation mapping
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200': { description: Updated default state }
+        '403': { description: Preset is not owned by the caller }
+        '404': { description: Preset not found }
+        '422': { description: Incompatible presets cannot become defaults }
   /api/v1/profiles/catalogs:
     post:
       summary: Add a community profile catalog
@@ -1244,13 +1336,48 @@ components:
       properties:
         key: { type: string }
         label: { type: string }
-        type: { type: string, enum: [number, select] }
+        type: { type: string, enum: [number, select, boolean] }
         default: { type: string }
         min: { type: number }
         max: { type: number }
         step: { type: number }
         choices: { type: array, items: { type: string } }
         targetSizeMb: { type: boolean }
+    Preset:
+      type: object
+      required: [id, name, mode, sourceFormat, targetFormat, shared, default, compatible, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        mode: { type: string, enum: [convert, compress] }
+        sourceFormat: { type: string, pattern: '^[a-z0-9]{1,12}$' }
+        targetFormat: { type: string, pattern: '^[a-z0-9]{1,12}$' }
+        providerId: { type: string }
+        profileId: { type: string, description: Legacy profile key retained for migration }
+        profileVersion: { type: string }
+        options: { type: object, additionalProperties: { type: string }, maxProperties: 32 }
+        shared: { type: boolean }
+        default: { type: boolean }
+        compatible: { type: boolean }
+        compatibilityMessage: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PresetWrite:
+      type: object
+      required: [name, mode, sourceFormat, targetFormat]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        mode: { type: string, enum: [convert, compress] }
+        sourceFormat: { type: string, pattern: '^[a-z0-9.]{1,13}$' }
+        targetFormat: { type: string, pattern: '^[a-z0-9.]{1,13}$' }
+        providerId: { type: string, maxLength: 200 }
+        profileId: { type: string, maxLength: 120 }
+        profileVersion: { type: string, maxLength: 40 }
+        options: { type: object, additionalProperties: { type: string }, maxProperties: 32 }
+        shared: { type: boolean, default: false, description: Administrator only }
+        default: { type: boolean, default: false }
     MountedDrive:
       type: object
       required: [id, name, path, access, enabled, accessible, writable, automationCount]
@@ -1281,6 +1408,7 @@ components:
         profileId: { type: string }
         profileVersion: { type: string, description: Omission resolves and persists the exact installed profile version }
         targetFormat: { type: string, pattern: '^[a-z0-9]{1,12}$' }
+        options: { type: object, additionalProperties: { type: string }, maxProperties: 32 }
         condition: { $ref: '#/components/schemas/AutomationCondition' }
         extensions: { type: array, items: { type: string } }
         nameGlob: { type: string }
@@ -1321,6 +1449,7 @@ components:
             profileId: { type: string }
             profileVersion: { type: string, description: Exact profile version captured by this revision; omission on save resolves and persists the installed version }
             targetFormat: { type: string }
+            options: { type: object, additionalProperties: { type: string }, maxProperties: 32 }
             outputDriveId: { type: string }
             outputBehavior: { type: string, enum: [create, skip_existing, unique] }
     AutomationCondition:

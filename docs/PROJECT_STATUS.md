@@ -1,7 +1,7 @@
 # Project Status — evidence-based implementation ledger
 
 **Review date:** 2026-10-20.  
-**Implementation baseline reviewed:** `3df147e9d1b65a0daf3f4dc5fc245b13a4406dbe` on `main`.  
+**Implementation baseline reviewed:** P1 completion commit is recorded in Git history after validation; the earlier baseline was `3df147e9d1b65a0daf3f4dc5fc245b13a4406dbe`.
 **Maintenance note:** Documentation commits will advance HEAD beyond this baseline; this is *not* an assertion that the later documentation-only HEAD has been deployed or verified.
 
 See [MASTER_PLAN.md](MASTER_PLAN.md), [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md), [DECISIONS.md](DECISIONS.md).
@@ -28,7 +28,7 @@ See [MASTER_PLAN.md](MASTER_PLAN.md), [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md)
 | PDF-to-image (one selected page) and text through managed Poppler | `docs/architecture/documents-d2.md`; not an all-pages PDF editor or OCR |
 | Mounted Drives and bounded folder-scan Automations | `server/internal/automation/`, `docs/architecture/automations-c1.md`; Core-only registered mounts, worker does not mount input NAS paths |
 | Improved mobile/desktop UI and system theme | Commits `e5e3c98` and `3fdccaa` with UI/theme smoke scripts |
-| P1 canonical capability/provider read model (first slice) | `server/internal/capability/`, `docs/architecture/capabilities-p1.md`, additive `/api/v1/capabilities` and `/api/v1/capabilities/resolve`; legacy profiles, preferences, jobs and automations remain the compatibility boundary |
+| P1 capability/provider selection and presets | `server/internal/capability/`, `server/internal/presets/`, additive `/api/v1/capabilities`, `/api/v1/capabilities/resolve`, and `/api/v1/presets`; automatic jobs resolve through canonical providers while legacy profiles remain the execution compatibility boundary |
 
 ### Automated verification present
 
@@ -52,8 +52,7 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 
 ## Planned, not yet implemented as generally available
 
-- Full P1 capability/provider migration: the canonical read model and deterministic resolver are implemented as an additive first slice; novice UI migration, immutable job-resolution adapter, and final provider precedence policy remain open.
-- User-created Convert/Compress presets, personal/shared defaults and compatibility-safe migration.
+- P1 capability/provider migration and saved presets: implemented in the completion commit. The remaining release gate is remote CI and browser evidence; the deployment continues to retain legacy profile IDs as a migration boundary.
 - Full file analysis / metadata Inspector and metadata-based conditions.
 - Rich image target size + combined batch maximum, bounded adaptive compression, advanced media options.
 - HDR-preserving re-encoding with output checks; optional GPU workers and device probing.
@@ -68,4 +67,4 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 
 The 2026-10-20 local release pass rebuilt the pinned Core, Worker, and Web images, migrated the managed Worker login, passed the Go suite/vet, upload ingress, Compose security, catalog, FFmpeg matrix, and document runtime unit checks. The document HTTP stage stopped on disposable PostgreSQL `ENOSPC`, and browser/restore was deliberately not started below its 8 GiB free-space preflight; both remain remote-CI gates.
 
-The status ledger should be updated whenever a significant task is implemented **and verified**. Record new SHA, test URLs, compatibility impacts, completed/requested feature IDs and explicit outstanding risks. Do not rewrite this baseline as though those future tests had already run.
+The status ledger should be updated whenever a significant task is implemented **and verified**. Record the completion SHA, test URLs, compatibility impacts, completed/requested feature IDs and explicit outstanding risks. P0 release gates remain open: remote CI evidence, the owner-controlled TUF trust-root ceremony/publication, the document HTTP stage that stopped on disposable PostgreSQL `ENOSPC`, and browser/restore gates below their 8 GiB preflight.

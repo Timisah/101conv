@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
   const errors = [];
   let activePage = null;
   const base = process.env.SMOKE_BASE;
+  async function chooseAdvanced(page, profileID) { await page.locator('details.advanced-provider').first().locator('summary').click(); await page.getByLabel('Profile for this job').selectOption(profileID); }
   async function admin(path, method, body) { const response = await fetch(base+'/api/v1'+path,{method,headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN,'Content-Type':'application/json'},body:JSON.stringify(body)}); if(!response.ok)throw new Error('Fixture setup failed: '+response.status+' '+await response.text()); return response; }
   await admin('/engines/install','POST',{definition:{schemaVersion:1,id:'ppm-pgm',version:'1.0.0',name:'PPM to PGM test converter',platform:'linux-amd64',capabilities:['image.ppm.decode','image.pgm.encode'],executables:{'ppm-pgm':'ppm-pgm'}},sourceDirectory:'/var/lib/101conv/imports'});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-grayscale',version:'1.0.0',name:'PPM to grayscale PGM',description:'Convert ASCII PPM into portable grayscale images.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','--output','{target}']}]}});
@@ -232,7 +233,7 @@ const assert = require('node:assert/strict');
       {name:'cancel-two.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm}
     ]);
     await page.getByLabel('Convert to').selectOption('pgm');
-    await page.getByLabel('Profile for this job').selectOption('ppm-pgm-slow');
+    await chooseAdvanced(page, 'ppm-pgm-slow');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
     await page.getByRole('link',{name:'Jobs & history'}).click();
     const itemCancelBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
@@ -248,7 +249,7 @@ const assert = require('node:assert/strict');
       {name:'batch-cancel-two.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm}
     ]);
     await page.getByLabel('Convert to').selectOption('pgm');
-    await page.getByLabel('Profile for this job').selectOption('ppm-pgm-slow');
+    await chooseAdvanced(page, 'ppm-pgm-slow');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
     await page.getByRole('link',{name:'Jobs & history'}).click();
     const wholeCancelBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
@@ -351,7 +352,7 @@ const assert = require('node:assert/strict');
     assert.equal(await page.getByLabel('Output format').isEnabled(), true, 'supported compression outputs appear after file selection');
     await page.getByLabel('Output format').selectOption('pgm');
     assert.match(await page.locator('#compress-profile option:checked').textContent(), /PPM Image Compressor \(automatic fallback\)/, 'automatic compression selection names its compatible fallback');
-    await page.getByLabel('Profile for this job').selectOption('ppm-pgm-compress');
+    await chooseAdvanced(page, 'ppm-pgm-compress');
     await page.getByRole('button', { name: /Compress 1 file/ }).click();
     await page.getByText(/Compression batch created: 1 item\(s\) submitted/).waitFor({ timeout: 10000 });
     await page.getByRole('link', { name: 'Jobs & history' }).click();
@@ -423,7 +424,7 @@ const assert = require('node:assert/strict');
     await guestPage.getByRole('heading', { name: 'Make files smaller' }).waitFor();
     await guestPage.locator('input[type=file]').setInputFiles({ name: 'guest-compress.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm });
     await guestPage.getByLabel('Output format').selectOption('pgm');
-    await guestPage.getByLabel('Profile for this job').selectOption('ppm-pgm-compress');
+    await chooseAdvanced(guestPage, 'ppm-pgm-compress');
     await guestPage.getByRole('button', { name: /Compress 1 file/ }).click();
     await guestPage.getByText(/Compression batch created: 1 item\(s\) submitted/).waitFor({ timeout: 10000 });
     await guestPage.getByRole('link', { name: 'Jobs' }).click();

@@ -248,6 +248,7 @@ type blueprintInstallRequest struct {
 	ProfileID        string                `json:"profileId"`
 	ProfileVersion   string                `json:"profileVersion"`
 	TargetFormat     string                `json:"targetFormat"`
+	Options          map[string]string     `json:"options"`
 	Condition        *automation.Condition `json:"condition"`
 	Extensions       []string              `json:"extensions"`
 	NameGlob         string                `json:"nameGlob"`
@@ -302,6 +303,7 @@ func (a *API) installBlueprint(w http.ResponseWriter, r *http.Request) {
 	d.Action.ProfileID = req.ProfileID
 	d.Action.ProfileVersion = req.ProfileVersion
 	d.Action.TargetFormat = req.TargetFormat
+	d.Action.Options = req.Options
 	d.Action.OutputBehavior = req.OutputBehavior
 	if d.Action.OutputBehavior == "" {
 		d.Action.OutputBehavior = "unique"

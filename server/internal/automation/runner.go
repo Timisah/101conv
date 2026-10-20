@@ -482,7 +482,7 @@ func (s *Service) resumeSubmission(ctx context.Context, runID string) error {
 			monthlyJobs = principal.Quotas.MonthlyJobs.Value
 		}
 		action := snapshot.Definition.Action
-		job, _, err := s.jobs.SubmitFor(ctx, jobs.SubmitRequest{UploadID: uploadID, ProfileID: action.ProfileID, ProfileVersion: action.ProfileVersion, TargetFormat: action.TargetFormat, Mode: action.Mode, IdempotencyKey: key}, owner, jobs.Limits{MonthlyJobs: monthlyJobs})
+		job, _, err := s.jobs.SubmitFor(ctx, jobs.SubmitRequest{UploadID: uploadID, ProfileID: action.ProfileID, ProfileVersion: action.ProfileVersion, TargetFormat: action.TargetFormat, Mode: action.Mode, Options: action.Options, IdempotencyKey: key}, owner, jobs.Limits{MonthlyJobs: monthlyJobs})
 		if err != nil {
 			return err
 		}

@@ -63,7 +63,7 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 **Goal:** one user-facing format operation regardless of how many engines implement it; no “best profile” guessing for everyday tasks.  
 **Acceptance:** typed capability/option descriptors, provider compatibility/resolver/explanations, advanced implementation override, deterministic failure/fallback, immutable job resolution, migration adapters for existing profile API/versions and automation pins; unit/integration tests including provider conflicts. UI default hides technical engine/profile pickers.  
 **Dependencies:** FR-003; design approval and migration plan.
-**Status:** First backend slice implemented additively on 2026-10-20. The canonical typed capability/provider catalog, deterministic resolver, explainable candidate diagnostics, legacy adapters, and API contract are covered by unit and HTTP tests. Presets, novice UI migration, immutable job-resolution integration, and the final multi-constraint provider policy remain open.
+**Status:** Implemented for P1 on 2026-10-20. The canonical typed capability/provider catalog, deterministic resolver, explainable candidate diagnostics, legacy profile adapters, automatic job resolution, immutable execution handoff, and capability API are covered by unit and HTTP tests. Convert and Compress derive novice format choices from capabilities; the technical profile override remains inside an Advanced disclosure for compatibility.
 
 ### FR-007 — User presets and defaults
 
@@ -71,11 +71,15 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 **Acceptance:** personal named presets, duplicate/edit/delete, favorites/default per operation or compatible input, optional admin shared presets, validation against capability/provider version, explicit incompatibility warnings, usage across Convert/Compress/batches/Automate. Guest flows remain simple without forced accounts.  
 **Dependencies:** FR-006.
 
+**Status:** Implemented for P1 on 2026-10-20. Personal named presets support create, apply, edit, duplicate, delete, and per-mapping defaults. Administrators may create shared presets; guests can read compatible shared presets without creating personal state. Presets are validated against the installed provider version and typed option schema, and responses carry explicit compatibility messages when a saved choice becomes unavailable.
+
 ### FR-008 — Modular frontend/backend and mobile UX gates
 
 **Goal:** constant feature development without a monolithic React app or huge backend service.  
 **Acceptance:** incremental extraction of workspace features, shared typed API client, scoped state and reusable controls, clear service boundaries and fast tests; behavioral parity with old app; browser automation at narrow phone viewport, keyboard/touch and accessibility. No unrelated rewrite, no growth of `App.tsx` as feature dumping ground.  
 **Dependencies:** continuous, work alongside FR-006/FR-007.
+
+**Status:** P1 acceptance path implemented on 2026-10-20. Capability and preset API boundaries are separated into dedicated server packages and routes; the conversion workspaces consume the canonical capability catalog, keep legacy profile data only for advanced options, and expose preset controls through a reusable frontend control. Narrow-screen layout and keyboard-accessible advanced disclosure remain part of the browser smoke gate; broader App.tsx extraction remains ongoing product maintenance.
 
 ## P2 — compression, metadata and video fidelity
 

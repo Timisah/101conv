@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/timisah/101conv/server/internal/capability"
 	"github.com/timisah/101conv/server/internal/limits"
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/profile"
@@ -329,6 +330,81 @@ func (s *Service) compatibleProfile(profileID, mode, source, target string) bool
 	return err == nil && d.SupportsMode(mode)
 }
 
+// defaultPreset is a read-only migration adapter for the preset store. The
+// jobs package deliberately does not import presets (presets already depend on
+// management and capability); the SQL boundary keeps both services modular.
+// Older installations can start before the additive preset migration runs,
+// so an absent table is treated as no default.
+func (s *Service) defaultPreset(ctx context.Context, ownerID, mode, source, target string) (string, map[string]string, string, error) {
+	if ownerID == "" {
+		return "", nil, "", nil
+	}
+	var presetOwner, profileID, providerID, profileVersion string
+	var raw []byte
+	var shared bool
+	err := s.db.QueryRowContext(ctx, `SELECT owner_id,profile_id,provider_id,profile_version,options,shared FROM conv_presets WHERE (owner_id=$1 OR shared=true) AND mode=$2 AND source_format=$3 AND target_format=$4 AND is_default=true ORDER BY (owner_id=$1) DESC, updated_at DESC LIMIT 1`, ownerID, mode, source, target).Scan(&presetOwner, &profileID, &providerID, &profileVersion, &raw, &shared)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, "", nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
+		return "", nil, "", nil
+	}
+	if err != nil {
+		return "", nil, "", err
+	}
+	profileID = strings.TrimSpace(profileID)
+	if profileID == "" {
+		// Canonical provider IDs retain the legacy profile ID in the segment
+		// between "legacy/" and "@".
+		providerID = strings.TrimPrefix(strings.TrimSpace(providerID), "legacy/")
+		if at := strings.IndexByte(providerID, '@'); at > 0 {
+			profileID = providerID[:at]
+		}
+	}
+	if profileID == "" || !s.compatibleProfile(profileID, mode, source, target) {
+		return "", nil, "", nil
+	}
+	if profileVersion != "" {
+		definition, _, _, _, resolveErr := s.management.ResolveConversion(profileID, source, target)
+		if resolveErr != nil || definition.Version != profileVersion {
+			return "", nil, "", nil
+		}
+	}
+	options := map[string]string{}
+	if len(raw) > 0 && string(raw) != "null" {
+		if err = json.Unmarshal(raw, &options); err != nil {
+			return "", nil, "", err
+		}
+	}
+	strategy := "personal preset"
+	if shared && presetOwner != ownerID {
+		strategy = "shared preset"
+	}
+	return profileID, options, strategy, nil
+}
+
+// resolveCanonicalProfile adapts the canonical capability/provider resolver
+// back to the legacy profile ID used by jobs and saved preferences. The final
+// job submission still calls ResolveConversion, which freezes the exact
+// executable and engine version into the immutable execution specification.
+func (s *Service) resolveCanonicalProfile(ctx context.Context, mode, source, target, preferred string) (string, string, error) {
+	profiles, err := s.management.ListProfiles(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	engines, err := s.management.ListEngines(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	catalog := capability.Build(profiles, engines)
+	resolution, err := catalog.Resolve(capability.Request{Operation: mode, SourceFormat: source, TargetFormat: target}, preferred)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: %v", ErrUnsupported, err)
+	}
+	return resolution.Provider.ProfileID, resolution.Strategy, nil
+}
+
 // ResolvePreferredProfile resolves user overrides, administrator defaults, and
 // finally a stable profile-ID ordered fallback. Temporarily unavailable saved
 // preferences remain stored and are reconsidered on every future resolution.
@@ -349,22 +425,22 @@ func (s *Service) ResolvePreferredProfile(ctx context.Context, ownerID, mode, so
 	} else if id != "" && s.compatibleProfile(id, mode, source, target) {
 		return id, "administrator default", nil
 	}
+	if id, _, strategy, e := s.defaultPreset(ctx, ownerID, mode, source, target); e != nil {
+		return "", "", e
+	} else if id != "" {
+		return id, strategy, nil
+	}
 
-	records, err := s.management.ListProfiles(ctx)
+	profileID, strategy, err := s.resolveCanonicalProfile(ctx, mode, source, target, "")
 	if err != nil {
-		return "", "", err
-	}
-	ids := make([]string, 0, len(records))
-	for _, rec := range records {
-		if rec.Definition.SupportsMode(mode) && s.compatibleProfile(rec.Definition.ID, mode, source, target) {
-			ids = append(ids, rec.Definition.ID)
-		}
-	}
-	sort.Strings(ids)
-	if len(ids) == 0 {
 		return "", "", fmt.Errorf("%w: no enabled compatible %s profile is available for %s to %s", ErrUnsupported, mode, source, target)
 	}
-	return ids[0], "automatic fallback", nil
+	// Keep the legacy preference provenance string stable for API clients and
+	// automation diagnostics while the canonical resolver owns the choice.
+	if strategy == "stable provider order" || strings.HasPrefix(strategy, "stable fallback") {
+		strategy = "automatic fallback"
+	}
+	return profileID, strategy, nil
 }
 
 func (s *Service) SetProfilePreference(ctx context.Context, ownerID, mode, source, target, profileID string, global bool) error {
@@ -785,7 +861,17 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	}
 	if req.ProfileID == "" {
 		var err error
-		req.ProfileID, _, err = s.ResolvePreferredProfile(ctx, ownerID, mode, upload.Extension, target)
+		var presetOptions map[string]string
+		req.ProfileID, presetOptions, _, err = s.defaultPreset(ctx, ownerID, mode, upload.Extension, target)
+		if err != nil {
+			return Job{}, false, err
+		}
+		if req.Options == nil && req.ProfileID != "" {
+			req.Options = presetOptions
+		}
+		if req.ProfileID == "" {
+			req.ProfileID, _, err = s.ResolvePreferredProfile(ctx, ownerID, mode, upload.Extension, target)
+		}
 		if err != nil {
 			return Job{}, false, err
 		}

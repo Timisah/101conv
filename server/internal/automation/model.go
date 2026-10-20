@@ -58,6 +58,7 @@ type FileAction struct {
 	ProfileID      string `json:"profileId"`
 	ProfileVersion string `json:"profileVersion,omitempty"`
 	TargetFormat   string `json:"targetFormat"`
+	Options        map[string]string `json:"options,omitempty"`
 	OutputDriveID  string `json:"outputDriveId"`
 	OutputBehavior string `json:"outputBehavior"` // create, skip_existing, unique
 }

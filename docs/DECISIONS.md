@@ -14,8 +14,8 @@ This is a lightweight decision log, not a record of every implementation detail.
 | A-008 | Accepted | Non-destructive file handling | Preserve originals and user projects by default; explicit cleanup/retention policies and confirmation for irreversible operations. |
 | A-009 | Accepted | AI updates project status, owner owns scope and brand | Plans are durable goals, not authorization for agents to silently change or remove them. |
 | A-010 | Accepted | Current name is provisional | Keep `101conv` implementation identifiers until original name/logo and compatibility migration are approved. |
-| A-011 | Proposed | User-facing **Capability → Provider → Engine** model | Stops competing technical profiles in novice UX; explicit provider resolution. Existing technical profiles remain behind compatibility adapters until migrated safely. |
-| A-012 | Proposed | Separate saved **Preset** model | Save user intent/settings, not binary manifests. Personal/shared presets, deterministic compatibility and version warnings. |
+| A-011 | Accepted | User-facing **Capability → Provider → Engine** model | Stops competing technical profiles in novice UX; explicit provider resolution. Existing technical profiles remain behind compatibility adapters until migrated safely. |
+| A-012 | Accepted | Separate saved **Preset** model | Save user intent/settings, not binary manifests. Personal/shared presets, deterministic compatibility and version warnings. |
 | A-013 | Proposed | Shared typed file analysis / inspection | Single validated metadata service feeds file Inspector, format choices, compression/HDR policy and automation conditions. Must enforce privacy, parser limits and ownership. |
 | A-014 | Proposed | Adaptive size constraints with explicit infeasibility | Per-file and combined batch budgets, bounded retries, truthful results; never promise mathematically impossible image size/quality. |
 | A-015 | Proposed | HDR fidelity as an explicit constraint | Do not silently downgrade HDR to SDR, bit depth or important streams; validate outputs. Dynamic HDR formats are conditional on tested support. |
@@ -28,7 +28,7 @@ This is a lightweight decision log, not a record of every implementation detail.
 | A-022 | Accepted | Readiness contract | `/healthz` is process liveness; `/readyz` requires PostgreSQL schema access and Core-managed storage but does not require a Worker, installed converter, or completed first-run setup; authenticated operations reports conversion capability separately. |
 | A-023 | Open | Password minimum / compatibility | Five-character current minimum is weak; decide rollout via threat analysis with existing-account compatibility and no silent reset. |
 | A-024 | Open | Brand, logo, repository/domain migration | Check trademark/domain availability, plan redirects/versioned identifiers/volume compatibility. No speculative name finalized. |
-| A-025 | Open | Provider selection policy | Define precedence of user fidelity constraints, explicit provider preference, verified format compatibility, security, available hardware, quality/speed and transparent fallback. Never opaque “highest priority wins”. |
+| A-025 | Accepted | Provider selection policy | Normalize the operation and format mapping, honor a compatible personal preference, then an administrator preference, then a compatible personal/shared default preset, and finally choose the stable profile/version/engine provider order. An unavailable saved choice is reported and never silently executed; every submitted job freezes the selected profile/version/engine execution specification. |
 | A-026 | Open | Document Builder editable-output semantics | PDF/CBZ/page-image exports differ from DOCX/PPTX/ODT. Determine honest content models, page fidelity, and when native content can be preserved. |
 
 ## Decision-making process

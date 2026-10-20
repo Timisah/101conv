@@ -22,6 +22,7 @@ import (
 	"github.com/timisah/101conv/server/internal/httpapi"
 	"github.com/timisah/101conv/server/internal/jobs"
 	"github.com/timisah/101conv/server/internal/management"
+	"github.com/timisah/101conv/server/internal/presets"
 	"github.com/timisah/101conv/server/internal/repositorymanager"
 	"github.com/timisah/101conv/server/internal/worker"
 )
@@ -83,6 +84,7 @@ func main() {
 	var jobService *jobs.Service
 	var accountService *auth.Service
 	var automationService *automation.Service
+	var presetService *presets.Service
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
 		db, err = openDatabase(dsn)
 		if err != nil {
@@ -126,11 +128,21 @@ func main() {
 			_ = managementService.Close()
 			log.Fatalf("initialize automation service: %v", err)
 		}
+		presetService, err = presets.NewService(db, managementService)
+		if err == nil {
+			err = presetService.Migrate(context.Background())
+		}
+		if err != nil {
+			_ = db.Close()
+			_ = repositoryService.Close()
+			_ = managementService.Close()
+			log.Fatalf("initialize preset service: %v", err)
+		}
 	}
 
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           httpapi.NewWithAutomation(version, catalogService, managementService, repositoryService, jobService, accountService, automationService, os.Getenv("ENGINE_ADMIN_TOKEN")),
+		Handler:           httpapi.NewWithPresets(version, catalogService, managementService, repositoryService, jobService, accountService, automationService, presetService, os.Getenv("ENGINE_ADMIN_TOKEN")),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
