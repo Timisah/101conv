@@ -17,6 +17,7 @@ The browser verification script `../scripts/phase5-browser-smoke.sh` provisions 
 
 - Administer users, groups, reusable roles, granular permissions, API keys, and explicit per-user/group quotas from Users & Access. The UI displays effective permission grants and their role/group/user origins, monthly usage, bulk-action results, and the server-side enforcement is authoritative.
 - Convert or compress supported files, view job history, monitor jobs, cancel them, and download completed results.
+- Inspect an owned upload with bounded content-derived metadata, privacy-aware location redaction, and sanitized JSON export.
 - Manage shared engines and separately typed conversion/compression profiles. Browse repositories and review trust/install previews before installing packages.
 - Use responsive desktop/mobile layouts and the system-aware light/dark theme.
 
