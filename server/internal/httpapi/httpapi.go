@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/timisah/101conv/server/internal/analysis"
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/automation"
 	"github.com/timisah/101conv/server/internal/catalog"
@@ -25,6 +26,7 @@ type API struct {
 	adminToken   string
 	repositories *repositorymanager.Manager
 	jobs         *jobs.Service
+	analysis     *analysis.Service
 	accounts     *auth.Service
 	automations  *automation.Service
 	presets      *presets.Service
@@ -62,7 +64,11 @@ func NewWithPresets(version string, catalogService *catalog.Service, managementS
 }
 
 func NewWithUpdates(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, accountService *auth.Service, automationService *automation.Service, presetService *presets.Service, updateChecker *updatecheck.Checker, adminToken string) http.Handler {
-	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, accounts: accountService, automations: automationService, presets: presetService, updates: updateChecker, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
+	var analysisService *analysis.Service
+	if managementService != nil && jobService != nil {
+		analysisService, _ = analysis.NewService(managementService, jobService.UploadRoot())
+	}
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, analysis: analysisService, accounts: accountService, automations: automationService, presets: presetService, updates: updateChecker, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
 	if managementService != nil {
 		a.sessions.setTTL(time.Duration(managementService.SessionTimeout()) * time.Minute)
 	}
@@ -168,6 +174,7 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 	mux.HandleFunc("GET /api/v1/repositories/{id}/engines/{engineID}/{version}/preview", a.previewRepositoryEngine)
 	mux.HandleFunc("POST /api/v1/repositories/{id}/engines/{engineID}/{version}/install", a.installRepositoryEngine)
 	mux.HandleFunc("POST /api/v1/uploads", a.uploadFile)
+	mux.HandleFunc("GET /api/v1/uploads/{id}/analysis", a.analyzeUpload)
 	mux.HandleFunc("POST /api/v1/jobs", a.submitJob)
 	mux.HandleFunc("POST /api/v1/compressions", a.submitCompressionJob)
 	mux.HandleFunc("POST /api/v1/batches", a.createBatch)

@@ -652,7 +652,7 @@ func (s *Service) getBatch(ctx context.Context, id, ownerID string, limits Limit
 		return b, tx.Commit()
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT i.item_index,i.upload_id,u.file_name,COALESCE(j.id,''),COALESCE(j.state,i.state),COALESCE(j.error,i.error),CASE WHEN j.id IS NULL THEN i.error_code ELSE '' END,
-	 j.profile_id,j.profile_version,j.source_format,j.target_format,j.mode,j.progress,j.attempt_count,j.max_attempts,j.result_size,j.created_at,j.updated_at,
+	 j.profile_id,j.profile_version,j.source_format,j.target_format,j.mode,j.progress,j.attempt_count,j.max_attempts,COALESCE(u.size_bytes,0),j.result_size,j.created_at,j.updated_at,
 	 CASE WHEN u.original_deleted_at IS NOT NULL THEN 'expired' WHEN u.original_missing_at IS NOT NULL THEN 'missing' WHEN u.cleanup_pending THEN 'scheduled' ELSE 'available' END,
 	 CASE WHEN j.result_deleted_at IS NOT NULL THEN 'expired' WHEN j.result_missing_at IS NOT NULL THEN 'missing' WHEN j.result_cleanup_pending THEN 'scheduled' WHEN j.result_key IS NOT NULL THEN 'available' WHEN j.id IS NOT NULL THEN 'not_ready' ELSE NULL END
 	 FROM conv_batch_items i JOIN conv_uploads u ON u.id=i.upload_id LEFT JOIN conv_jobs j ON j.id=i.current_job_id
@@ -666,15 +666,16 @@ func (s *Service) getBatch(ctx context.Context, id, ownerID string, limits Limit
 	for rows.Next() {
 		var item BatchItem
 		var profileID, profileVersion, source, target, mode sql.NullString
-		var progress, attempt, maxAttempts, resultSize sql.NullInt64
+		var progress, attempt, maxAttempts, inputSize, resultSize sql.NullInt64
 		var created, updated sql.NullTime
 		var originalState, resultState sql.NullString
 		if err = rows.Scan(&item.Index, &item.UploadID, &item.FileName, &item.JobID, &item.State, &item.Error, &item.ErrorCode,
-			&profileID, &profileVersion, &source, &target, &mode, &progress, &attempt, &maxAttempts, &resultSize, &created, &updated, &originalState, &resultState); err != nil {
+			&profileID, &profileVersion, &source, &target, &mode, &progress, &attempt, &maxAttempts, &inputSize, &resultSize, &created, &updated, &originalState, &resultState); err != nil {
 			return Batch{}, err
 		}
 		if item.JobID != "" {
-			item.Job = &Job{ID: item.JobID, ProfileID: profileID.String, ProfileVer: profileVersion.String, SourceFormat: source.String, TargetFormat: target.String, Mode: mode.String, State: State(item.State), Progress: int(progress.Int64), Attempt: int(attempt.Int64), MaxAttempts: int(maxAttempts.Int64), Error: item.Error, OutputSize: resultSize.Int64, CreatedAt: created.Time, UpdatedAt: updated.Time, OriginalState: originalState.String, ResultState: resultState.String}
+			item.Job = &Job{ID: item.JobID, ProfileID: profileID.String, ProfileVer: profileVersion.String, SourceFormat: source.String, TargetFormat: target.String, Mode: mode.String, State: State(item.State), Progress: int(progress.Int64), Attempt: int(attempt.Int64), MaxAttempts: int(maxAttempts.Int64), Error: item.Error, InputSize: inputSize.Int64, OutputSize: resultSize.Int64, CreatedAt: created.Time, UpdatedAt: updated.Time, OriginalState: originalState.String, ResultState: resultState.String}
+			finalizeJob(item.Job)
 			item.Attempts = []BatchAttempt{}
 			jobIDs = append(jobIDs, item.JobID)
 		}

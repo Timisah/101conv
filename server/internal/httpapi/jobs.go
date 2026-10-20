@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/timisah/101conv/server/internal/analysis"
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/jobs"
 )
@@ -355,6 +356,37 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, upload)
+}
+
+func (a *API) analyzeUpload(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireCapability(w, r, auth.ScopeRead)
+	if !ok || !a.jobsReady(w) {
+		return
+	}
+	if a.analysis == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "analysis_unavailable", "file inspection is not configured")
+		return
+	}
+	ownerID := p.ID
+	if p.IsAdmin() {
+		ownerID = ""
+	}
+	upload, path, err := a.jobs.GetUploadFor(r.Context(), r.PathValue("id"), ownerID)
+	if err != nil {
+		writeJobError(w, err)
+		return
+	}
+	report, err := a.analysis.Analyze(r.Context(), analysis.File{ID: upload.ID, Name: upload.FileName, Extension: upload.Extension, Size: upload.Size, SHA256: upload.SHA256, Path: path})
+	if err != nil {
+		if errors.Is(err, analysis.ErrInvalidFile) {
+			writeAPIError(w, http.StatusUnprocessableEntity, "invalid_file", err.Error())
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, "analysis_error", "could not inspect this file")
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (a *API) submitJob(w http.ResponseWriter, r *http.Request) {

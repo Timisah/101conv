@@ -55,9 +55,7 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 ## Planned, not yet implemented as generally available
 
 - P1 capability/provider migration and saved presets: implemented in the completion commit. The remaining release gate is remote CI and browser evidence; the deployment continues to retain legacy profile IDs as a migration boundary.
-- Full file analysis / metadata Inspector and metadata-based conditions.
-- Rich image target size + combined batch maximum, bounded adaptive compression, advanced media options.
-- HDR-preserving re-encoding with output checks; optional GPU workers and device probing.
+- Metadata-based automation conditions, richer media controls, and optional GPU workers/device probing.
 - Visual multi-format Document Creator with per-page reorder/rotation, save/resume and exports.
 - Visual Automations blocks/branches and broader blueprint system.
 - Versioned extension installation/compatibility/rollback and Immich connector.
@@ -65,7 +63,7 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 
 ## P2 progress in the current worktree (not deployment evidence)
 
-The first P2 increment is implemented and source-verified in this worktree:
+The P2 scope is implemented and source-verified in this worktree:
 
 - Compression profiles can declare a numeric target-size option plus an
   adaptive quality option. Core freezes the quality range and attempt bound in
@@ -81,18 +79,25 @@ The first P2 increment is implemented and source-verified in this worktree:
   compatible profiles and freezes proportional per-file target allocations in
   the durable batch item requests, with hard minimum-budget rejection and
   best-effort handling when profile maxima are lower than the requested cap.
-- The FFmpeg compression profile now declares resolution and HDR preservation
-  constraints. The Worker shares one bounded JSON media probe with target-size
-  bitrate calculation and rejects output that loses first-video-stream
-  dimensions, HDR signaling, bit depth, static HDR side data, or detected
-  dynamic HDR metadata.
+- The FFmpeg compression profile declares explicit stream selection, safe
+  metadata/chapter preservation, resolution/HDR policies, and dynamic-HDR
+  behavior. The Worker shares one bounded typed media probe with target-size
+  bitrate calculation and rejects output that loses selected streams, audio
+  layout, comparable metadata, video dimensions, HDR signaling, bit depth,
+  static HDR side data, or configured dynamic-HDR payloads.
+- Core exposes a bounded ownership-checked upload analysis endpoint and the
+  Web UI provides an Inspector workspace for image, document, and media
+  summaries. Analysis verifies the upload digest, limits parser work, reuses
+  the shared probe, and omits private location/device/ownership metadata.
+- Successful jobs expose input/output savings, and batch allocations remain
+  independently frozen per item for deterministic retry behavior.
 
 Evidence: `server/internal/worker/runner.go`,
-`catalog/targets/profiles/jpeg-xl-compression-linux-amd64.json`,
+`server/internal/analysis/service.go`, `web/src/features/Inspector.tsx`,
+`catalog/targets/profiles/ffmpeg-compression-linux-amd64.json`,
 `docs/architecture/compression-p2.md`, and the focused/full package test runs
-performed in this worktree. Full Inspector reuse, multi-stream selection,
-stream/attachment preservation, and complete HDR10+/Dolby Vision equivalence
-remain open P2 work.
+performed in this worktree. Production deployment and broad codec-specific
+HDR10+/Dolby Vision compatibility remain unverified release risks.
 
 ## Immediate implementation queue
 

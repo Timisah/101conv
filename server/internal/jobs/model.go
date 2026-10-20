@@ -22,22 +22,25 @@ type Upload struct {
 }
 
 type Job struct {
-	ID            string    `json:"id"`
-	ProfileID     string    `json:"profileId"`
-	ProfileVer    string    `json:"profileVersion"`
-	SourceFormat  string    `json:"sourceFormat"`
-	TargetFormat  string    `json:"targetFormat"`
-	Mode          string    `json:"mode"`
-	State         State     `json:"state"`
-	Progress      int       `json:"progress"`
-	Attempt       int       `json:"attempt"`
-	MaxAttempts   int       `json:"maxAttempts"`
-	Error         string    `json:"error,omitempty"`
-	OutputSize    int64     `json:"outputSize,omitempty"`
-	OriginalState string    `json:"originalState"`
-	ResultState   string    `json:"resultState"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID             string    `json:"id"`
+	ProfileID      string    `json:"profileId"`
+	ProfileVer     string    `json:"profileVersion"`
+	SourceFormat   string    `json:"sourceFormat"`
+	TargetFormat   string    `json:"targetFormat"`
+	Mode           string    `json:"mode"`
+	State          State     `json:"state"`
+	Progress       int       `json:"progress"`
+	Attempt        int       `json:"attempt"`
+	MaxAttempts    int       `json:"maxAttempts"`
+	Error          string    `json:"error,omitempty"`
+	InputSize      int64     `json:"inputSize,omitempty"`
+	OutputSize     int64     `json:"outputSize,omitempty"`
+	SavedBytes     int64     `json:"savedBytes,omitempty"`
+	SavingsPercent float64   `json:"savingsPercent,omitempty"`
+	OriginalState  string    `json:"originalState"`
+	ResultState    string    `json:"resultState"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type Attempt struct {
@@ -111,6 +114,10 @@ type ExecutionSpec struct {
 	CompressionQualityAttempts     int      `json:"compressionQualityAttempts,omitempty"`
 	PreserveResolution             bool     `json:"preserveResolution,omitempty"`
 	PreserveHDR                    bool     `json:"preserveHDR,omitempty"`
+	StreamSelection                string   `json:"streamSelection,omitempty"`
+	PreserveMetadata               bool     `json:"preserveMetadata,omitempty"`
+	HDRPolicy                      string   `json:"hdrPolicy,omitempty"`
+	DynamicHDRPolicy               string   `json:"dynamicHDRPolicy,omitempty"`
 }
 
 type JobDetail struct {

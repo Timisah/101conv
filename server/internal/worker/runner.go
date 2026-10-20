@@ -51,6 +51,10 @@ type Invocation struct {
 	CompressionQualityAttempts     int
 	PreserveResolution             bool
 	PreserveHDR                    bool
+	StreamSelection                string
+	PreserveMetadata               bool
+	HDRPolicy                      string
+	DynamicHDRPolicy               string
 	TargetExtension                string
 	SourceExtension                string
 	ExpectedInputSHA256            string
@@ -89,7 +93,10 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	if in.TargetSizeBytes > 0 && !adaptiveQuality && (!safeRelative(in.ProbeExecutableRelativePath) || in.AudioBitrateKbps < 1 || in.MinimumVideoKbps < 1) {
 		return Result{}, fmt.Errorf("invalid compression target-size settings")
 	}
-	needsMediaProbe := in.PreserveResolution || in.PreserveHDR || in.TargetSizeBytes > 0 && !adaptiveQuality
+	if err := validateMediaPolicy(in); err != nil {
+		return Result{}, err
+	}
+	needsMediaProbe := in.PreserveResolution || in.PreserveHDR || in.StreamSelection != "" || in.PreserveMetadata || in.HDRPolicy != "" || in.DynamicHDRPolicy != "" || in.TargetSizeBytes > 0 && !adaptiveQuality
 	if needsMediaProbe && !safeRelative(in.ProbeExecutableRelativePath) {
 		return Result{}, fmt.Errorf("invalid compression media-fidelity probe settings")
 	}
@@ -171,6 +178,9 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 		if err != nil {
 			return Result{}, err
 		}
+		if err = validateInputMediaPolicy(*inputMedia, in); err != nil {
+			return Result{}, err
+		}
 	}
 	compressionArgs, err := resolveCompressionArguments(in, inputMedia)
 	if err != nil {
@@ -207,6 +217,9 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 				args = append(args, outputPath)
 				seenTarget = true
 			case "{compression.args}":
+				for _, policyArg := range mediaPolicyArguments(in) {
+					args = append(args, policyArg)
+				}
 				for _, compressionArg := range compressionArgs {
 					if err := appendArgument(compressionArg); err != nil {
 						return nil, err

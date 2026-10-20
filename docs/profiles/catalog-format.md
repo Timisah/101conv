@@ -126,8 +126,16 @@ targets must fail rather than publish an oversized result.
 Video compression profiles may additionally set `preserveResolution` and
 `preserveHDR`. Either flag requires `probeExecutable`; the Worker uses one
 bounded JSON probe for the input and output and rejects a resized, SDR,
-lower-bit-depth, or metadata-downgraded first video stream. These flags do not
-claim multi-stream, subtitle/attachment, HDR10+, or Dolby Vision equivalence.
+lower-bit-depth, or metadata-downgraded video stream. Rules may also declare
+`streamSelection` (`all`, `first-video-audio`, `first-video`, or `audio`) and
+`preserveMetadata`. The Worker expands these profile-owned values into bounded
+stream maps and metadata/chapter preservation arguments; clients cannot
+provide arbitrary map arguments. Video rules may declare `hdrPolicy`
+(`preserve`, `allow-sdr`, or `tone-map`) and `dynamicHDRPolicy` (`reject` or
+`verify`). `preserve` validates every selected video stream's typed HDR
+properties and configured dynamic side-data values; `reject` refuses
+dynamic-HDR inputs, while `verify` requires exact output payload equivalence.
+Safe private metadata fields are omitted from Inspector reports.
 
 Declared compatibility is a manifest claim. Verified compatibility is limited to the source/target pairs covered by the exact engine artifact test. An unsupported or unverified pair must not be added to `sources` or `targets`. Metadata option `0` requests converter metadata mapping and `-1` requests removal; it does not promise that output formats can carry every input EXIF field, orientation tag, timestamp, or ICC/color-profile record. Profile descriptions must state format-specific limitations.
 

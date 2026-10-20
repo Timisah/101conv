@@ -594,6 +594,29 @@ func (s *Service) CreateUpload(ctx context.Context, fileName string, input io.Re
 	return s.CreateUploadFor(ctx, "admin", MaxInputBytes, nil, fileName, input)
 }
 
+// GetUploadFor returns an ownership-checked upload and its private filesystem
+// path. The path is only exposed to the bounded analysis service; callers must
+// not publish it or let clients choose it.
+func (s *Service) GetUploadFor(ctx context.Context, uploadID, ownerID string) (Upload, string, error) {
+	if !fileIDRE.MatchString(uploadID) {
+		return Upload{}, "", ErrNotFound
+	}
+	var upload Upload
+	var err error
+	if ownerID == "" {
+		err = s.db.QueryRowContext(ctx, `SELECT id,file_name,extension,size_bytes,sha256,created_at FROM conv_uploads WHERE id=$1 AND NOT cleanup_pending AND original_deleted_at IS NULL`, uploadID).Scan(&upload.ID, &upload.FileName, &upload.Extension, &upload.Size, &upload.SHA256, &upload.CreatedAt)
+	} else {
+		err = s.db.QueryRowContext(ctx, `SELECT id,file_name,extension,size_bytes,sha256,created_at FROM conv_uploads WHERE id=$1 AND owner_id=$2 AND NOT cleanup_pending AND original_deleted_at IS NULL`, uploadID, ownerID).Scan(&upload.ID, &upload.FileName, &upload.Extension, &upload.Size, &upload.SHA256, &upload.CreatedAt)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return Upload{}, "", ErrNotFound
+	}
+	if err != nil {
+		return Upload{}, "", err
+	}
+	return upload, filepath.Join(s.uploadRoot, upload.ID), nil
+}
+
 func (s *Service) CreateUploadFor(ctx context.Context, ownerID string, maxFileBytes int64, monthlyInputBytes *int64, fileName string, input io.Reader) (view Upload, retErr error) {
 	return s.CreateUploadWithGuestCapacity(ctx, ownerID, maxFileBytes, monthlyInputBytes, 0, fileName, input)
 }
@@ -900,6 +923,8 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	var qualityHigherBetter bool
 	var qualityAttempts int
 	var preserveResolution, preserveHDR bool
+	streamSelection, hdrPolicy, dynamicHDRPolicy := rule.StreamSelection, rule.HDRPolicy, rule.DynamicHDRPolicy
+	preserveMetadata := rule.PreserveMetadata
 	optionValues := map[string]string{}
 	if mode == "compress" {
 		if profileDef.Compression == nil || len(rule.CompressionArguments) == 0 {
@@ -907,6 +932,9 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 		}
 		preserveResolution = profileDef.Compression.PreserveResolution
 		preserveHDR = profileDef.Compression.PreserveHDR
+		if hdrPolicy == "preserve" {
+			preserveHDR = true
+		}
 		var optionValues map[string]string
 		optionValues, targetSizeBytes, err = validateCompressionOptions(*profileDef.Compression, req.Options)
 		if err != nil {
@@ -945,7 +973,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 				qualityAttempts = profileDef.Compression.TargetSizeAttempts
 			}
 		}
-		if preserveResolution || preserveHDR {
+		if preserveResolution || preserveHDR || streamSelection != "" || preserveMetadata || dynamicHDRPolicy != "" {
 			probeRelative = engineDef.Executables[profileDef.Compression.ProbeExecutable]
 			if !safeExecutableRelative(probeRelative) {
 				return Job{}, false, fmt.Errorf("%w: video fidelity probe executable is unavailable", ErrUnsupported)
@@ -972,7 +1000,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			return Job{}, false, err
 		}
 	}
-	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && profileDef.Compression != nil && profileDef.Compression.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts, PreserveResolution: preserveResolution, PreserveHDR: preserveHDR}
+	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && profileDef.Compression != nil && profileDef.Compression.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts, PreserveResolution: preserveResolution, PreserveHDR: preserveHDR, StreamSelection: streamSelection, PreserveMetadata: preserveMetadata, HDRPolicy: hdrPolicy, DynamicHDRPolicy: dynamicHDRPolicy}
 	specBytes, err := json.Marshal(spec)
 	if err != nil {
 		return Job{}, false, err
@@ -1292,16 +1320,27 @@ func (s *Service) getByIdempotency(ctx context.Context, key, ownerID string) (id
 	return r, err
 }
 
-const jobColumns = `id,profile_id,profile_version,source_format,target_format,mode,state,progress,attempt_count,max_attempts,COALESCE(error,''),result_size,created_at,updated_at,
+const jobColumns = `id,profile_id,profile_version,source_format,target_format,mode,state,progress,attempt_count,max_attempts,COALESCE(error,''),COALESCE((SELECT size_bytes FROM conv_uploads u WHERE u.id=conv_jobs.upload_id),0),result_size,created_at,updated_at,
 CASE WHEN EXISTS(SELECT 1 FROM conv_uploads u WHERE u.id=conv_jobs.upload_id AND u.original_deleted_at IS NOT NULL) THEN 'expired' WHEN EXISTS(SELECT 1 FROM conv_uploads u WHERE u.id=conv_jobs.upload_id AND u.original_missing_at IS NOT NULL) THEN 'missing' WHEN EXISTS(SELECT 1 FROM conv_uploads u WHERE u.id=conv_jobs.upload_id AND u.cleanup_pending) THEN 'scheduled' ELSE 'available' END,
 CASE WHEN result_deleted_at IS NOT NULL THEN 'expired' WHEN result_missing_at IS NOT NULL THEN 'missing' WHEN result_cleanup_pending THEN 'scheduled' WHEN result_key IS NOT NULL THEN 'available' ELSE 'not_ready' END`
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanJob(row rowScanner, job *Job, extra ...any) error {
-	args := []any{&job.ID, &job.ProfileID, &job.ProfileVer, &job.SourceFormat, &job.TargetFormat, &job.Mode, &job.State, &job.Progress, &job.Attempt, &job.MaxAttempts, &job.Error, &job.OutputSize, &job.CreatedAt, &job.UpdatedAt, &job.OriginalState, &job.ResultState}
+	args := []any{&job.ID, &job.ProfileID, &job.ProfileVer, &job.SourceFormat, &job.TargetFormat, &job.Mode, &job.State, &job.Progress, &job.Attempt, &job.MaxAttempts, &job.Error, &job.InputSize, &job.OutputSize, &job.CreatedAt, &job.UpdatedAt, &job.OriginalState, &job.ResultState}
 	args = append(args, extra...)
-	return row.Scan(args...)
+	if err := row.Scan(args...); err != nil {
+		return err
+	}
+	finalizeJob(job)
+	return nil
+}
+
+func finalizeJob(job *Job) {
+	if job.InputSize > 0 && job.OutputSize > 0 && job.OutputSize < job.InputSize {
+		job.SavedBytes = job.InputSize - job.OutputSize
+		job.SavingsPercent = float64(job.SavedBytes) / float64(job.InputSize) * 100
+	}
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Job, error) {

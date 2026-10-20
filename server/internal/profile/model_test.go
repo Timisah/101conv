@@ -94,6 +94,26 @@ func TestCompressionRequiresDeclaredAndBoundedOptions(t *testing.T) {
 	}
 }
 
+func TestMediaPolicyIsExplicitAndBounded(t *testing.T) {
+	definition := Definition{
+		SchemaVersion: 1, ID: "media-policy", Version: "1.0.0", Name: "Media policy",
+		Engines: []EngineRequirement{{EngineID: "ffmpeg"}},
+		Rules:   []ConversionRule{{EngineID: "ffmpeg", Executable: "ffmpeg", Sources: []string{"mp4"}, Targets: []string{"mkv"}, StreamSelection: "all", PreserveMetadata: true, HDRPolicy: "preserve", DynamicHDRPolicy: "verify", Arguments: []string{"-i", "{source}", "{target}"}}},
+	}
+	if err := definition.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	definition.Rules[0].StreamSelection = "primary"
+	if err := definition.Validate(); err == nil {
+		t.Fatal("unsupported stream selection should be rejected")
+	}
+	definition.Rules[0].StreamSelection = "all"
+	definition.Rules[0].HDRPolicy = "allow-sdr"
+	if err := definition.Validate(); err == nil {
+		t.Fatal("dynamic HDR verification without HDR preservation should be rejected")
+	}
+}
+
 func TestExplicitProfileTypeRejectsMixedConfiguration(t *testing.T) {
 	min, max, step := 1.0, 8.0, 1.0
 	definition := Definition{

@@ -1,10 +1,10 @@
 # P2: bounded target-size compression
 
 This document records the verified P2 increments. It covers per-file
-target-size contracts, deterministic combined batch budgets, and a bounded
-shared media analysis path for declared video fidelity constraints. Stream
-selection, full Inspector reuse, and complete HDR-aware video policy remain
-open P2 work.
+target-size contracts, deterministic combined batch budgets, a bounded shared
+media analysis path, explicit stream/metadata policy, and HDR-aware output
+equivalence checks. The implementation is source and test verified; it is not
+deployment evidence.
 
 ## Contract
 
@@ -54,29 +54,38 @@ item request, so resume and retry do not recalculate the budget.
 
 Combined budgets currently require one whole-megabyte numeric target-size
 option per item and use the Worker output ceiling as an additional per-file
-cap. The combined field is a maximum, not an exact total, and it does not yet
-coordinate a single analysis pass across the batch or coordinate stream
-selection across files.
+cap. Each item is independently resolved and frozen, so a retry cannot change
+its allocation or profile. The combined field is a maximum, not an exact
+total.
 
 ## Video fidelity validation
 
-Compression profiles may set `preserveResolution` and `preserveHDR`. These
-flags require a bounded `probeExecutable`. Core freezes them into the
-immutable execution specification. The Worker runs one JSON media probe per
-attempt, reuses its duration for bitrate sizing, and validates each candidate
-output when the flags are enabled. The current checks cover the first video
-stream's dimensions, transfer/primaries/matrix/range, bit depth, mastering
-display/content-light side data, and the presence of detected dynamic HDR
-metadata. Missing or downgraded properties fail publication.
+Compression rules may declare `streamSelection` (`all`, `first-video-audio`,
+`first-video`, or `audio`) and `preserveMetadata`. Core validates and freezes
+these values; the Worker expands them into allowlisted FFmpeg `-map` and
+metadata/chapter arguments. Candidate output is rejected if the selected
+stream layout, audio channel layout, or safe comparable metadata is lost.
 
-This slice does not select among multiple streams, preserve every subtitle or
-attachment stream, or guarantee HDR10+/Dolby Vision payload equivalence. Those
-remain explicit follow-up work rather than silent fallback behavior.
+`preserveResolution` and `preserveHDR` require a bounded `probeExecutable`.
+Core freezes them, along with `hdrPolicy` (`preserve`, `allow-sdr`, or
+`tone-map`) and `dynamicHDRPolicy` (`reject` or `verify`), into the immutable
+execution specification. The Worker reuses the input probe for bitrate sizing
+and validates every selected video stream in `all` mode. Preserve checks cover
+dimensions, transfer/primaries/matrix/range, bit depth, mastering-display and
+content-light side data, and detected dynamic HDR payload values. Unsupported
+dynamic HDR can be rejected at input; verified dynamic metadata must match
+exactly. Missing or downgraded properties fail publication.
+
+The Core exposes `GET /api/v1/uploads/{id}/analysis` for an authenticated,
+ownership-checked Inspector workspace. It verifies the upload digest, applies
+bounded image/document checks, and reuses the typed media probe. Reports omit
+location, GPS, serial-number, and ownership metadata and are capped before
+being returned or shown in the Web UI.
 
 ## Verification
 
-The Worker tests cover a real FFmpeg target-size media job, a deterministic
-adaptive-quality fixture, input digest validation, output signatures, timeout
-handling, and oversized/invalid results. Catalog preflight validates the new
-profile fields and placeholder rules. These checks are source/test evidence;
-they do not establish deployment or production-engine verification.
+The Worker, Core analysis, HTTP API, profile, jobs, and shared media packages
+have focused tests. Frontend lint, type checking, and a Vite production build
+also pass. Catalog preflight validates the profile fields and placeholder
+rules. These checks are source/test evidence; they do not establish deployment
+or production-engine verification.

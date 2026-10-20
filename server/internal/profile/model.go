@@ -109,6 +109,13 @@ type ConversionRule struct {
 	Executable string   `json:"executable"`
 	Sources    []string `json:"sources"`
 	Targets    []string `json:"targets"`
+	// StreamSelection is a profile-owned media policy. The Worker expands it
+	// into allowlisted FFmpeg mapping arguments; clients cannot inject maps.
+	// Supported values are all, first-video-audio, first-video, and audio.
+	StreamSelection  string `json:"streamSelection,omitempty"`
+	PreserveMetadata bool   `json:"preserveMetadata,omitempty"`
+	HDRPolicy        string `json:"hdrPolicy,omitempty"`        // preserve, allow-sdr, or tone-map
+	DynamicHDRPolicy string `json:"dynamicHDRPolicy,omitempty"` // reject or verify
 	// Arguments are argv tokens, never a shell command string.
 	Arguments []string `json:"arguments"`
 	// Options exposes typed, bounded controls for this source/target mapping.
@@ -216,6 +223,9 @@ func (d Definition) Validate() error {
 		if strings.TrimSpace(rule.Executable) == "" || len(rule.Sources) == 0 || len(rule.Targets) == 0 {
 			return fmt.Errorf("rule %d must declare an executable, sources, and targets", i)
 		}
+		if err := validateMediaPolicy(rule); err != nil {
+			return fmt.Errorf("rule %d media policy: %w", i, err)
+		}
 		if err := validateOptions(rule.Options); err != nil {
 			return fmt.Errorf("rule %d options: %w", i, err)
 		}
@@ -289,6 +299,31 @@ func (d Definition) Validate() error {
 		}
 	default:
 		return fmt.Errorf("profile type must be conversion or compression")
+	}
+	return nil
+}
+
+func validateMediaPolicy(rule ConversionRule) error {
+	switch rule.StreamSelection {
+	case "", "all", "first-video-audio", "first-video", "audio":
+	default:
+		return fmt.Errorf("stream selection must be all, first-video-audio, first-video, or audio")
+	}
+	switch rule.HDRPolicy {
+	case "", "preserve", "allow-sdr", "tone-map":
+	default:
+		return fmt.Errorf("HDR policy must be preserve, allow-sdr, or tone-map")
+	}
+	switch rule.DynamicHDRPolicy {
+	case "", "reject", "verify":
+	default:
+		return fmt.Errorf("dynamic HDR policy must be reject or verify")
+	}
+	if rule.DynamicHDRPolicy != "" && rule.HDRPolicy != "preserve" {
+		return fmt.Errorf("dynamic HDR policy requires preserve HDR policy")
+	}
+	if rule.HDRPolicy == "tone-map" && rule.DynamicHDRPolicy != "" {
+		return fmt.Errorf("tone mapping cannot declare dynamic HDR preservation")
 	}
 	return nil
 }
