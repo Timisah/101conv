@@ -6,6 +6,8 @@ The marketplace uses a versioned catalog at `catalog/metadata` and `catalog/targ
 
 The official repository is hosted as static files on GitHub and appears by default in browse-only mode. An administrator can explicitly approve unsigned official installs from Administration. That choice persists in Go data storage and enables package previews/install/update using HTTPS, declared sizes, SHA-256 checks, compatibility checks, and safe extraction. These checks detect corruption but do not authenticate the publisher; anyone able to alter the GitHub catalog can replace the manifests and hashes. Revoke the approval in Administration at any time. A verified TUF root remains the recommended way to enable installs. The service never downloads artifacts while browsing. The root slot is intentionally empty until production signing is provisioned.
 
+The signed target catalog at `catalog/targets/catalog/index.json` is the authoritative release list. The legacy compatibility index at `catalog/index.json` and Core's embedded `server/internal/catalog/official.json` are generated from it; they are checked into the repository so older clients and first-run installs do not need to fetch the signed repository just to browse capabilities. Run `python3 scripts/sync-compatibility-catalog.py --check` in CI, or `--write` after reviewing a target-catalog change. The older files under `catalog/profiles/` remain in place for clients that already reference those immutable manifest paths.
+
 The Go catalog exposes separate conversion and compression profiles:
 
 - **FFmpeg Audio/Video Conversion** and **FFmpeg Audio/Video Compression** share one FFmpeg engine installation.
@@ -111,7 +113,7 @@ Conversion rules may declare `options` using the same bounded `number`, `select`
 
 Declared compatibility is a manifest claim. Verified compatibility is limited to the source/target pairs covered by the exact engine artifact test. An unsupported or unverified pair must not be added to `sources` or `targets`. Metadata option `0` requests converter metadata mapping and `-1` requests removal; it does not promise that output formats can carry every input EXIF field, orientation tag, timestamp, or ICC/color-profile record. Profile descriptions must state format-specific limitations.
 
-The current catalog does not ship LibreOffice or PDF rasterization. A secure, pinned multi-architecture LibreOffice build with a reviewed license and artifact provenance is still required before adding DOCX/ODT/XLSX/PPTX to the marketplace. PDF-to-image needs a separately reviewed renderer; it is not represented as LibreOffice support.
+The target catalog also ships managed LibreOffice Office-to-PDF and Poppler PDF rendering/text extraction adapters for supported Linux AMD64 deployments. Their small adapter archives are pinned and checked against the exact Worker runtime; they do not imply arbitrary Office fidelity, OCR, editable PDF output, or support on other architectures. Keep the document profiles separate: LibreOffice publishes Office-to-PDF rules, while Poppler publishes PDF page rendering and text extraction rules.
 
 The manifest schema and validation behavior are versioned by `schemaVersion`. Additive optional fields can be introduced without a Core patch; changing placeholder semantics or execution behavior requires a schema/Worker compatibility change and should be documented as such. Third-party repositories should test against the oldest supported 101conv version named by their catalog bounds.
 

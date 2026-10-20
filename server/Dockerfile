@@ -1,9 +1,14 @@
-FROM golang:1.27.2-alpine AS build
+# syntax=docker/dockerfile:1
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
 WORKDIR /src
 COPY go.mod ./
 COPY . .
 ARG APP_VERSION=0.1.0
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.buildVersion=${APP_VERSION}" -o /out/101conv ./cmd/101conv && chmod 0755 /out/101conv
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    if [ -f /run/secrets/proxy_ca ]; then \
+      cat /etc/ssl/certs/ca-certificates.crt /run/secrets/proxy_ca >/tmp/101conv-ca.pem; \
+      export SSL_CERT_FILE=/tmp/101conv-ca.pem; \
+    fi && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.buildVersion=${APP_VERSION}" -o /out/101conv ./cmd/101conv && chmod 0755 /out/101conv
 RUN mkdir -p /out/var/lib/101conv/uploads /out/var/lib/101conv/results && chmod 0700 /out/var/lib/101conv/uploads /out/var/lib/101conv/results
 
 FROM scratch

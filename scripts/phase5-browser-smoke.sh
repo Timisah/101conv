@@ -99,6 +99,8 @@ export DATA_PATH="$tmp_root/data"
 export GO_DATA_PATH="$tmp_root/go-data"
 export AUTOMATION_HOST_PATH="$tmp_root/automation-mounts"
 export POSTGRES_PASSWORD="phase5-smoke-$(date +%s)-$RANDOM"
+export POSTGRES_WORKER_USER=101conv_worker
+export POSTGRES_WORKER_PASSWORD="phase5-worker-$(date +%s)-$RANDOM"
 export POSTGRES_USER=101conv
 export POSTGRES_DB=101conv
 export ENGINE_ADMIN_TOKEN="phase5-admin-$(date +%s)-$RANDOM"
@@ -121,6 +123,8 @@ cat > "$tmp_root/compose.env" <<ENV
 DATA_PATH=$DATA_PATH
 GO_DATA_PATH=$GO_DATA_PATH
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+POSTGRES_WORKER_USER=$POSTGRES_WORKER_USER
+POSTGRES_WORKER_PASSWORD=$POSTGRES_WORKER_PASSWORD
 POSTGRES_USER=$POSTGRES_USER
 POSTGRES_DB=$POSTGRES_DB
 ENGINE_ADMIN_TOKEN=$ENGINE_ADMIN_TOKEN
@@ -198,11 +202,11 @@ trap cleanup EXIT
 redact_file() {
   local file="$1"
   [[ -f "$file" ]] || return 0
-  SMOKE_REDACT_TOKEN="$ENGINE_ADMIN_TOKEN" SMOKE_REDACT_PASSWORD="$POSTGRES_PASSWORD" python3 - "$file" <<'PY'
+  SMOKE_REDACT_TOKEN="$ENGINE_ADMIN_TOKEN" SMOKE_REDACT_PASSWORD="$POSTGRES_PASSWORD" SMOKE_REDACT_WORKER_PASSWORD="$POSTGRES_WORKER_PASSWORD" python3 - "$file" <<'PY'
 import os,re,sys
 from pathlib import Path
 p=Path(sys.argv[1]); s=p.read_text(errors='replace')
-for secret in (os.environ.get('SMOKE_REDACT_TOKEN',''),os.environ.get('SMOKE_REDACT_PASSWORD',''),'smoke-test-password-123','smoke-user-password-123'):
+for secret in (os.environ.get('SMOKE_REDACT_TOKEN',''),os.environ.get('SMOKE_REDACT_PASSWORD',''),os.environ.get('SMOKE_REDACT_WORKER_PASSWORD',''),'smoke-test-password-123','smoke-user-password-123'):
     if secret: s=s.replace(secret,'[REDACTED]')
 s=re.sub(r'(?i)(authorization[\s:=\"\']+)(?:bearer\s+)?[^\s,\"\']+',r'\1[REDACTED]',s)
 s=re.sub(r'(?i)((?:password|token|api[_-]?key)[\s:=\"\']+)[^\s,\"\']+',r'\1[REDACTED]',s)

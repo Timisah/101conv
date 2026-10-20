@@ -16,12 +16,15 @@ if [[ ! -f .env ]]; then
   mkdir -p data/go-data/engines data/go-data/imports
   postgres_secret="$(openssl rand -hex 32)"
   admin_secret="$(openssl rand -hex 32)"
+  worker_secret="$(openssl rand -hex 32)"
   env_tmp="$(mktemp "$repo_root/.env.XXXXXXXX")"
   trap 'rm -f "$env_tmp"' EXIT
   {
     printf 'DATA_PATH=%s\n' "$repo_root/data"
     printf 'POSTGRES_PASSWORD=%s\n' "$postgres_secret"
     printf 'ENGINE_ADMIN_TOKEN=%s\n' "$admin_secret"
+    printf 'POSTGRES_WORKER_USER=101conv_worker\n'
+    printf 'POSTGRES_WORKER_PASSWORD=%s\n' "$worker_secret"
     printf 'PORT=5656\n'
   } > "$env_tmp"
   chmod 0600 "$env_tmp"

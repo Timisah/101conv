@@ -42,15 +42,50 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("catalog should support this app: %v", err)
 	}
-	if len(entries) != 2 || entries[0].ID != "ffmpeg-linux-amd64" || entries[1].ID != "ffmpeg-image-linux-amd64" {
-		t.Fatalf("expected the official FFmpeg profiles, got %+v", entries)
+	want := []struct{ id, version string }{
+		{"ffmpeg-linux-amd64", "1.2.0"},
+		{"ffmpeg-image-linux-amd64", "1.0.0"},
+		{"ffmpeg-image-linux-amd64", "1.1.0"},
+		{"jpeg-xl-linux-amd64", "1.2.0"},
+		{"ffmpeg-compression-linux-amd64", "1.0.0"},
+		{"jpeg-xl-compression-linux-amd64", "1.0.0"},
+		{"libreoffice-pdf-linux-amd64", "1.0.0"},
+		{"poppler-pdf-linux-amd64", "1.0.0"},
 	}
-	old, err := New("0.2.0")
+	if len(entries) != len(want) {
+		t.Fatalf("expected %d official profiles, got %d: %+v", len(want), len(entries), entries)
+	}
+	for i, expected := range want {
+		if entries[i].ID != expected.id || entries[i].Version != expected.version {
+			t.Fatalf("profile %d = %s %s, want %s %s", i, entries[i].ID, entries[i].Version, expected.id, expected.version)
+		}
+	}
+	old, err := New("1.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := old.Available(); err == nil {
 		t.Fatal("expected exclusive maximum app version to be rejected")
+	}
+}
+
+func TestOfficialCatalogIncludesDocumentAndCompressionEngines(t *testing.T) {
+	service, err := New("0.1.0-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := service.AvailableEngines()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ffmpeg", "jpeg-xl", "libreoffice", "poppler"}
+	if len(entries) != len(want) {
+		t.Fatalf("expected %d official engines, got %d: %+v", len(want), len(entries), entries)
+	}
+	for i, id := range want {
+		if entries[i].ID != id {
+			t.Fatalf("engine %d = %q, want %q", i, entries[i].ID, id)
+		}
 	}
 }
 

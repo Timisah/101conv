@@ -1,25 +1,61 @@
 {
   "version": 1,
-  "minimumAppVersion": "0.0.1",
-  "maximumAppVersionExclusive": "0.2.0",
+  "minimumAppVersion": "0.1.0",
+  "maximumAppVersionExclusive": "1.0.0",
+  "engines": [
+    {
+      "id": "ffmpeg",
+      "version": "9.0.2-28-g669f5ab083+101conv.1",
+      "name": "FFmpeg LGPL (Linux x86-64)",
+      "description": "Static BtbN Linux x86-64 build for common audio and video conversion; GPL-only x264 and x265 encoders are excluded.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/engines/ffmpeg-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
+      "id": "jpeg-xl",
+      "version": "0.12.0",
+      "name": "JPEG XL tools (Linux x86-64)",
+      "description": "Static JPEG XL command-line tools from the libjxl project.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/engines/jpeg-xl-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
+      "id": "libreoffice",
+      "version": "25.2.3+deb13u8.1",
+      "name": "LibreOffice document runtime (Linux x86-64)",
+      "description": "Managed adapter for the exact Debian runtime in the document Worker image. Requires Dockerfile.worker; installation does not download a system package.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/engines/libreoffice-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
+      "id": "poppler",
+      "version": "25.3.0+deb13u4.1",
+      "name": "Poppler document runtime (Linux x86-64)",
+      "description": "Managed adapter for the exact Debian runtime in the document Worker image. Requires Dockerfile.worker; installation does not download a system package.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/engines/poppler-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    }
+  ],
   "profiles": [
     {
       "id": "ffmpeg-linux-amd64",
-      "version": "9.0.2-28-g669f5ab083",
-      "name": "FFmpeg LGPL (Linux x86-64)",
-      "description": "Video and audio conversion using the upstream static LGPL build. x264 and x265 GPL encoders are not included.",
-      "supportedExtensions": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "mpg", "mpeg", "3gp", "flv", "mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
-      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/profiles/ffmpeg-linux-amd64.json",
-      "minimumAppVersion": "0.0.1",
-      "maximumAppVersionExclusive": "0.2.0"
+      "version": "1.2.0",
+      "name": "FFmpeg Audio/Video Conversion",
+      "description": "Common audio and video transcoding and target-size compression using a shared FFmpeg engine installation.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
     },
     {
-      "id": "jpeg-xl-linux-amd64",
-      "version": "0.12.0",
-      "name": "JPEG XL (Linux x86-64)",
-      "description": "Official static JPEG XL tools for Linux x86-64 image encoding and decoding.",
-      "supportedExtensions": ["jpeg", "jpg", "png", "apng", "gif", "jxl"],
-      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/profiles/jpeg-xl-linux-amd64.json",
+      "id": "ffmpeg-image-linux-amd64",
+      "version": "1.0.0",
+      "name": "FFmpeg Image Conversion",
+      "description": "Common raster image conversion through the pinned LGPL FFmpeg build. AVIF support depends on the capabilities compiled into that release.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-image-linux-amd64.json",
       "minimumAppVersion": "0.0.1",
       "maximumAppVersionExclusive": "0.2.0"
     },
@@ -27,9 +63,53 @@
       "id": "ffmpeg-image-linux-amd64",
       "version": "1.1.0",
       "name": "FFmpeg Image Conversion",
-      "description": "Verified image conversion for common raster formats using the pinned LGPL FFmpeg build, with target-specific resize, quality, compression, and metadata controls.",
-      "supportedExtensions": ["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif", "avif"],
+      "description": "Verified raster image conversion through the pinned LGPL FFmpeg build. Still-image targets take the first frame; WebP and GIF preserve animation. AVIF is encoded as a single still image.",
       "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-image-linux-amd64-1.1.0.json",
+      "minimumAppVersion": "0.0.1",
+      "maximumAppVersionExclusive": "0.2.0"
+    },
+    {
+      "id": "jpeg-xl-linux-amd64",
+      "version": "1.2.0",
+      "name": "JPEG XL Image Conversion",
+      "description": "Encode JPEG, PNG, APNG, and GIF images as JPEG XL with adjustable quality; decode JPEG XL to JPEG or PNG.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/jpeg-xl-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
+      "id": "ffmpeg-compression-linux-amd64",
+      "version": "1.0.0",
+      "name": "FFmpeg Audio/Video Compression",
+      "description": "FFmpeg Audio/Video Compression settings using the shared ffmpeg engine installation.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-compression-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
+      "id": "jpeg-xl-compression-linux-amd64",
+      "version": "1.0.0",
+      "name": "JPEG XL Image Compression",
+      "description": "JPEG XL Image Compression settings using the shared jpeg-xl engine installation.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/jpeg-xl-compression-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
+      "id": "libreoffice-pdf-linux-amd64",
+      "version": "1.0.0",
+      "name": "Office Documents to PDF",
+      "description": "Word, Excel, PowerPoint, OpenDocument, RTF and text to PDF. Requires the document Worker image. Fonts may be substituted; review complex layouts. Password-protected documents are unsupported.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/libreoffice-pdf-linux-amd64.json",
+      "minimumAppVersion": "0.0.1",
+      "maximumAppVersionExclusive": "0.2.0"
+    },
+    {
+      "id": "poppler-pdf-linux-amd64",
+      "version": "1.0.0",
+      "name": "PDF Rendering & Text Extraction",
+      "description": "Render one chosen PDF page to PNG/JPEG, or extract UTF-8 text. Scanned PDFs require OCR, which is not included. Encrypted PDFs are unsupported. Requires the document Worker image.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/poppler-pdf-linux-amd64.json",
       "minimumAppVersion": "0.0.1",
       "maximumAppVersionExclusive": "0.2.0"
     }

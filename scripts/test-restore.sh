@@ -9,6 +9,7 @@ docker image inspect "$SMOKE_IMAGE" >/dev/null
 docker image inspect "$BROWSER_IMAGE" >/dev/null
 backup_dir="$(realpath "$1")"
 "$(dirname "$0")/verify-backup.sh" "$backup_dir"
+restore_init_script="$(realpath "$(dirname "$0")/../db/init/01-worker-role.sh")"
 original_project="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("project", ""))' "$backup_dir/manifest.json")"
 [[ -n "$original_project" ]] || { echo 'Backup manifest does not record its Compose project identity.' >&2; exit 1; }
 suffix="$(openssl rand -hex 6)"
@@ -19,19 +20,20 @@ chmod 0755 "$check_dir"
 if [[ -n "${RESTORE_ARTIFACT_DIR:-}" ]]; then mkdir -p "$RESTORE_ARTIFACT_DIR/checks"; fi
 compose_file="$check_dir/compose.yaml"
 restore_password="$(openssl rand -hex 24)"
+restore_worker_password="$(openssl rand -hex 24)"
 restore_admin_token="restore-test-$(openssl rand -hex 24)"
 created_volumes=()
 export RESTORE_GO_VOLUME="$volume_prefix-go" RESTORE_UPLOADS_VOLUME="$volume_prefix-uploads" RESTORE_RESULTS_VOLUME="$volume_prefix-results" RESTORE_POSTGRES_VOLUME="$volume_prefix-postgres"
-export RESTORE_PASSWORD="$restore_password" RESTORE_ADMIN_TOKEN="$restore_admin_token" RESTORE_IMAGE="$SMOKE_IMAGE"
+export RESTORE_PASSWORD="$restore_password" RESTORE_WORKER_USER=101conv_worker RESTORE_WORKER_PASSWORD="$restore_worker_password" RESTORE_INIT_SCRIPT="$restore_init_script" RESTORE_ADMIN_TOKEN="$restore_admin_token" RESTORE_IMAGE="$SMOKE_IMAGE"
 cleanup() {
   status=$?
   if [[ "$status" -ne 0 && -n "${RESTORE_ARTIFACT_DIR:-}" ]]; then
     docker compose -p "$project" -f "$compose_file" logs --no-color --tail 200 > "$RESTORE_ARTIFACT_DIR/restore-compose.log" 2>&1 || true
-    RESTORE_REDACT_TOKEN="$RESTORE_ADMIN_TOKEN" RESTORE_REDACT_PASSWORD="$RESTORE_PASSWORD" python3 - "$RESTORE_ARTIFACT_DIR/restore-compose.log" <<'PY'
+    RESTORE_REDACT_TOKEN="$RESTORE_ADMIN_TOKEN" RESTORE_REDACT_PASSWORD="$RESTORE_PASSWORD" RESTORE_REDACT_WORKER_PASSWORD="$RESTORE_WORKER_PASSWORD" python3 - "$RESTORE_ARTIFACT_DIR/restore-compose.log" <<'PY'
 import os,sys
 from pathlib import Path
 p=Path(sys.argv[1]); text=p.read_text(errors='replace')
-for value in (os.environ.get('RESTORE_REDACT_TOKEN',''),os.environ.get('RESTORE_REDACT_PASSWORD','')):
+for value in (os.environ.get('RESTORE_REDACT_TOKEN',''),os.environ.get('RESTORE_REDACT_PASSWORD',''),os.environ.get('RESTORE_REDACT_WORKER_PASSWORD','')):
     if value: text=text.replace(value,'[REDACTED]')
 p.write_text(text)
 PY
@@ -72,8 +74,11 @@ services:
       POSTGRES_DB: 101conv
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${RESTORE_PASSWORD:?}
+      POSTGRES_WORKER_USER: ${RESTORE_WORKER_USER:?}
+      POSTGRES_WORKER_PASSWORD: ${RESTORE_WORKER_PASSWORD:?}
     volumes:
       - restored-postgres:/var/lib/postgresql/data
+      - ${RESTORE_INIT_SCRIPT:?}:/docker-entrypoint-initdb.d/01-worker-role.sh:ro
     networks: [private]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d 101conv"]
@@ -120,7 +125,7 @@ services:
     image: ${RESTORE_IMAGE:?}
     command: ["worker"]
     environment:
-      DATABASE_URL: host=postgres port=5432 user=postgres password=${RESTORE_PASSWORD} dbname=101conv sslmode=disable
+      DATABASE_URL: host=postgres port=5432 user=${RESTORE_WORKER_USER} password=${RESTORE_WORKER_PASSWORD} dbname=101conv sslmode=disable
       ENGINE_ROOT: /var/lib/101conv/engines
       UPLOADS_PATH: /var/lib/101conv/uploads
       RESULTS_PATH: /var/lib/101conv/results

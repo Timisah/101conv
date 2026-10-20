@@ -6,6 +6,18 @@ info:
 servers:
   - url: /
 paths:
+  /healthz:
+    get:
+      summary: Process liveness probe
+      responses:
+        '200': { description: Core process is serving HTTP }
+  /readyz:
+    get:
+      summary: Core service readiness probe
+      description: Returns 200 when PostgreSQL schema access and Core-managed storage are available. This does not require a Worker or installed converter; readyToConvert is a separate operational signal exposed by the authenticated operations endpoint.
+      responses:
+        '200': { description: Core can serve setup and API requests }
+        '503': { description: PostgreSQL, schema, or Core storage is unavailable }
   /api/v1/setup/status:
     get:
       summary: Check whether first-run setup is claimed and complete
@@ -210,7 +222,7 @@ paths:
   /api/v1/auth/guest-session:
     post:
       summary: Start a temporary, isolated anonymous conversion session
-      description: Available only after first-run administrator setup and when guest mode is enabled. A unique 256-bit credential is issued as an HttpOnly, SameSite Strict cookie; only its digest is persisted. Guest-session creation is public and rate limited. Subsequent guest uploads, submissions, cancellations, downloads, and logout require an exact same-origin request or the frontend's explicit non-simple `X-101conv-Request: guest-session` marker when a documented proxy strips browser origin metadata; JSON content type alone is not sufficient.
+      description: "Available only after first-run administrator setup and when guest mode is enabled. A unique 256-bit credential is issued as an HttpOnly, SameSite Strict cookie; only its digest is persisted. Guest-session creation is public and rate limited. Subsequent guest uploads, submissions, cancellations, downloads, and logout require an exact same-origin request or the frontend's explicit non-simple `X-101conv-Request: guest-session` marker when a documented proxy strips browser origin metadata; JSON content type alone is not sufficient."
       responses:
         '201': { description: Guest session created; cookie and effective guest limits returned }
         '403': { description: Guest access is disabled or setup is incomplete }
@@ -608,7 +620,7 @@ paths:
   /api/v1/profiles:
     get:
       summary: List profile catalogs and installed profiles
-      description: Administrator, converting user, or API key with conversion:submit scope.
+      description: "Administrator, converting user, or API key with conversion:submit scope."
       security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       responses:
         '200': { description: Catalog sources and installed profile summaries }

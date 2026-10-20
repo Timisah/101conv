@@ -33,6 +33,49 @@ func TestCatalogSourceIsAvailableOnFreshInstall(t *testing.T) {
 	}
 }
 
+func TestHealthIsLivenessAndReadinessReportsMissingDependencies(t *testing.T) {
+	catalogService, err := catalog.New("0.1.0-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(New("0.1.0-dev", catalogService))
+	defer server.Close()
+
+	response, err := server.Client().Get(server.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		t.Fatalf("health status = %d, want 200", response.StatusCode)
+	}
+	var health map[string]any
+	if err = json.NewDecoder(response.Body).Decode(&health); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if health["status"] != "ok" {
+		t.Fatalf("health status body = %v, want ok", health["status"])
+	}
+
+	response, err = server.Client().Get(server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("readiness status = %d, want 503", response.StatusCode)
+	}
+	var readiness map[string]any
+	if err = json.NewDecoder(response.Body).Decode(&readiness); err != nil {
+		t.Fatal(err)
+	}
+	if readiness["coreReady"] != false {
+		t.Fatalf("readiness body = %#v, want coreReady false", readiness)
+	}
+}
+
 func TestSameOriginRequestChecksExactOriginAndScheme(t *testing.T) {
 	tests := []struct {
 		name          string

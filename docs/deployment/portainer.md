@@ -23,6 +23,8 @@ Portainer variables:
 | `DATA_PATH` | Yes, unless `GO_DATA_PATH` is set | Parent of the existing `go-data` directory. Keep its current value during updates. |
 | `GO_DATA_PATH` | No | Exact persistent Go state directory; takes precedence over `${DATA_PATH}/go-data`. |
 | `POSTGRES_PASSWORD` | Yes | PostgreSQL password. Reuse the value associated with an existing database volume. |
+| `POSTGRES_WORKER_USER` | No for existing stacks; generated for new installs | Dedicated Worker database login; default `101conv_worker`. Keep this value stable after migration. |
+| `POSTGRES_WORKER_PASSWORD` | Yes for new installs; required before an existing Worker switch | Separate strong password for the Worker login. Existing stacks must run the additive migration below before restarting Worker with this value. |
 | `ENGINE_ADMIN_TOKEN` | Yes | Strong administrator login/API token. |
 | `PORT` | No | Published web port; default `5656`. |
 | `POSTGRES_DB` | No | Database name; default `101conv`. Keep existing value when reusing a volume. |
@@ -59,6 +61,15 @@ After redeployment, visit `http://<docker-host>:5656/` (or the configured `PORT`
 For a fresh instance, use a random `ENGINE_ADMIN_TOKEN` of at least 24 characters. The browser asks for that bootstrap passphrase to claim the initial administrator account. Keep the value private: the original token login remains valid for compatibility after setup. If a previous deployment already has accounts, onboarding is marked complete during migration and they continue to sign in. If a previous token-only deployment has no accounts, its existing token can claim the initial account; the existing data remains untouched. The setup review checks only container-visible paths; it cannot create Docker mounts or change ownership on your Ubuntu host.
 
 New local installs can instead use [`scripts/install.sh`](../../scripts/install.sh), which creates `.env` and the data path. Existing Portainer stacks should keep their current environment table and stack identity. Review [backup and isolated restore instructions](backup.md) before upgrades; the backup destination must be outside live storage.
+
+For an existing database volume, take a backup, add `POSTGRES_WORKER_USER` and a new strong `POSTGRES_WORKER_PASSWORD` to the stack environment, then run the migration from a checkout on the Docker host before restarting or recreating Worker:
+
+```sh
+set -a; . ./.env; set +a
+scripts/migrate-worker-db-role.sh
+```
+
+If the stack is managed only through Portainer, run the same script from an administrative shell with the Compose project selected and the two variables exported. The migration is additive, preserves the Core credentials and data, and grants the Worker application-table DML needed by the current job implementation. Verify the result with [`scripts/verify-worker-db-role.sh`](../../scripts/verify-worker-db-role.sh). New installs run the equivalent init hook automatically.
 
 ## Data and migration boundary
 

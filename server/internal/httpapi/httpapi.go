@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
@@ -351,11 +352,72 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func (a *API) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	// Keep the historical status value for simple external probes; this endpoint
+	// is intentionally liveness-only and does not claim dependency readiness.
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": a.version})
 }
 
-func (a *API) ready(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "version": a.version})
+func (a *API) ready(w http.ResponseWriter, r *http.Request) {
+	// Readiness is deliberately narrower than conversion capability. A fresh
+	// instance must become ready enough to serve the setup flow before an admin
+	// installs a converter or starts a Worker.
+	result := map[string]any{
+		"status":               "not_ready",
+		"version":              a.version,
+		"coreReady":            false,
+		"setupComplete":        false,
+		"administratorCreated": false,
+		"storageReady":         false,
+		"databaseConnected":    false,
+		"issues":               []string{},
+	}
+	issues := result["issues"].([]string)
+	if a.management == nil || a.jobs == nil || a.accounts == nil {
+		issues = append(issues, "Core database and management services are not configured.")
+		result["issues"] = issues
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusServiceUnavailable, result)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	// Operations touches the core job/worker tables as well as pinging the
+	// database, so a partially migrated database cannot report ready.
+	operations, err := a.jobs.Operations(ctx)
+	if err != nil {
+		issues = append(issues, "PostgreSQL or the Core database schema is unavailable.")
+		result["issues"] = issues
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusServiceUnavailable, result)
+		return
+	}
+	result["databaseConnected"] = operations.DatabaseConnected
+	setup, err := a.accounts.InitialSetupStatus(ctx)
+	if err != nil {
+		issues = append(issues, "Core database schema is unavailable.")
+		result["issues"] = issues
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusServiceUnavailable, result)
+		return
+	}
+	result["setupComplete"] = setup.Completed
+	result["administratorCreated"] = setup.AdministratorCreated
+	_, storageReady := a.checkSetupStorage()
+	result["storageReady"] = storageReady
+	if !storageReady {
+		issues = append(issues, "Core storage is not writable.")
+	}
+	result["coreReady"] = storageReady
+	if storageReady {
+		result["status"] = "ready"
+		w.Header().Set("Cache-Control", "no-store")
+		result["issues"] = issues
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	result["issues"] = issues
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusServiceUnavailable, result)
 }
 
 func (a *API) catalogs(w http.ResponseWriter, _ *http.Request) {

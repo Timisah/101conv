@@ -41,6 +41,11 @@ func main() {
 				log.Fatal(err)
 			}
 			return
+		case "readycheck":
+			if err := httpReady(); err != nil {
+				log.Fatal(err)
+			}
+			return
 		case "worker-health":
 			if err := databaseHealth(); err != nil {
 				log.Fatal(err)
@@ -249,6 +254,21 @@ func httpHealth() error {
 	}
 	return nil
 }
+
+func httpReady() error {
+	port := env("PORT", "5656")
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/readyz")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readiness endpoint returned %s", resp.Status)
+	}
+	return nil
+}
+
 func databaseHealth() error {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {

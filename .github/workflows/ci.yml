@@ -101,6 +101,34 @@ jobs:
         working-directory: web
         run: npm run build
 
+  upload-proxy:
+    name: Nginx large-upload regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify real large and chunked uploads through shipped Nginx config
+        run: bash scripts/verify-upload-proxy.sh
+
+  catalog-drift:
+    name: Compatibility catalog drift check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify generated compatibility indexes and target manifests
+        run: python3 scripts/sync-compatibility-catalog.py --check
+      - name: Validate target catalog and profile/engine compatibility
+        working-directory: server
+        run: go run ./cmd/catalog-repo validate --catalog-root ../catalog
+
+  compose-security:
+    name: Compose isolation contract
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify non-root services, private networks, mounts, and resource bounds
+        run: ./scripts/verify-compose-security.sh
+
   ffmpeg-image-verification:
     name: Pinned FFmpeg image compatibility matrix
     runs-on: ubuntu-24.04

@@ -30,31 +30,31 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 
 **Problem:** Nginx rejects requests over 105 MiB despite advertised app 1 GiB ceiling and configurable account quotas.  
 **Acceptance:** reconcile Nginx and reverse proxy request size with app setting; test a real upload above 105 MiB and boundary cases, guest smaller quota, multipart overhead, cancellation, storage/reservation and response errors. Never interpret 1 GiB as a promise of available RAM/Worker output space.  
-**Status:** Confirmed at baseline `6dc091c`.
+**Status:** Ingress fix implemented in the continuation working tree based on `5cfcbac`; locally verified full 1 GiB multipart forwarding, 106 MiB chunked forwarding, Nginx config validity and HTTP 413 above the request ceiling. CI regression added. Full Core quota/cancellation/storage acceptance and actual deployment verification remain outstanding; see PROJECT_STATUS.md.
 
 ### FR-002 — True dependency-aware readiness
 
 **Problem:** `/readyz` always returns ready; health details exist only in admin operations.  
 **Acceptance:** liveness vs Core API readiness vs ready-to-convert semantics documented; database/storage failures reflected appropriately; new unconfigured installation can complete setup; Worker/profile status exposed accurately without flapping or leaking admin data. Compose/healthchecks tested.  
-**Status:** Confirmed at baseline.
+**Status:** Implemented in the continuation working tree based on `5cfcbac`: `/healthz` is liveness-only; `/readyz` checks PostgreSQL schema access and Core storage, returns 503 with safe diagnostics when unavailable, and remains 200 for an unconfigured fresh instance. Conversion capability remains a separate authenticated operations signal. Unit coverage and the Compose readiness healthcheck are added; full deployment outage/recovery verification remains outstanding.
 
 ### FR-003 — One accurate official capability catalog and docs
 
 **Problem:** legacy embedded catalog and profile docs differ from shipped Office/PDF target catalog.  
 **Acceptance:** specify authoritative source or generate compatibility index from it; verify all official entries against real manifests, appropriate release/version compatibility; update README/docs/API. CI fails on drift. Preserve old compatible manifest paths.  
-**Status:** Confirmed at baseline.
+**Status:** Implemented in the continuation working tree on 2026-10-20. `catalog/targets/catalog/index.json` is the authoritative release list; `scripts/sync-compatibility-catalog.py` validates every engine/profile manifest identity and deterministically generates both `catalog/index.json` and the Core-embedded compatibility index. CI now fails on drift, the README and catalog format documentation describe the managed LibreOffice/Poppler entries, and the legacy `catalog/profiles/` manifest paths remain present for older clients. Remote CI and production publication remain unverified.
 
 ### FR-004 — Production publisher trust and reproducible builds
 
 **Problem:** empty official TUF trust root, manual unsigned approval. Image pinning/reproducibility needs audit.  
 **Acceptance:** maintainer-controlled offline root ceremony, independent fingerprint verification, signed artifact metadata, key rotation/recovery/runbook, immutable package releases and verified source/licensing. No private key ever committed or published by automation. Test older compatible client resolution.  
-**Status:** Incomplete; owner-controlled security ceremony needed.
+**Status:** The owner-controlled ceremony, rotation, recovery, and publication runbook is documented in `docs/security/trust-root-ceremony.md`, and catalog preflight/signature tests pass. The embedded official root remains intentionally empty; private key generation, fingerprint approval, and signed publication are still owner-controlled release actions.
 
 ### FR-005 — Worker/public deployment threat-model hardening
 
 **Problem:** existing sandbox restrictions are meaningful but Worker still shares database and result storage and is not full multi-tenant isolation; weak minimum passwords and deployment constraints require review.  
 **Acceptance:** least-privilege DB and FS analysis, targeted hardening, documented public/private suitability, compatibility-aware password decision, forwarded-header/rate-limit tests, base image pinning where appropriate, nonprivileged runtime. No generic “sandbox is secure against all malicious parsers” claims.  
-**Status:** Audit request.
+**Status:** The repository and managed deployment audit is recorded in `docs/security/p0-release-audit.md`; Compose isolation checks pass, and the managed volume now uses a dedicated non-superuser Worker login with an additive migration for existing stacks. Compatibility DML grants, shared result storage, and the public-demo threat model remain follow-ups before general public exposure.
 
 ## P1 — foundation and usable presets
 
