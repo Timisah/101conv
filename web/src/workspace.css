@@ -267,3 +267,24 @@ select option { color: var(--text); background: var(--surface); }
   .dropzone.has-files .browse-button { margin: 0; width: 100%; min-height: 40px; background: var(--surface); color: var(--accent); border: 0; box-shadow: none; }
 }
 :root[data-theme=dark] .primary:disabled { color: var(--muted); }
+/* Native controls and browser chrome follow the same resolved appearance. */
+.theme-picker { display: inline-flex; align-items: center; gap: 9px; position: relative; min-height: 44px; padding: 0 12px; border: 1px solid var(--line2); border-radius: 8px; background: var(--surface); color: var(--sub); }
+.theme-picker select { appearance: none; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; min-height: 42px; padding-right: 20px; cursor: pointer; }
+.theme-picker > svg { flex: none; pointer-events: none; }
+.theme-picker > svg:last-child { position: absolute; right: 10px; }
+.theme-picker:focus-within { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: 2px; }
+.theme-picker.compact { min-height: 36px; padding-inline: 9px; gap: 7px; }
+.theme-picker.compact select { min-height: 34px; font-size: 12px; }
+.appearance-settings { margin-bottom: 20px; scroll-margin-top: 90px; }
+.appearance-choice { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 20px; }
+.appearance-choice b { font-size: 13px; }
+.appearance-choice p { margin: 4px 0 0; font-size: 12px; color: var(--sub); }
+@media (max-width: 760px) {
+  .topbar { height: calc(64px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right)); background: var(--surface); }
+  .visitor-topbar { padding-top: calc(16px + env(safe-area-inset-top)); }
+  .appearance-choice { flex-direction: column; align-items: stretch; gap: 14px; }
+  .theme-picker select { font-size: 16px; width: 100%; }
+  .theme-picker.compact { width: 40px; padding: 0; justify-content: center; border-color: transparent; }
+  .theme-picker.compact select { position: absolute; inset: 0; width: 100%; opacity: 0; font-size: 16px; }
+  .theme-picker.compact > svg:last-child { display: none; }
+}

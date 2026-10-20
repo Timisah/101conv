@@ -31,3 +31,19 @@ switching, mobile navigation, and sign-in errors. They do not run a converter.
 Set `UI_BASE` to test another frontend URL, `CHROMIUM_PATH` to select Chromium,
 and `UI_ARTIFACT_DIR` to change the screenshot directory (default: `/tmp/101conv-ui`).
 The Docker browser suite above verifies real server and worker integration.
+
+## Appearance
+
+The default theme follows the operating system, including live changes. Choose
+System, Always light, or Always dark in **Account & API keys → Appearance** or
+with the header theme picker. Explicit preferences are saved in this browser;
+they are not synchronized through the user account. Values saved by the old
+two-way toggle are ignored so existing browsers start with System.
+
+A small same-origin head script applies the resolved theme, native color scheme,
+and browser/status-bar color before React loads. The mobile header accounts for
+the device's top safe area. Run `UI_BASE=http://127.0.0.1:4173 npm run test:theme`
+against `npm run build && npm run preview -- --port 4173` to verify initialization,
+OS changes, explicit overrides, persistence, cross-tab updates, and browser
+metadata. These Chromium checks do not emulate the native status bar of a
+physical iPhone or Android device.
