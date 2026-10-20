@@ -1635,10 +1635,10 @@ components:
         rawJson: { type: object, additionalProperties: true, description: Bounded report without the recursive rawJson field. It may contain sensitive extracted metadata and must be treated as private. }
     AnalysisFile:
       type: object
-      required: [id, name, extension, size, sha256]
+      required: [id, fileName, extension, size, sha256]
       properties:
         id: { type: string, description: Retained upload IDs are UUIDs; ephemeral inspection IDs use an inspection- prefix. }
-        name: { type: string }
+        fileName: { type: string }
         extension: { type: string }
         size: { type: integer, minimum: 1, maximum: 1073741824 }
         sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
