@@ -2,9 +2,13 @@
 
 [![CI](https://github.com/Timisah/101conv/actions/workflows/ci.yml/badge.svg)](https://github.com/Timisah/101conv/actions/workflows/ci.yml)
 
-101conv is a self-hosted file conversion application. The supported application is a React web client, Go Core and restricted Worker, and PostgreSQL, deployed together from [`compose.yaml`](compose.yaml).
+**Project direction:** [Master plan](docs/MASTER_PLAN.md) · [Current status](docs/PROJECT_STATUS.md) · [Feature requests](docs/FEATURE_REQUESTS.md) · [Architecture decisions](docs/DECISIONS.md) · [Agent instructions](AGENTS.md).
 
-The official catalog currently includes pinned LGPL FFmpeg audio/video profiles, JPEG XL profiles, and FFmpeg image profile 1.1.0 for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings verified against the selected build. Image resize, aspect-ratio, target-specific quality/compression, and metadata controls are validated by Core and stored in each job's immutable execution specification. Still-image targets take the first frame; WebP and GIF preserve animation; AVIF is intentionally encoded as a still image. Metadata mapping requests preservation or removal, but container conversions cannot guarantee that every EXIF, orientation, timestamp, or color-profile field survives. The catalog does not currently claim LibreOffice or PDF rasterization support; those require separately reviewed, pinned converter packages.
+The long-term product aims to make **Convert, Compress, Build, Inspect, and Automate** easy for everyday users while preserving secure, modular, versioned execution for power users. Future features are not necessarily implemented; consult current status for verified functionality.
+
+101conv is a self-hosted file conversion and automation platform. The supported application is a React web client, Go Core and restricted Worker, and PostgreSQL, deployed together from [`compose.yaml`](compose.yaml).
+
+The official catalog currently includes pinned LGPL FFmpeg audio/video profiles, JPEG XL profiles, and FFmpeg image profile 1.1.0 for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings verified against the selected build. Image resize, aspect-ratio, target-specific quality/compression, and metadata controls are validated by Core and stored in each job's immutable execution specification. Still-image targets take the first frame; WebP and GIF preserve animation; AVIF is intentionally encoded as a still image. Metadata mapping requests preservation or removal, but container conversions cannot guarantee that every EXIF, orientation, timestamp, or color-profile field survives. The latest target catalog also includes managed LibreOffice Office-to-PDF and Poppler PDF rendering/text extraction profiles on supported Linux AMD64 deployments; see [D.2 document conversion](docs/architecture/documents-d2.md) for exact formats, limitations and runtime requirements. The legacy compatibility catalog and some older profile documentation still require synchronization (tracked in [FR-003](docs/FEATURE_REQUESTS.md#fr-003--one-accurate-official-capability-catalog-and-docs)).
 
 ## New installation
 
