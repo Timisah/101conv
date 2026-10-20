@@ -1,7 +1,7 @@
 # Project Status — evidence-based implementation ledger
 
 **Review date:** 2026-10-20.  
-**Implementation baseline reviewed:** `6dc091cc0ae768e2a5c6fc8c5ceb84da5bea8d6f` on `main`.  
+**Implementation baseline reviewed:** `3df147e9d1b65a0daf3f4dc5fc245b13a4406dbe` on `main`.  
 **Maintenance note:** Documentation commits will advance HEAD beyond this baseline; this is *not* an assertion that the later documentation-only HEAD has been deployed or verified.
 
 See [MASTER_PLAN.md](MASTER_PLAN.md), [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md), [DECISIONS.md](DECISIONS.md).
