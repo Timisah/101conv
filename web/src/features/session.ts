@@ -44,12 +44,12 @@ export const createGuestSession = () =>
     headers: guestRequestHeaders(true),
   });
 
-export const uploadWithProgress = <T,>(file: File, onProgress: (percent: number) => void, guest = false): Promise<T> =>
+export const uploadWithProgress = <T,>(file: File, onProgress: (percent: number) => void, guest = false, endpoint = '/uploads'): Promise<T> =>
   new Promise((resolve, reject) => {
     const form = new FormData();
     form.append('file', file);
     const request = new XMLHttpRequest();
-    request.open('POST', '/api/v1/uploads');
+    request.open('POST', '/api/v1' + endpoint);
     request.withCredentials = true;
     request.upload.onprogress = event => {
       if (event.lengthComputable) onProgress(Math.round(event.loaded / event.total * 100));

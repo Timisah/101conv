@@ -845,6 +845,26 @@ paths:
         '401': { description: Authentication required }
         '413': { description: Input exceeds the per-account, guest, or 1 GiB instance limit }
         '429': { description: Monthly uploaded input-data quota exceeded }
+  /api/v1/inspect:
+    post:
+      summary: Ephemerally inspect one file
+      description: Streams one multipart file to a bounded scan. The file is never inserted into conversion uploads and is deleted after analysis. The authenticated or guest requester receives the fullest bounded metadata available, which may include sensitive tags such as GPS or device identifiers.
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200': { description: Ephemeral inspection report with typed summaries and bounded raw metadata }
+        '400': { description: Invalid multipart inspection request }
+        '401': { description: Authentication required }
+        '413': { description: Input exceeds the 1 GiB instance limit }
+        '422': { description: File is corrupt or cannot be safely inspected }
   /api/v1/jobs:
     get:
       summary: List durable jobs with optional status and text filters

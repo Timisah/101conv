@@ -389,6 +389,54 @@ func (a *API) analyzeUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, report)
 }
 
+// inspectUpload accepts a scan-only multipart request. Unlike POST /uploads,
+// it creates no upload row and leaves no retained original; analysis owns a
+// short-lived file that is removed before this response is written.
+func (a *API) inspectUpload(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireCapability(w, r, auth.ScopeRead)
+	if !ok || !a.jobsReady(w) {
+		return
+	}
+	if a.analysis == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "analysis_unavailable", "file inspection is not configured")
+		return
+	}
+	if !a.consumeGuestRate(w, r, p, "upload") {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, jobs.MaxInputBytes+(1<<20))
+	if r.ContentLength > 0 {
+		free, err := a.jobs.UploadFreeBytes()
+		required := uint64(r.ContentLength) + (16 << 20)
+		if err == nil && free < required {
+			writeAPIError(w, http.StatusInsufficientStorage, "insufficient_storage", "not enough temporary storage is available for inspection")
+			return
+		}
+	}
+	reader, err := r.MultipartReader()
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_inspection", "expected a multipart inspection upload")
+		return
+	}
+	part, err := reader.NextPart()
+	if err != nil || part.FormName() != "file" || part.FileName() == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_inspection", "multipart form field 'file' is required")
+		return
+	}
+	defer part.Close()
+	report, err := a.analysis.AnalyzeReader(r.Context(), part.FileName(), part)
+	if err != nil {
+		if errors.Is(err, analysis.ErrInvalidFile) {
+			writeAPIError(w, http.StatusUnprocessableEntity, "invalid_file", err.Error())
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, "analysis_error", "could not inspect this file")
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, report)
+}
+
 func (a *API) submitJob(w http.ResponseWriter, r *http.Request) {
 	a.submitJobMode(w, r, "")
 }

@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -35,7 +36,7 @@ func testAnalysisService(t *testing.T) (*Service, string) {
 	return service, uploadRoot
 }
 
-func TestAnalyzeImageReturnsSafeSummaryAndRawJSON(t *testing.T) {
+func TestAnalyzeImageReturnsSummaryAndRawJSON(t *testing.T) {
 	service, uploadRoot := testAnalysisService(t)
 	path := filepath.Join(uploadRoot, "11111111-1111-4111-8111-111111111111")
 	file, err := os.Create(path)
@@ -68,6 +69,25 @@ func TestAnalyzeImageReturnsSafeSummaryAndRawJSON(t *testing.T) {
 	}
 }
 
+func TestAnalyzeReaderRemovesEphemeralFile(t *testing.T) {
+	service, uploadRoot := testAnalysisService(t)
+	var encoded bytes.Buffer
+	imageFile := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	if err := png.Encode(&encoded, imageFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AnalyzeReader(context.Background(), "temporary.png", &encoded); err != nil {
+		t.Fatal(err)
+	}
+	leftovers, err := filepath.Glob(filepath.Join(uploadRoot, ".inspection-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leftovers) != 0 {
+		t.Fatalf("ephemeral inspection files remain: %v", leftovers)
+	}
+}
+
 func TestAnalyzeRejectsCorruptImageAndChangedUpload(t *testing.T) {
 	service, uploadRoot := testAnalysisService(t)
 	path := filepath.Join(uploadRoot, "22222222-2222-4222-8222-222222222222")
@@ -83,5 +103,15 @@ func TestAnalyzeRejectsCorruptImageAndChangedUpload(t *testing.T) {
 	_, err = service.Analyze(context.Background(), File{ID: filepath.Base(path), Name: "bad.png", Extension: "png", Size: int64(len(data)), SHA256: strings.Repeat("0", sha256.Size*2), Path: path})
 	if !errors.Is(err, ErrInvalidFile) {
 		t.Fatalf("changed digest error = %v", err)
+	}
+}
+
+func TestInspectPDFExtractsInfoMetadata(t *testing.T) {
+	report, err := inspectPDF([]byte("%PDF-1.7\n<< /Title (Quarterly report) /Author <4a6f7264> >>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Metadata["Title"] != "Quarterly report" || report.Metadata["Author"] != "Jord" {
+		t.Fatalf("PDF metadata = %#v", report.Metadata)
 	}
 }

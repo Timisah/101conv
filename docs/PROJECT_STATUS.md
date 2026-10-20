@@ -87,8 +87,10 @@ The P2 scope is implemented and source-verified in this worktree:
   static HDR side data, or configured dynamic-HDR payloads.
 - Core exposes a bounded ownership-checked upload analysis endpoint and the
   Web UI provides an Inspector workspace for image, document, and media
-  summaries. Analysis verifies the upload digest, limits parser work, reuses
-  the shared probe, and omits private location/device/ownership metadata.
+  summaries. The Inspector now uses a scan-only multipart endpoint: the source
+  is held in an ephemeral file, never added to conversion storage, and removed
+  after the scan. Analysis reuses the shared probe and returns bounded full
+  metadata, including sensitive tags when present, to the authorized caller.
 - Successful jobs expose input/output savings, and batch allocations remain
   independently frozen per item for deterministic retry behavior.
 

@@ -76,11 +76,13 @@ content-light side data, and detected dynamic HDR payload values. Unsupported
 dynamic HDR can be rejected at input; verified dynamic metadata must match
 exactly. Missing or downgraded properties fail publication.
 
-The Core exposes `GET /api/v1/uploads/{id}/analysis` for an authenticated,
-ownership-checked Inspector workspace. It verifies the upload digest, applies
-bounded image/document checks, and reuses the typed media probe. Reports omit
-location, GPS, serial-number, and ownership metadata and are capped before
-being returned or shown in the Web UI.
+The Core exposes `POST /api/v1/inspect` for an authenticated, rate-limited
+Inspector workspace. It streams the multipart input into a short-lived scan
+file, verifies its digest, applies bounded image/document checks, reuses the
+typed media probe, deletes the file before responding, and never creates a
+conversion upload record. Reports retain the fullest bounded metadata
+available, including location and device tags; the response is private because
+the report may contain that sensitive data.
 
 ## Verification
 

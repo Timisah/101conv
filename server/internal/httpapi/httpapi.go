@@ -175,6 +175,7 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 	mux.HandleFunc("POST /api/v1/repositories/{id}/engines/{engineID}/{version}/install", a.installRepositoryEngine)
 	mux.HandleFunc("POST /api/v1/uploads", a.uploadFile)
 	mux.HandleFunc("GET /api/v1/uploads/{id}/analysis", a.analyzeUpload)
+	mux.HandleFunc("POST /api/v1/inspect", a.inspectUpload)
 	mux.HandleFunc("POST /api/v1/jobs", a.submitJob)
 	mux.HandleFunc("POST /api/v1/compressions", a.submitCompressionJob)
 	mux.HandleFunc("POST /api/v1/batches", a.createBatch)

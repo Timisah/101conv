@@ -135,7 +135,8 @@ provide arbitrary map arguments. Video rules may declare `hdrPolicy`
 `verify`). `preserve` validates every selected video stream's typed HDR
 properties and configured dynamic side-data values; `reject` refuses
 dynamic-HDR inputs, while `verify` requires exact output payload equivalence.
-Safe private metadata fields are omitted from Inspector reports.
+Inspector reports are private to the authorized requester, but retain the
+fullest bounded metadata available, including sensitive tags when present.
 
 Declared compatibility is a manifest claim. Verified compatibility is limited to the source/target pairs covered by the exact engine artifact test. An unsupported or unverified pair must not be added to `sources` or `targets`. Metadata option `0` requests converter metadata mapping and `-1` requests removal; it does not promise that output formats can carry every input EXIF field, orientation tag, timestamp, or ICC/color-profile record. Profile descriptions must state format-specific limitations.
 

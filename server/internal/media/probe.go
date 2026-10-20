@@ -30,6 +30,10 @@ type Probe struct {
 	FormatTags map[string]string `json:"formatTags,omitempty"`
 	Streams    []Stream          `json:"streams"`
 	Chapters   []Chapter         `json:"chapters,omitempty"`
+	// RawJSON is the bounded, complete ffprobe document. It is returned by
+	// inspection to the authorized requester so format-specific metadata is not
+	// silently discarded; the Worker does not publish it.
+	RawJSON json.RawMessage `json:"rawJson,omitempty"`
 }
 
 type Chapter struct {
@@ -154,11 +158,11 @@ func ProbeFile(parent context.Context, executable, work, inputPath string) (*Pro
 	if err := json.Unmarshal(stdout.Bytes(), &document); err != nil {
 		return nil, fmt.Errorf("media probe returned invalid metadata")
 	}
-	out := &Probe{Format: document.Format.Name, LongName: document.Format.LongName, FormatTags: safeTags(document.Format.Tags)}
+	out := &Probe{Format: document.Format.Name, LongName: document.Format.LongName, FormatTags: allTags(document.Format.Tags), RawJSON: append(json.RawMessage(nil), stdout.Bytes()...)}
 	out.Duration, _ = ParseNumber(document.Format.Duration)
 	out.BitRate, _ = ParseNumber(document.Format.BitRate)
 	for _, stream := range document.Streams {
-		parsed := Stream{Index: stream.Index, CodecType: stream.CodecType, CodecName: stream.CodecName, CodecLongName: stream.CodecLongName, CodecTagString: stream.CodecTagString, Width: stream.Width, Height: stream.Height, ColorPrimaries: stream.ColorPrimaries, ColorTransfer: stream.ColorTransfer, ColorSpace: stream.ColorSpace, ColorRange: stream.ColorRange, BitsPerRawSample: stream.BitsPerRawSample, PixelFormat: stream.PixelFormat, Channels: stream.Channels, ChannelLayout: stream.ChannelLayout, SampleRate: stream.SampleRate, FrameRate: stream.FrameRate, Disposition: stream.Disposition, Tags: safeTags(stream.Tags)}
+		parsed := Stream{Index: stream.Index, CodecType: stream.CodecType, CodecName: stream.CodecName, CodecLongName: stream.CodecLongName, CodecTagString: stream.CodecTagString, Width: stream.Width, Height: stream.Height, ColorPrimaries: stream.ColorPrimaries, ColorTransfer: stream.ColorTransfer, ColorSpace: stream.ColorSpace, ColorRange: stream.ColorRange, BitsPerRawSample: stream.BitsPerRawSample, PixelFormat: stream.PixelFormat, Channels: stream.Channels, ChannelLayout: stream.ChannelLayout, SampleRate: stream.SampleRate, FrameRate: stream.FrameRate, Disposition: stream.Disposition, Tags: allTags(stream.Tags)}
 		parsed.BitRate, _ = ParseNumber(stream.BitRate)
 		parsed.Duration, _ = ParseNumber(stream.Duration)
 		for _, raw := range stream.SideData {
@@ -178,7 +182,7 @@ func ProbeFile(parent context.Context, executable, work, inputPath string) (*Pro
 	for _, chapter := range document.Chapters {
 		start, _ := ParseNumber(chapter.StartTime)
 		end, _ := ParseNumber(chapter.EndTime)
-		out.Chapters = append(out.Chapters, Chapter{ID: chapter.ID, StartTime: start, EndTime: end, Tags: safeTags(chapter.Tags)})
+		out.Chapters = append(out.Chapters, Chapter{ID: chapter.ID, StartTime: start, EndTime: end, Tags: allTags(chapter.Tags)})
 	}
 	return out, nil
 }
@@ -242,19 +246,13 @@ func FirstVideoStream(probe Probe) (Stream, bool) {
 	return Stream{}, false
 }
 
-func safeTags(tags map[string]string) map[string]string {
+func allTags(tags map[string]string) map[string]string {
 	if len(tags) == 0 {
 		return nil
 	}
-	// Probe results are retained for fidelity comparisons, but callers never
-	// receive location or device-identifying fields through the Inspector.
-	filtered := make(map[string]string)
+	all := make(map[string]string, len(tags))
 	for key, value := range tags {
-		lower := strings.ToLower(key)
-		if strings.Contains(lower, "gps") || strings.Contains(lower, "location") || strings.Contains(lower, "latitude") || strings.Contains(lower, "longitude") || strings.Contains(lower, "serial") || strings.Contains(lower, "owner") {
-			continue
-		}
-		filtered[key] = value
+		all[key] = value
 	}
-	return filtered
+	return all
 }
