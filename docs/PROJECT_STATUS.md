@@ -56,7 +56,7 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 
 - P1 capability/provider migration and saved presets: implemented in the completion commit. The remaining release gate is remote CI and browser evidence; the deployment continues to retain legacy profile IDs as a migration boundary.
 - Metadata-based automation conditions, richer media controls, and optional GPU workers/device probing.
-- Document Creator: the first Build editor and validated non-destructive page-manifest foundation are started; multipage expansion, thumbnails, saved/expiring projects, and fidelity-tested PDF export remain planned.
+- Document Creator: the first Build editor now provides non-destructive page ordering, thumbnails, ordered preview, and browser-local PDF generation for raster image pages; server-side PDF/Office expansion and merging, saved/expiring projects, and fidelity-tested exporter output remain planned.
 - Visual Automations blocks/branches and broader blueprint system.
 - Versioned extension installation/compatibility/rollback and Immich connector.
 - New brand/logo, static public pages/SEO and rate-limited public demo.
@@ -96,9 +96,10 @@ The P2 scope is implemented and source-verified in this worktree:
   the source upload is retained and the normal job idempotency, quota, and
   output validation paths remain in force.
 - The first Build slice adds a validated page-manifest package and responsive
-  editor for add, reorder, rotate, duplicate, remove, undo/redo, source
-  preparation, and manifest download. PDF assembly and saved projects remain
-  open.
+  editor for add, reorder, rotate, duplicate, remove, undo/redo, thumbnails,
+  ordered preview, browser-local raster-image PDF generation, source
+  preparation, and manifest download. Server-side PDF/Office expansion and
+  merging plus saved projects remain open.
 - Successful jobs expose input/output savings, and batch allocations remain
   independently frozen per item for deterministic retry behavior.
 
