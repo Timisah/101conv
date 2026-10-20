@@ -1,7 +1,7 @@
 # Project Status — evidence-based implementation ledger
 
 **Review date:** 2026-10-20.  
-**Implementation baseline reviewed:** P1 completion commit is recorded in Git history after validation; the earlier baseline was `3df147e9d1b65a0daf3f4dc5fc245b13a4406dbe`.
+**Implementation baseline reviewed:** `27c1466fd7e6d5e3b0667ec46418561d88b4bd1e` (P1 capability/provider and preset completion); the earlier baseline was `3df147e9d1b65a0daf3f4dc5fc245b13a4406dbe`.
 **Maintenance note:** Documentation commits will advance HEAD beyond this baseline; this is *not* an assertion that the later documentation-only HEAD has been deployed or verified.
 
 See [MASTER_PLAN.md](MASTER_PLAN.md), [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md), [DECISIONS.md](DECISIONS.md).
