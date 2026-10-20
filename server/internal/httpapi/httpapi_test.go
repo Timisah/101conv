@@ -35,37 +35,44 @@ func TestCatalogSourceIsAvailableOnFreshInstall(t *testing.T) {
 
 func TestSameOriginRequestChecksExactOriginAndScheme(t *testing.T) {
 	tests := []struct {
-		name        string
-		origin      string
-		referer     string
-		fetchSite   string
-		forwarded   string
+		name          string
+		host          string
+		origin        string
+		referer       string
+		fetchSite     string
+		forwarded     string
 		forwardedHost string
-		wantAllowed bool
+		trustedProxy  bool
+		wantAllowed   bool
 	}{
-		{name: "same origin", origin: "http://example.test:5656", fetchSite: "same-origin", wantAllowed: true},
-		{name: "exact origin despite same-site metadata", origin: "http://example.test:5656", fetchSite: "same-site", wantAllowed: true},
-		{name: "same-origin metadata without referrer", fetchSite: "same-origin", wantAllowed: true},
-		{name: "same-site metadata without referrer", fetchSite: "same-site", wantAllowed: true},
-		{name: "same-origin metadata with rewritten origin", origin: "https://public.example", fetchSite: "same-origin", wantAllowed: true},
-		{name: "same-origin referer fallback", referer: "http://example.test:5656/convert", wantAllowed: true},
-		{name: "cross-site metadata rejected", origin: "http://example.test:5656", fetchSite: "cross-site", wantAllowed: false},
-		{name: "cross-site metadata rejected without referrer", fetchSite: "cross-site", wantAllowed: false},
-		{name: "different host rejected", origin: "http://other.test:5656", wantAllowed: false},
-		{name: "different port rejected", origin: "http://example.test:8080", wantAllowed: false},
-		{name: "different scheme rejected", origin: "https://example.test:5656", wantAllowed: false},
-		{name: "forwarded https origin", origin: "https://example.test:5656", forwarded: "https", wantAllowed: true},
-		{name: "forwarded public host", origin: "https://public.example", forwarded: "https", forwardedHost: "public.example", wantAllowed: true},
+		{name: "same origin", host: "example.test:5656", origin: "http://example.test:5656", fetchSite: "same-origin", wantAllowed: true},
+		{name: "exact origin despite same-site metadata", host: "example.test:5656", origin: "http://example.test:5656", fetchSite: "same-site", wantAllowed: true},
+		{name: "same-origin metadata without referrer", host: "example.test:5656", fetchSite: "same-origin", wantAllowed: true},
+		{name: "same-site metadata without referrer", host: "example.test:5656", fetchSite: "same-site", wantAllowed: true},
+		{name: "metadata cannot override mismatched origin", host: "example.test:5656", origin: "https://public.example", fetchSite: "same-origin", wantAllowed: false},
+		{name: "same-origin referer fallback", host: "example.test:5656", referer: "http://example.test:5656/convert", wantAllowed: true},
+		{name: "cross-site metadata rejected", host: "example.test:5656", origin: "http://example.test:5656", fetchSite: "cross-site", wantAllowed: false},
+		{name: "cross-site metadata rejected without referrer", host: "example.test:5656", fetchSite: "cross-site", wantAllowed: false},
+		{name: "different host rejected", host: "example.test:5656", origin: "http://other.test:5656", wantAllowed: false},
+		{name: "different port rejected", host: "example.test:5656", origin: "http://example.test:8080", wantAllowed: false},
+		{name: "different scheme rejected", host: "example.test:5656", origin: "https://example.test:5656", wantAllowed: false},
+		{name: "untrusted forwarded https rejected", host: "example.test:5656", origin: "https://example.test:5656", forwarded: "https", wantAllowed: false},
+		{name: "trusted forwarded https origin", host: "example.test:5656", origin: "https://example.test:5656", forwarded: "https", trustedProxy: true, wantAllowed: true},
+		{name: "forwarded host cannot choose origin", host: "example.test:5656", origin: "https://public.example", forwarded: "https", forwardedHost: "public.example", trustedProxy: true, wantAllowed: false},
+		{name: "client cannot choose forwarded host", host: "example.test:5656", origin: "https://public.example", forwarded: "https", trustedProxy: true, wantAllowed: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, "http://example.test:5656/api/v1/auth/guest-session", nil)
-			r.Host = "example.test:5656"
+			r.Host = test.host
 			r.Header.Set("Origin", test.origin)
 			r.Header.Set("Referer", test.referer)
 			r.Header.Set("Sec-Fetch-Site", test.fetchSite)
 			r.Header.Set("X-Forwarded-Proto", test.forwarded)
 			r.Header.Set("X-Forwarded-Host", test.forwardedHost)
+			if test.trustedProxy {
+				r.Header.Set(trustedProxyMarker, "web")
+			}
 			if got := sameOriginRequest(r); got != test.wantAllowed {
 				t.Fatalf("sameOriginRequest() = %v, want %v", got, test.wantAllowed)
 			}
@@ -73,18 +80,31 @@ func TestSameOriginRequestChecksExactOriginAndScheme(t *testing.T) {
 	}
 }
 
-func TestGuestSessionRequestAllowsHeaderStrippedBrowserJSON(t *testing.T) {
+func TestClientAddressDoesNotTrustUnmarkedForwardingHeader(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "http://example.test:5656/api/v1/auth/session", nil)
+	r.RemoteAddr = "192.0.2.10:4567"
+	r.Header.Set("X-Real-IP", "198.51.100.20")
+	if got := clientAddress(r); got != "192.0.2.10" {
+		t.Fatalf("unmarked client address = %q, want immediate peer", got)
+	}
+	r.Header.Set(trustedProxyMarker, "web")
+	if got := clientAddress(r); got != "198.51.100.20" {
+		t.Fatalf("marked client address = %q, want proxy-provided address", got)
+	}
+}
+
+func TestGuestSessionRequestRequiresSameOriginOrExplicitBrowserMarker(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "http://example.test:5656/api/v1/auth/guest-session", strings.NewReader(`{}`))
 	r.Host = "example.test:5656"
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("X-101conv-Request", "guest-session")
 	if !guestSessionRequest(r) {
-		t.Fatal("header-stripped browser JSON request should be accepted")
+		t.Fatal("explicit guest request marker should be accepted")
 	}
 	r.Header.Set("Sec-Fetch-Site", "none")
 	r.Header.Del("X-101conv-Request")
-	if !guestSessionRequest(r) {
-		t.Fatal("non-cross-site JSON request with rewritten metadata should be accepted")
+	if guestSessionRequest(r) {
+		t.Fatal("JSON alone must not authorize a cookie-authenticated guest mutation")
 	}
 	r.Header.Set("Sec-Fetch-Site", "cross-site")
 	if guestSessionRequest(r) {

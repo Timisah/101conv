@@ -4,7 +4,7 @@
 
 101conv is a self-hosted file conversion application. The supported application is a React web client, Go Core and restricted Worker, and PostgreSQL, deployed together from [`compose.yaml`](compose.yaml).
 
-The official catalog currently includes pinned LGPL FFmpeg audio/video profiles, JPEG XL profiles, and an FFmpeg image profile for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings supported by the selected build. Image resize, aspect-ratio, quality, compression-level, and metadata controls are validated by Core and stored in each job's immutable execution specification. The catalog does not currently claim LibreOffice or PDF rasterization support; those require separately reviewed, pinned converter packages.
+The official catalog currently includes pinned LGPL FFmpeg audio/video profiles, JPEG XL profiles, and FFmpeg image profile 1.1.0 for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings verified against the selected build. Image resize, aspect-ratio, target-specific quality/compression, and metadata controls are validated by Core and stored in each job's immutable execution specification. Still-image targets take the first frame; WebP and GIF preserve animation; AVIF is intentionally encoded as a still image. Metadata mapping requests preservation or removal, but container conversions cannot guarantee that every EXIF, orientation, timestamp, or color-profile field survives. The catalog does not currently claim LibreOffice or PDF rasterization support; those require separately reviewed, pinned converter packages.
 
 ## New installation
 
@@ -39,7 +39,11 @@ Fresh installations enable guest conversion after the first administrator finish
 
 An existing deployment remains private after upgrade. An administrator must explicitly enable guests in **Admin → Anonymous access**. That screen controls conversion/compression, file and batch limits, per-session rates, active guest job and total storage capacity, and guest lifetimes. The total capacity counts retained guest originals and results plus a worst-case output reservation for each queued or running job; this bounds result growth before a converter starts. These controls are independent from the Worker's concurrency and output-size limits. The browser smoke suite exercises guest conversion, compression, batch download, session isolation, admin-denial, and phone layout in a separate browser context.
 
-The browser uses the versioned API documented in [`docs/api/v1/openapi.yaml`](docs/api/v1/openapi.yaml). Frontend development instructions are in [`web/README.md`](web/README.md); the browser conversion smoke test is [`scripts/phase5-browser-smoke.sh`](scripts/phase5-browser-smoke.sh).
+The browser uses the versioned API documented in [`docs/api/v1/openapi.yaml`](docs/api/v1/openapi.yaml). Frontend development instructions are in [`web/README.md`](web/README.md); the browser conversion smoke test is [`scripts/phase5-browser-smoke.sh`](scripts/phase5-browser-smoke.sh). Guest mutations require same-origin metadata or the frontend's explicit non-simple request marker; public guest-session bootstrap is the only intentionally unauthenticated mutation.
+
+## Password and reverse-proxy security
+
+Five-character passwords remain accepted for compatibility with the current product contract and existing credentials. They are weak: use a long passphrase, especially for administrators. Passwords are hashed with Argon2id, login/setup attempts are rate limited, and the limiter ignores client-supplied address headers unless they came through the bundled proxy boundary. Do not expose Core directly. For HTTPS behind another proxy, preserve the public `Host` and overwrite `X-Forwarded-Proto`; do not append untrusted values. Cookies are host-only, HttpOnly, SameSite Strict, and Secure only when the trusted request scheme is HTTPS. See [`docs/deployment/portainer.md`](docs/deployment/portainer.md) and [`docs/security/authentication.md`](docs/security/authentication.md).
 
 ## Mounted drives and automations
 
@@ -49,7 +53,7 @@ In **Admin → Automations**, install either built-in blueprint, select the regi
 
 ## Continuous integration and verification
 
-GitHub Actions runs five checks on pushes to `main`, pull requests, and manual `workflow_dispatch`: PostgreSQL-backed Go tests; Go race tests plus `go vet`; React lint/type checking and production build; the real Docker/Chromium browser suite; and an isolated backup/restore boot with a real fixture conversion. The restore check depends on the browser suite's disposable backup, so a skipped or failed browser stage cannot turn restore into a green check. CI uses temporary credentials and disposable volumes; it does not access deployment secrets or production data.
+GitHub Actions runs six checks on pushes to `main`, pull requests, and manual `workflow_dispatch`: PostgreSQL-backed Go tests; Go race tests plus `go vet`; React lint/type checking and production build; a SHA-256-verified matrix against the pinned FFmpeg image artifact; the real Docker/Chromium browser suite; and an isolated backup/restore boot with a real fixture conversion. The FFmpeg archive is cached by its manifest digest and still verified on every run. The restore check depends on the browser suite's disposable backup, so a skipped or failed browser stage cannot turn restore into a green check. CI uses temporary credentials and disposable volumes; it does not access deployment secrets or production data.
 
 To run the non-container checks locally:
 
@@ -65,6 +69,12 @@ The full browser and restore run requires Docker Engine with Compose v2, at leas
 ```sh
 ./scripts/ci-resource-check.sh 8 2048
 ./scripts/phase5-browser-smoke.sh
+```
+
+The pinned image matrix can be run independently. It verifies all declared source/target pairs, output signatures and dimensions, animated GIF behavior, AVIF still-image behavior, and corrupt-input failure using the exact archive and digest from the engine manifest:
+
+```sh
+./scripts/verify-ffmpeg-image.sh
 ```
 
 The runner respects the selected Docker context and `DOCKER_HOST`, including rootless daemons. A remote Docker daemon must be given independently measured `SMOKE_DOCKER_FREE_GIB` and `SMOKE_DOCKER_AVAILABLE_MEM_MIB`; the script does not assume the client can measure remote capacity. The 8 GiB minimum is enforced and cannot be lowered. The script records filesystem and Docker image/volume usage before and after, retains redacted logs and browser screenshots on failure when `SMOKE_ARTIFACT_DIR` is set, and removes only its uniquely named Compose project and tagged test images. It never runs Docker prune.

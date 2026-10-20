@@ -26,7 +26,7 @@ paths:
               properties:
                 bootstrapToken: { type: string, writeOnly: true }
                 username: { type: string, minLength: 3, maxLength: 64 }
-                password: { type: string, minLength: 5, maxLength: 256, writeOnly: true }
+                password: { type: string, minLength: 5, maxLength: 256, writeOnly: true, description: "Five characters remain accepted for compatibility but are weak; use a long passphrase." }
       responses:
         '201': { description: Administrator created and HttpOnly session set }
         '401': { description: Bootstrap secret rejected }
@@ -187,7 +187,7 @@ paths:
         '200': { description: Authenticated account/guest state, or anonymous availability; no-store response }
     post:
       summary: Create an HttpOnly administrator or user session
-      description: Send only password for the legacy administrator passphrase, or username and password for a local user account. The returned opaque cookie is server-side and HttpOnly.
+      description: Send only password for the legacy administrator passphrase, or username and password for a local user account. The returned opaque cookie is server-side and HttpOnly, host-only, and SameSite Strict. Login attempts are rate limited; client-supplied forwarding headers do not select a new limiter bucket.
       requestBody:
         required: true
         content:
@@ -210,7 +210,7 @@ paths:
   /api/v1/auth/guest-session:
     post:
       summary: Start a temporary, isolated anonymous conversion session
-      description: Available only after first-run administrator setup and when guest mode is enabled. A unique 256-bit credential is issued as an HttpOnly, SameSite Strict cookie; only its digest is persisted. Guest-session creation is public and rate limited; subsequent guest mutations require same-origin browser requests.
+      description: Available only after first-run administrator setup and when guest mode is enabled. A unique 256-bit credential is issued as an HttpOnly, SameSite Strict cookie; only its digest is persisted. Guest-session creation is public and rate limited. Subsequent guest uploads, submissions, cancellations, downloads, and logout require an exact same-origin request or the frontend's explicit non-simple `X-101conv-Request: guest-session` marker when a documented proxy strips browser origin metadata; JSON content type alone is not sufficient.
       responses:
         '201': { description: Guest session created; cookie and effective guest limits returned }
         '403': { description: Guest access is disabled or setup is incomplete }
@@ -230,7 +230,7 @@ paths:
     post:
       summary: Change the signed-in user's password
       security: [{ adminSession: [] }]
-      description: Requires an interactive user session, current password, and a new password of at least 5 characters.
+      description: Requires an interactive user session, current password, and a new password of at least 5 characters. Five characters remain accepted for compatibility but are weak; administrators should use a long passphrase.
       requestBody:
         required: true
         content:
@@ -240,7 +240,7 @@ paths:
               required: [currentPassword, newPassword]
               properties:
                 currentPassword: { type: string, writeOnly: true }
-                newPassword: { type: string, minLength: 5, maxLength: 256, writeOnly: true }
+                newPassword: { type: string, minLength: 5, maxLength: 256, writeOnly: true, description: "Five characters remain accepted for compatibility but are weak; use a long passphrase." }
       responses:
         '204': { description: Password changed }
         '401': { description: Current password is incorrect }
@@ -297,7 +297,7 @@ paths:
               required: [username, password, quotas]
               properties:
                 username: { type: string, minLength: 3, maxLength: 64 }
-                password: { type: string, minLength: 5, maxLength: 256, writeOnly: true }
+                password: { type: string, minLength: 5, maxLength: 256, writeOnly: true, description: "Five characters remain accepted for compatibility but are weak; use a long passphrase." }
                 roleId: { type: string, description: Reusable permission role id }
                 quotas:
                   $ref: '#/components/schemas/QuotaSettings'
@@ -323,7 +323,7 @@ paths:
                 groupIds: { type: array, items: { type: string } }
                 permissionOverrides: { type: object, additionalProperties: { oneOf: [{type: boolean},{type: 'null'}] }, description: Null removes a user override and inherits policy }
                 quotas: { $ref: '#/components/schemas/QuotaSettings' }
-                password: { type: string, minLength: 5, maxLength: 256, writeOnly: true, description: Optional administrator password reset }
+                password: { type: string, minLength: 5, maxLength: 256, writeOnly: true, description: "Optional administrator password reset. Five characters remain accepted for compatibility but are weak; use a long passphrase." }
       responses:
         '200': { description: Updated user account }
         '404': { description: User not found }

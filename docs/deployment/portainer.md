@@ -2,6 +2,14 @@
 
 Use one Portainer Git stack with repository `https://github.com/Timisah/101conv`, branch `main`, and Compose path `compose.yaml`. The stack builds React/Nginx, Go Core, and the restricted Go Worker, and runs PostgreSQL. Nginx publishes host port `5656` by default; Core and PostgreSQL have no public ports.
 
+## HTTPS reverse proxy
+
+Put the bundled `web` service behind the public HTTPS proxy, or terminate TLS in front of the published web port. The outer proxy must set the public `Host`, overwrite `X-Forwarded-Proto` with `https`, and preserve request bodies and the `X-101conv-Request: guest-session` header. It must not append client-controlled `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP`, or `X-Forwarded-For` values. Keep Core's `5656` port private; the bundled Nginx hop overwrites address headers and marks forwarded requests for Core.
+
+Direct trusted-LAN HTTP is supported when users open the published web port directly. Cookies are then intentionally not marked `Secure`. HTTPS deployments receive `Secure; SameSite=Strict` host-only session cookies. If an outer proxy rewrites or removes `Origin`, `Referer`, Fetch Metadata, or the guest request marker, browser mutations will be rejected with a CSRF error until that proxy is configured to preserve them. This is a configuration failure, not a reason to broadly allow missing or mismatched origins.
+
+The application ignores `X-Forwarded-Host` for origin decisions and ignores client-supplied address headers for login throttling unless the request was marked by the bundled proxy. This protects the default deployment from spoofed forwarding headers. A custom ingress must be a trusted boundary and must overwrite forwarded values before passing requests to `web`.
+
 ## Existing stack update
 
 Keep the current stack name, Git repository, branch, and `DATA_PATH`, `GO_DATA_PATH`, `PORT`, PostgreSQL credentials, and named volumes. Set the Compose path to `compose.yaml` if needed, pull the new commit, and redeploy/build the stack. Do not enable volume pruning or delete host directories. This deployment uses a `web` Compose service; if an older stack leaves an orphaned frontend container after updating, inspect it and remove only that stopped container after confirming it is no longer serving the port. Do not remove any volumes.

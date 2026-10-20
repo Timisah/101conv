@@ -74,8 +74,14 @@ func (g *loginGuard) begin(r *http.Request) (func(bool), bool) {
 }
 
 func clientAddress(r *http.Request) string {
-	if ip := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); ip != nil {
-		return ip.String()
+	// X-Real-IP is meaningful only after the bundled proxy has marked the
+	// request. Direct clients must not rotate a spoofed header to evade the
+	// per-address login bucket. The proxy intentionally forwards the immediate
+	// peer address, so multiple untrusted hops collapse to one safe bucket.
+	if r.Header.Get(trustedProxyMarker) == "web" {
+		if ip := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); ip != nil {
+			return ip.String()
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {

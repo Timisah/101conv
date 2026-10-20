@@ -20,6 +20,11 @@ import (
 const (
 	adminCookie = "101conv_admin"
 	guestCookie = "101conv_guest"
+	// trustedProxyMarker is written by the bundled web proxy. It is not a
+	// browser-facing setting: the proxy overwrites it before forwarding a
+	// request. Core must remain private; this marker identifies the documented
+	// proxy boundary for requests that arrive through the bundled web service.
+	trustedProxyMarker = "X-101conv-Proxy"
 )
 
 type sessionStore struct {
@@ -364,15 +369,17 @@ func forwardedValue(r *http.Request, name string) string {
 }
 
 func requestHost(r *http.Request) string {
-	if host := forwardedValue(r, "X-Forwarded-Host"); host != "" {
-		return host
-	}
+	// Host is set by the bundled proxy from the request host. X-Forwarded-Host
+	// is deliberately ignored here: accepting it from an untrusted client lets
+	// that client choose the origin used for CSRF and cookie decisions.
 	return r.Host
 }
 
 func requestScheme(r *http.Request) string {
-	if proto := strings.ToLower(forwardedValue(r, "X-Forwarded-Proto")); proto == "http" || proto == "https" {
-		return proto
+	if r.Header.Get(trustedProxyMarker) == "web" {
+		if proto := strings.ToLower(forwardedValue(r, "X-Forwarded-Proto")); proto == "http" || proto == "https" {
+			return proto
+		}
 	}
 	if r.TLS != nil {
 		return "https"
@@ -389,9 +396,6 @@ func sameOriginRequest(r *http.Request) bool {
 	fetchSite := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
 	if fetchSite == "cross-site" {
 		return false
-	}
-	if fetchSite == "same-origin" {
-		return true
 	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -416,12 +420,12 @@ func guestSessionRequest(r *http.Request) bool {
 	if sameOriginRequest(r) {
 		return true
 	}
-	// Some LAN reverse proxies rewrite the public Origin or host. The web client
-	// marks guest mutations with a non-simple header; a cross-origin browser
-	// fetch cannot send it without a preflight, and an HTML form cannot produce
-	// it. JSON also cannot be submitted by an HTML form. Explicit cross-site
-	// Fetch Metadata remains rejected.
+	// A guest mutation may arrive without browser origin metadata when a
+	// documented proxy strips it. The web client marks these requests with a
+	// non-simple header; a cross-origin browser cannot send it without a
+	// preflight, and an HTML form cannot produce it. Do not accept JSON alone:
+	// that relaxed fallback made cookie-authenticated guest mutations too easy
+	// to forge from non-browser clients and obscured proxy configuration errors.
 	fetchSite := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
-	return fetchSite != "cross-site" &&
-		(r.Header.Get("X-101conv-Request") == "guest-session" || strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json"))
+	return fetchSite != "cross-site" && r.Header.Get("X-101conv-Request") == "guest-session"
 }
