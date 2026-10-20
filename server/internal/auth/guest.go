@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/timisah/101conv/server/internal/limits"
 )
 
 const GuestOwnerPrefix = "guest:"
@@ -57,7 +59,7 @@ func (s *Service) SetAnonymousSettings(ctx context.Context, v AnonymousSettings)
 // HTTP layer to serialize only changes that can alter an in-flight cleanup
 // decision. An enable/limit toggle must not wait for filesystem deletion.
 func (s *Service) SetAnonymousSettingsSelective(ctx context.Context, v AnonymousSettings, updateRetention, updateSessionLifetime bool) error {
-	if v.MaxFileBytes < 1 || v.MaxFileBytes > 100<<20 || v.MaxBatchFiles < 1 || v.MaxBatchFiles > 20 ||
+	if v.MaxFileBytes < 1 || v.MaxFileBytes > limits.MaxInputBytes || v.MaxBatchFiles < 1 || v.MaxBatchFiles > 20 ||
 		v.MaxSimultaneousJobs < 1 || v.MaxSimultaneousJobs > 100 || v.UploadsPerMinute < 1 || v.UploadsPerMinute > 120 ||
 		v.SubmissionsPerMinute < 1 || v.SubmissionsPerMinute > 60 || v.MaxGlobalJobs < 1 || v.MaxGlobalJobs > 1000 ||
 		v.GlobalUploadsPerMinute < 1 || v.GlobalUploadsPerMinute > 10000 || v.GlobalSubmissionsPerMinute < 1 || v.GlobalSubmissionsPerMinute > 10000 ||

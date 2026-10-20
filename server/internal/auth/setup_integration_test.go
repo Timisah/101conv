@@ -93,6 +93,15 @@ func TestInitialAdministratorClaimIsAtomicAndResumable(t *testing.T) {
 	if err != nil || !guestSettings.Enabled {
 		t.Fatalf("fresh setup should enable guest mode: %+v %v", guestSettings, err)
 	}
+	expandedGuestSettings := guestSettings
+	expandedGuestSettings.MaxFileBytes = 150 << 20
+	if err = svc.SetAnonymousSettings(ctx, expandedGuestSettings); err != nil {
+		t.Fatalf("150 MiB guest quota should be accepted: %v", err)
+	}
+	guestSettings, err = svc.AnonymousSettings(ctx)
+	if err != nil || guestSettings.MaxFileBytes != 150<<20 {
+		t.Fatalf("expanded guest quota was not persisted: %+v %v", guestSettings, err)
+	}
 	guest, guestToken, guestExpires, _, err := svc.CreateGuestSession(ctx)
 	if err != nil || !guest.Guest || guest.ID == "" || !guestExpires.After(time.Now()) {
 		t.Fatalf("guest session: %+v expiry=%v err=%v", guest, guestExpires, err)

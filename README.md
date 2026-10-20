@@ -20,6 +20,8 @@ The installer creates private, random database and bootstrap credentials in `.en
 
 Create or update one Git stack from `https://github.com/Timisah/101conv`, branch `main`, Compose path `compose.yaml`. The web interface is published on port `5656` by default. Only the web service publishes a host port; Core and PostgreSQL stay private.
 
+Uploads are streamed and accept up to 1 GiB per file at the instance safety ceiling. Guest and account quotas can be set lower; the default guest quota remains 10 MiB until an administrator changes it. Guest storage capacity must cover the configured input limit plus the Worker's 200 MiB maximum output reservation.
+
 Set these variables in the Portainer stack's Environment variables table:
 
 - `DATA_PATH`: host directory whose `go-data` subdirectory contains Go management state and installed engines. For an existing installation, retain its current value. The directory `${DATA_PATH}/go-data` must already exist and be writable by UID/GID `65532:65532`.

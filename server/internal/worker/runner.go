@@ -19,11 +19,13 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/timisah/101conv/server/internal/limits"
 )
 
 const (
 	MaxCapturedOutput = 32 << 10
-	DefaultMaxOutput  = 200 << 20
+	DefaultMaxOutput  = limits.MaxOutputBytes
 )
 
 var safeSegment = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
@@ -101,7 +103,7 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	if !inputInfo.Mode().IsRegular() || inputInfo.Mode()&os.ModeSymlink != 0 || inputInfo.Size() <= 0 {
 		return Result{}, fmt.Errorf("job input is not a regular file")
 	}
-	if inputInfo.Size() > 100<<20 || inputInfo.Size() != in.ExpectedInputSize || len(in.ExpectedInputSHA256) != 64 {
+	if inputInfo.Size() > limits.MaxInputBytes || inputInfo.Size() != in.ExpectedInputSize || len(in.ExpectedInputSHA256) != 64 {
 		return Result{}, fmt.Errorf("job input failed size or metadata validation")
 	}
 	inputFile, err := os.Open(inputPath)
@@ -109,7 +111,7 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 		return Result{}, err
 	}
 	inputHash := sha256.New()
-	_, hashErr := io.Copy(inputHash, io.LimitReader(inputFile, (100<<20)+1))
+	_, hashErr := io.Copy(inputHash, io.LimitReader(inputFile, limits.MaxInputBytes+1))
 	closeErr := inputFile.Close()
 	if hashErr != nil {
 		return Result{}, hashErr

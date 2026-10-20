@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"fmt"
 	"strings"
+
+	"github.com/timisah/101conv/server/internal/limits"
 )
 
 type SetupStatus struct {
@@ -50,7 +52,7 @@ func (s *Service) CreateInitialAdmin(ctx context.Context, username, password str
 		return Principal{}, fmt.Errorf("%w: initial administrator has already been claimed", ErrConflict)
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO conv_users(id,username,password_salt,password_hash,role,enabled,can_convert,can_read_jobs,max_file_bytes,monthly_jobs,monthly_bytes,role_id,permission_overrides,max_file_mode,max_file_limit,monthly_jobs_mode,monthly_bytes_mode)
-	VALUES($1,$2,$3,$4,'admin',true,true,true,104857600,0,0,'custom','{}'::jsonb,'limited',104857600,'unlimited','unlimited')`, id, username, salt, passwordHash(password, salt))
+	VALUES($1,$2,$3,$4,'admin',true,true,true,$5,0,0,'custom','{}'::jsonb,'limited',$5,'unlimited','unlimited')`, id, username, salt, passwordHash(password, salt), limits.MaxInputBytes)
 	if err != nil {
 		return Principal{}, err
 	}

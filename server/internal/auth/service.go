@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/timisah/101conv/server/internal/limits"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -113,7 +114,7 @@ type Principal struct {
 }
 
 func AdminPrincipal() Principal {
-	max := int64(100 << 20)
+	max := limits.MaxInputBytes
 	return Principal{ID: "admin", Username: "Administrator", Role: RoleAdmin, CanConvert: true, CanReadJobs: true, MaxFileBytes: max, Permissions: map[string]bool{}, Quotas: Quotas{MaxFileBytes: QuotaLimit{Mode: "limited", Value: &max}, MonthlyJobs: QuotaLimit{Mode: "unlimited"}, MonthlyBytes: QuotaLimit{Mode: "unlimited"}}}
 }
 
@@ -172,7 +173,7 @@ CREATE TABLE IF NOT EXISTS conv_users (
  id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_salt BYTEA NOT NULL,
  password_hash BYTEA NOT NULL, role TEXT NOT NULL DEFAULT 'user', enabled BOOLEAN NOT NULL DEFAULT true,
  can_convert BOOLEAN NOT NULL DEFAULT true, can_read_jobs BOOLEAN NOT NULL DEFAULT true,
- max_file_bytes BIGINT NOT NULL DEFAULT 104857600, monthly_jobs INTEGER NOT NULL DEFAULT 0,
+	max_file_bytes BIGINT NOT NULL DEFAULT 1073741824, monthly_jobs INTEGER NOT NULL DEFAULT 0,
  monthly_bytes BIGINT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  CHECK (role IN ('user','admin')), CHECK (max_file_bytes > 0), CHECK (monthly_jobs >= 0), CHECK (monthly_bytes >= 0)
 );
@@ -249,7 +250,7 @@ CREATE TABLE IF NOT EXISTS conv_anonymous_settings (
  result_expiration_hours INTEGER NOT NULL DEFAULT 24, session_expiration_hours INTEGER NOT NULL DEFAULT 24,
  upload_expiration_hours INTEGER NOT NULL DEFAULT 24, failed_expiration_hours INTEGER NOT NULL DEFAULT 24,
  metadata_expiration_hours INTEGER NOT NULL DEFAULT 168, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- CHECK(max_file_bytes BETWEEN 1 AND 104857600), CHECK(max_batch_files BETWEEN 1 AND 20),
+	CHECK(max_file_bytes BETWEEN 1 AND 1073741824), CHECK(max_batch_files BETWEEN 1 AND 20),
  CHECK(max_guest_jobs BETWEEN 1 AND 100), CHECK(uploads_per_minute BETWEEN 1 AND 120),
  CHECK(submissions_per_minute BETWEEN 1 AND 60), CHECK(max_global_jobs BETWEEN 1 AND 1000),
  CHECK(global_uploads_per_minute BETWEEN 1 AND 10000), CHECK(global_submissions_per_minute BETWEEN 1 AND 10000),
@@ -259,6 +260,8 @@ CREATE TABLE IF NOT EXISTS conv_anonymous_settings (
  CHECK(metadata_expiration_hours BETWEEN 1 AND 8760)
 );
 INSERT INTO conv_anonymous_settings(id) VALUES(1) ON CONFLICT(id) DO NOTHING;
+ALTER TABLE conv_anonymous_settings DROP CONSTRAINT IF EXISTS conv_anonymous_settings_max_file_bytes_check;
+ALTER TABLE conv_anonymous_settings ADD CONSTRAINT conv_anonymous_settings_max_file_bytes_check CHECK(max_file_bytes BETWEEN 1 AND 1073741824);
 ALTER TABLE conv_anonymous_settings ADD COLUMN IF NOT EXISTS global_uploads_per_minute INTEGER NOT NULL DEFAULT 120 CHECK(global_uploads_per_minute BETWEEN 1 AND 10000);
 ALTER TABLE conv_anonymous_settings ADD COLUMN IF NOT EXISTS global_submissions_per_minute INTEGER NOT NULL DEFAULT 60 CHECK(global_submissions_per_minute BETWEEN 1 AND 10000);
 CREATE TABLE IF NOT EXISTS conv_guest_sessions (
@@ -280,7 +283,7 @@ func (s *Service) CreateUser(ctx context.Context, input NewUser) (User, error) {
 		return User{}, ErrInvalidInput
 	}
 	q := *input.Quotas
-	if validateQuota(q.MaxFileBytes, true, 100<<20) != nil || validateQuota(q.MonthlyJobs, true, 0) != nil || validateQuota(q.MonthlyBytes, true, 0) != nil {
+	if validateQuota(q.MaxFileBytes, true, limits.MaxInputBytes) != nil || validateQuota(q.MonthlyJobs, true, 0) != nil || validateQuota(q.MonthlyBytes, true, 0) != nil {
 		return User{}, ErrInvalidInput
 	}
 	salt := make([]byte, 16)
@@ -314,7 +317,7 @@ func (s *Service) CreateUser(ctx context.Context, input NewUser) (User, error) {
 	maxMode, maxLimit := q.MaxFileBytes.Mode, quotaDBValue(q.MaxFileBytes)
 	jobMode, jobLimit := q.MonthlyJobs.Mode, quotaDBValue(q.MonthlyJobs)
 	byteMode, byteLimit := q.MonthlyBytes.Mode, quotaDBValue(q.MonthlyBytes)
-	legacyMax, legacyJobs, legacyBytes := int64(100<<20), 0, int64(0)
+	legacyMax, legacyJobs, legacyBytes := limits.MaxInputBytes, 0, int64(0)
 	if q.MaxFileBytes.Mode == "limited" && q.MaxFileBytes.Value != nil {
 		legacyMax = *q.MaxFileBytes.Value
 	}
@@ -530,14 +533,14 @@ func (s *Service) resolveQuotas(ctx context.Context, p Principal) (Principal, er
 	if err != nil {
 		return Principal{}, err
 	}
-	own.MaxFileBytes = effectiveQuota(own.MaxFileBytes, groups, func(q Quotas) QuotaLimit { return q.MaxFileBytes }, 100<<20)
+	own.MaxFileBytes = effectiveQuota(own.MaxFileBytes, groups, func(q Quotas) QuotaLimit { return q.MaxFileBytes }, limits.MaxInputBytes)
 	own.MonthlyJobs = effectiveQuota(own.MonthlyJobs, groups, func(q Quotas) QuotaLimit { return q.MonthlyJobs }, 0)
 	own.MonthlyBytes = effectiveQuota(own.MonthlyBytes, groups, func(q Quotas) QuotaLimit { return q.MonthlyBytes }, 0)
 	p.Quotas = own
 	if own.MaxFileBytes.Value != nil {
 		p.MaxFileBytes = *own.MaxFileBytes.Value
 	} else {
-		p.MaxFileBytes = 100 << 20
+		p.MaxFileBytes = limits.MaxInputBytes
 	}
 	if own.MonthlyJobs.Value != nil {
 		p.MonthlyJobs = int(*own.MonthlyJobs.Value)
@@ -721,7 +724,7 @@ func (s *Service) UpdateUserBy(ctx context.Context, actorID, id string, update U
 	var maxLimit, jobLimit, byteLimit any
 	if update.Quotas != nil {
 		q := *update.Quotas
-		if validateQuota(q.MaxFileBytes, true, 100<<20) != nil || validateQuota(q.MonthlyJobs, true, 0) != nil || validateQuota(q.MonthlyBytes, true, 0) != nil {
+		if validateQuota(q.MaxFileBytes, true, limits.MaxInputBytes) != nil || validateQuota(q.MonthlyJobs, true, 0) != nil || validateQuota(q.MonthlyBytes, true, 0) != nil {
 			return User{}, ErrInvalidInput
 		}
 		maxMode = q.MaxFileBytes.Mode
@@ -1083,7 +1086,7 @@ func (s *Service) ListGroups(ctx context.Context) ([]Group, error) {
 func (s *Service) SaveGroup(ctx context.Context, g Group) (Group, error) {
 	g.ID = strings.TrimSpace(g.ID)
 	g.Name = strings.TrimSpace(g.Name)
-	if g.ID == "" || len(g.ID) > 80 || g.Name == "" || len(g.Name) > 100 || validatePolicies(g.Permissions) != nil || validateQuota(g.Quotas.MaxFileBytes, true, 100<<20) != nil || validateQuota(g.Quotas.MonthlyJobs, true, 0) != nil || validateQuota(g.Quotas.MonthlyBytes, true, 0) != nil {
+	if g.ID == "" || len(g.ID) > 80 || g.Name == "" || len(g.Name) > 100 || validatePolicies(g.Permissions) != nil || validateQuota(g.Quotas.MaxFileBytes, true, limits.MaxInputBytes) != nil || validateQuota(g.Quotas.MonthlyJobs, true, 0) != nil || validateQuota(g.Quotas.MonthlyBytes, true, 0) != nil {
 		return Group{}, ErrInvalidInput
 	}
 	var role any

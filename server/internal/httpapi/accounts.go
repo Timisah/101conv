@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/timisah/101conv/server/internal/auth"
+	"github.com/timisah/101conv/server/internal/limits"
 )
 
 func (a *API) getMe(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +85,7 @@ func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
 		req.PermissionOverrides = map[string]*bool{}
 		maxFile := actor.MaxFileBytes
 		if maxFile <= 0 {
-			maxFile = 100 << 20
+			maxFile = limits.MaxInputBytes
 		}
 		monthlyJobs := int64(100)
 		if actor.Quotas.MonthlyJobs.Mode == "limited" && actor.Quotas.MonthlyJobs.Value != nil && *actor.Quotas.MonthlyJobs.Value < monthlyJobs {

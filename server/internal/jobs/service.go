@@ -23,13 +23,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/timisah/101conv/server/internal/limits"
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/profile"
 )
 
 const (
-	MaxInputBytes  = 100 << 20
-	MaxOutputBytes = 200 << 20
+	// These aliases preserve the jobs package API while keeping the shared
+	// ceilings consistent with auth and Worker validation.
+	MaxInputBytes  = limits.MaxInputBytes
+	MaxOutputBytes = limits.MaxOutputBytes
 	MaxAttempts    = 3
 )
 

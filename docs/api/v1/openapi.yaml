@@ -162,7 +162,7 @@ paths:
                 enabled: { type: boolean }
                 allowConversion: { type: boolean }
                 allowCompression: { type: boolean }
-                maxFileBytes: { type: integer, minimum: 1, maximum: 104857600 }
+                maxFileBytes: { type: integer, minimum: 1, maximum: 1073741824, description: Maximum input size per file, up to 1 GiB. }
                 maxBatchFiles: { type: integer, minimum: 1, maximum: 20 }
                 maxSimultaneousJobs: { type: integer, minimum: 1, maximum: 100 }
                 uploadsPerMinute: { type: integer, minimum: 1, maximum: 120 }
@@ -678,7 +678,7 @@ paths:
   /api/v1/uploads:
     post:
       summary: Upload one input file for asynchronous conversion
-      description: The returned uploadId can be submitted once to create a job. Maximum input size is 100 MiB.
+      description: The returned uploadId can be submitted once to create a job. Maximum input size is 1 GiB, subject to the per-account or guest quota.
       security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
       requestBody:
         required: true
@@ -697,7 +697,7 @@ paths:
               schema: { $ref: '#/components/schemas/Upload' }
         '400': { description: Invalid or empty upload }
         '401': { description: Authentication required }
-        '413': { description: Input exceeds per-account or 100 MiB instance limit }
+        '413': { description: Input exceeds the per-account, guest, or 1 GiB instance limit }
         '429': { description: Monthly uploaded input-data quota exceeded }
   /api/v1/jobs:
     get:
@@ -1299,7 +1299,7 @@ components:
         id: { type: string, format: uuid }
         fileName: { type: string }
         extension: { type: string }
-        size: { type: integer, minimum: 1, maximum: 104857600 }
+        size: { type: integer, minimum: 1, maximum: 1073741824 }
         sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
         createdAt: { type: string, format: date-time }
     JobSubmission:
