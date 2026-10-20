@@ -16,6 +16,8 @@ See [MASTER_PLAN.md](MASTER_PLAN.md), [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md)
 
 ## Implemented in reviewed source
 
+- **Administrator version visibility and advisory release checks:** the running `APP_VERSION` is visible in the top bar on desktop and mobile. Administrators can view cached stable-release metadata and notes at **Admin → Application updates**; Core checks at most every 12 hours and never performs an upgrade. The admin-only `/api/v1/system/update` endpoint and `UPDATE_CHECK_URL` deployment override are documented. Portainer Git pull/redeploy remains the update mechanism.
+
 | Capability | Evidence and important constraints |
 | --- | --- |
 | Go Core, PostgreSQL jobs, isolated Worker, React/Nginx web | `compose.yaml`, `server/internal/jobs/`, `server/internal/worker/`; database/storage remain shared within the deployment trust boundary |

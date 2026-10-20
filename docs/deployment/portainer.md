@@ -10,6 +10,8 @@ Direct trusted-LAN HTTP is supported when users open the published web port dire
 
 The application ignores `X-Forwarded-Host` for origin decisions and ignores client-supplied address headers for login throttling unless the request was marked by the bundled proxy. This protects the default deployment from spoofed forwarding headers. A custom ingress must be a trusted boundary and must overwrite forwarded values before passing requests to `web`.
 
+The top bar shows the running `APP_VERSION` to every signed-in user, including on mobile. Administrators also have **Admin → Application updates**, which checks the configured HTTPS release feed on sign-in and then every 12 hours. The result is cached per Core instance and includes the latest stable GitHub release, notes, and link when available. It is advisory only: it never pulls Git or restarts Compose services. Updating this deployment still means pulling the `main` branch in Portainer and redeploying/rebuilding the stack.
+
 ## Existing stack update
 
 Keep the current stack name, Git repository, branch, and `DATA_PATH`, `GO_DATA_PATH`, `PORT`, PostgreSQL credentials, and named volumes. Set the Compose path to `compose.yaml` if needed, pull the new commit, and redeploy/build the stack. Do not enable volume pruning or delete host directories. This deployment uses a `web` Compose service; if an older stack leaves an orphaned frontend container after updating, inspect it and remove only that stopped container after confirming it is no longer serving the port. Do not remove any volumes.
@@ -30,6 +32,7 @@ Portainer variables:
 | `POSTGRES_DB` | No | Database name; default `101conv`. Keep existing value when reusing a volume. |
 | `POSTGRES_USER` | No | Database user; default `101conv`. Keep existing value when reusing a volume. |
 | `APP_VERSION` | No | Application/catalog compatibility version; default `0.1.0`. |
+| `UPDATE_CHECK_URL` | No | HTTPS endpoint returning latest stable release metadata; defaults to `https://api.github.com/repos/Timisah/101conv/releases/latest`. Set an internal compatible feed if required. |
 | `WORKER_CONCURRENCY` | No | Concurrent conversion processes per Worker container; default `1`, maximum `8`. Keep low on small hosts. Operations shows the configured slots and current active jobs. |
 | `WORKER_BATCH_CONCURRENCY` | No | Maximum simultaneous running jobs from one batch across the shared queue; default `2`, maximum `20`. The worker process concurrency is still the global limit. |
 | `AUTOMATION_HOST_PATH` | No | Host directory mounted into Core at `/mounts`; default `${DATA_PATH}/automation-mounts`. Use an existing Docker-visible directory containing folders administrators intend to register. |

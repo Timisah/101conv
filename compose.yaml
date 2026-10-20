@@ -39,6 +39,7 @@ services:
       no_cache: true
     environment:
       APP_VERSION: ${APP_VERSION:-0.1.0}
+      UPDATE_CHECK_URL: ${UPDATE_CHECK_URL:-https://api.github.com/repos/Timisah/101conv/releases/latest}
       PORT: 5656
       DATA_PATH: /var/lib/101conv
       UPLOADS_PATH: /var/lib/101conv/uploads

@@ -15,6 +15,7 @@ import (
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/presets"
 	"github.com/timisah/101conv/server/internal/repositorymanager"
+	"github.com/timisah/101conv/server/internal/updatecheck"
 )
 
 type API struct {
@@ -27,6 +28,7 @@ type API struct {
 	accounts     *auth.Service
 	automations  *automation.Service
 	presets      *presets.Service
+	updates      *updatecheck.Checker
 	sessions     *sessionStore
 	loginGuard   *loginGuard
 }
@@ -56,7 +58,11 @@ func NewWithAutomation(version string, catalogService *catalog.Service, manageme
 }
 
 func NewWithPresets(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, accountService *auth.Service, automationService *automation.Service, presetService *presets.Service, adminToken string) http.Handler {
-	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, accounts: accountService, automations: automationService, presets: presetService, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
+	return NewWithUpdates(version, catalogService, managementService, repositoryService, jobService, accountService, automationService, presetService, nil, adminToken)
+}
+
+func NewWithUpdates(version string, catalogService *catalog.Service, managementService *management.Service, repositoryService *repositorymanager.Manager, jobService *jobs.Service, accountService *auth.Service, automationService *automation.Service, presetService *presets.Service, updateChecker *updatecheck.Checker, adminToken string) http.Handler {
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, accounts: accountService, automations: automationService, presets: presetService, updates: updateChecker, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
 	if managementService != nil {
 		a.sessions.setTTL(time.Duration(managementService.SessionTimeout()) * time.Minute)
 	}
@@ -70,6 +76,7 @@ func NewWithPresets(version string, catalogService *catalog.Service, managementS
 	mux.HandleFunc("GET /api/v1/storage", a.storageOverview)
 	mux.HandleFunc("POST /api/v1/storage/scan", a.startStorageScan)
 	mux.HandleFunc("GET /api/v1/operations", a.operationsOverview)
+	mux.HandleFunc("GET /api/v1/system/update", a.updateStatus)
 	mux.HandleFunc("GET /api/v1/storage/cleanup/preview", a.previewStorageCleanup)
 	mux.HandleFunc("PUT /api/v1/storage/retention", a.updateStorageRetention)
 	mux.HandleFunc("POST /api/v1/storage/cleanup", a.applyStorageCleanup)

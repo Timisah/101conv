@@ -24,6 +24,7 @@ import (
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/presets"
 	"github.com/timisah/101conv/server/internal/repositorymanager"
+	"github.com/timisah/101conv/server/internal/updatecheck"
 	"github.com/timisah/101conv/server/internal/worker"
 )
 
@@ -56,6 +57,11 @@ func main() {
 	}
 	version := env("APP_VERSION", buildVersion)
 	port := env("PORT", "5656")
+	updateChecker, updateErr := updatecheck.New(version, os.Getenv("UPDATE_CHECK_URL"))
+	if updateErr != nil {
+		log.Printf("disable release update checks: %v", updateErr)
+		updateChecker = nil
+	}
 	catalogService, err := catalog.New(version)
 	if err != nil {
 		log.Fatalf("load built-in catalog: %v", err)
@@ -142,7 +148,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           httpapi.NewWithPresets(version, catalogService, managementService, repositoryService, jobService, accountService, automationService, presetService, os.Getenv("ENGINE_ADMIN_TOKEN")),
+		Handler:           httpapi.NewWithUpdates(version, catalogService, managementService, repositoryService, jobService, accountService, automationService, presetService, updateChecker, os.Getenv("ENGINE_ADMIN_TOKEN")),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

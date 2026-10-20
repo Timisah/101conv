@@ -51,6 +51,23 @@ func TestPresetRoutesReportUnavailableStorage(t *testing.T) {
 	}
 }
 
+func TestUpdateStatusRequiresAdministratorManagement(t *testing.T) {
+	catalogService, err := catalog.New("0.1.0-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewWithPresets("0.1.0-dev", catalogService, nil, nil, nil, nil, nil, nil, ""))
+	defer server.Close()
+	response, err := server.Client().Get(server.URL + "/api/v1/system/update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("update status = %d, want 503 when management is unavailable", response.StatusCode)
+	}
+}
+
 func TestHealthIsLivenessAndReadinessReportsMissingDependencies(t *testing.T) {
 	catalogService, err := catalog.New("0.1.0-dev")
 	if err != nil {

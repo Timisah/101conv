@@ -38,8 +38,12 @@ Set these variables in the Portainer stack's Environment variables table:
 - `POSTGRES_WORKER_PASSWORD`: separate strong Worker database password. The installer generates it. For Portainer or an existing volume, set it and run [`scripts/migrate-worker-db-role.sh`](scripts/migrate-worker-db-role.sh) before restarting Worker; do not point Worker at the Core password after migration.
 - `ENGINE_ADMIN_TOKEN`: strong administrator login/API token.
 - `PORT`: optional published web port; defaults to `5656`.
+- `APP_VERSION`: build/catalog compatibility version; defaults to `0.1.0`.
+- `UPDATE_CHECK_URL`: optional HTTPS endpoint for latest stable release metadata; defaults to the 101conv GitHub Releases API.
 
 Optionally set `GO_DATA_PATH` to the exact existing Go data directory instead of using `${DATA_PATH}/go-data`. Do not delete or replace the PostgreSQL, uploads, results, or Go data storage when updating the stack. Compose builds the frontend and backend from the checked-out commit without build cache, while HTML revalidation makes the newly built interface visible after deployment.
+
+The running version is shown as a small badge in the application top bar, including on mobile. Administrators can open the badge or **Admin → Application updates** to see cached latest stable release metadata, notes, and its GitHub link. Core checks the feed on administrator sign-in and then at most once every 12 hours per instance. The check is advisory and never upgrades the stack; Portainer updates remain a deliberate pull/redeploy/rebuild of the Git `main` stack. Stable release tags should use `vMAJOR.MINOR.PATCH`, such as `v0.2.0`.
 
 For a new Portainer deployment, create the Go data directory before deploying and supply a random `ENGINE_ADMIN_TOKEN` of at least 24 characters for first-run claim. For an existing installation, preserve the current path and named volumes. See the [Portainer deployment guide](docs/deployment/portainer.md) for storage, variables, and update details.
 

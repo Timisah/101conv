@@ -128,6 +128,19 @@ paths:
       security: [{ engineAdmin: [] }, { adminSession: [] }]
       responses:
         '200': { description: Worker heartbeat, database, storage, engine/profile and repository status, jobs and leases }
+  /api/v1/system/update:
+    get:
+      summary: Check the latest stable application release
+      description: Returns advisory release metadata for administrators. The application never upgrades itself; deployment remains controlled by the configured deployment system.
+      security: [{ engineAdmin: [] }, { adminSession: [] }]
+      responses:
+        '200':
+          description: Current version and cached release status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateStatus' }
+        '401': { description: Administrator authentication required }
+        '403': { description: Administrator permission required }
   /api/v1/settings/session:
     get:
       summary: Read the instance-wide browser session lifetime
@@ -1285,6 +1298,20 @@ components:
       required: true
       schema: { type: string, format: uuid }
   schemas:
+    UpdateStatus:
+      type: object
+      required: [currentVersion, updateAvailable, checkedAt, status]
+      properties:
+        currentVersion: { type: string }
+        latestVersion: { type: string }
+        updateAvailable: { type: boolean }
+        releaseName: { type: string }
+        releaseUrl: { type: string, format: uri }
+        releaseNotes: { type: string }
+        publishedAt: { type: string, format: date-time }
+        checkedAt: { type: string, format: date-time }
+        status: { type: string, enum: [current, update_available, unavailable] }
+        error: { type: string }
     CapabilityCatalog:
       type: object
       required: [schemaVersion, capabilities, providers]
