@@ -189,7 +189,7 @@ func TestProcessRunnerCompressesRealMediaToTargetSize(t *testing.T) {
 		EngineID: "ffmpeg", EngineVersion: "9.0.0", ExecutableRelativePath: "ffmpeg", ProbeExecutableRelativePath: "ffprobe",
 		Arguments:            []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", "{source}", "{compression.args}", "{target}"},
 		CompressionArguments: []string{"-b:v", "{compression.videoKbps}k", "-maxrate", "{compression.videoKbps}k", "-bufsize", "{compression.bufferKbps}k", "-b:a", "{compression.audioKbps}k"},
-		TargetSizeBytes:      2 << 20, AudioBitrateKbps: 96, MinimumVideoKbps: 32, RequireSmaller: true,
+		TargetSizeBytes:      2 << 20, AudioBitrateKbps: 96, MinimumVideoKbps: 32, RequireSmaller: true, PreserveResolution: true, PreserveHDR: true,
 		TargetExtension: "mp4", ExpectedInputSHA256: hex.EncodeToString(digest[:]), ExpectedInputSize: int64(len(input)),
 	})
 	if err != nil {

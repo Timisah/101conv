@@ -81,12 +81,18 @@ The first P2 increment is implemented and source-verified in this worktree:
   compatible profiles and freezes proportional per-file target allocations in
   the durable batch item requests, with hard minimum-budget rejection and
   best-effort handling when profile maxima are lower than the requested cap.
+- The FFmpeg compression profile now declares resolution and HDR preservation
+  constraints. The Worker shares one bounded JSON media probe with target-size
+  bitrate calculation and rejects output that loses first-video-stream
+  dimensions, HDR signaling, bit depth, static HDR side data, or detected
+  dynamic HDR metadata.
 
 Evidence: `server/internal/worker/runner.go`,
 `catalog/targets/profiles/jpeg-xl-compression-linux-amd64.json`,
 `docs/architecture/compression-p2.md`, and the focused/full package test runs
-performed in this worktree. Shared file analysis, stream selection, and
-HDR-preserving video re-encoding remain open P2 work.
+performed in this worktree. Full Inspector reuse, multi-stream selection,
+stream/attachment preservation, and complete HDR10+/Dolby Vision equivalence
+remain open P2 work.
 
 ## Immediate implementation queue
 

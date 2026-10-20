@@ -1,9 +1,10 @@
 # P2: bounded target-size compression
 
 This document records the verified P2 increments. It covers per-file
-target-size contracts and deterministic combined batch budgets; shared file
-analysis, stream selection, and full HDR-aware video policy remain open P2
-work.
+target-size contracts, deterministic combined batch budgets, and a bounded
+shared media analysis path for declared video fidelity constraints. Stream
+selection, full Inspector reuse, and complete HDR-aware video policy remain
+open P2 work.
 
 ## Contract
 
@@ -54,7 +55,23 @@ item request, so resume and retry do not recalculate the budget.
 Combined budgets currently require one whole-megabyte numeric target-size
 option per item and use the Worker output ceiling as an additional per-file
 cap. The combined field is a maximum, not an exact total, and it does not yet
-share media analysis or coordinate stream selection across files.
+coordinate a single analysis pass across the batch or coordinate stream
+selection across files.
+
+## Video fidelity validation
+
+Compression profiles may set `preserveResolution` and `preserveHDR`. These
+flags require a bounded `probeExecutable`. Core freezes them into the
+immutable execution specification. The Worker runs one JSON media probe per
+attempt, reuses its duration for bitrate sizing, and validates each candidate
+output when the flags are enabled. The current checks cover the first video
+stream's dimensions, transfer/primaries/matrix/range, bit depth, mastering
+display/content-light side data, and the presence of detected dynamic HDR
+metadata. Missing or downgraded properties fail publication.
+
+This slice does not select among multiple streams, preserve every subtitle or
+attachment stream, or guarantee HDR10+/Dolby Vision payload equivalence. Those
+remain explicit follow-up work rather than silent fallback behavior.
 
 ## Verification
 

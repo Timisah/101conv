@@ -123,6 +123,12 @@ performs a bounded quality search and hard-checks the final artifact size.
 do not promise exact sizes for every codec, and unsupported or infeasible
 targets must fail rather than publish an oversized result.
 
+Video compression profiles may additionally set `preserveResolution` and
+`preserveHDR`. Either flag requires `probeExecutable`; the Worker uses one
+bounded JSON probe for the input and output and rejects a resized, SDR,
+lower-bit-depth, or metadata-downgraded first video stream. These flags do not
+claim multi-stream, subtitle/attachment, HDR10+, or Dolby Vision equivalence.
+
 Declared compatibility is a manifest claim. Verified compatibility is limited to the source/target pairs covered by the exact engine artifact test. An unsupported or unverified pair must not be added to `sources` or `targets`. Metadata option `0` requests converter metadata mapping and `-1` requests removal; it does not promise that output formats can carry every input EXIF field, orientation tag, timestamp, or ICC/color-profile record. Profile descriptions must state format-specific limitations.
 
 The target catalog also ships managed LibreOffice Office-to-PDF and Poppler PDF rendering/text extraction adapters for supported Linux AMD64 deployments. Their small adapter archives are pinned and checked against the exact Worker runtime; they do not imply arbitrary Office fidelity, OCR, editable PDF output, or support on other architectures. Keep the document profiles separate: LibreOffice publishes Office-to-PDF rules, while Poppler publishes PDF page rendering and text extraction rules.

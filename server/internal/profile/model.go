@@ -73,6 +73,11 @@ type CompressionConfig struct {
 	AudioBitrateKbps int                `json:"audioBitrateKbps,omitempty"`
 	MinimumVideoKbps int                `json:"minimumVideoKbps,omitempty"`
 	RequireSmaller   bool               `json:"requireSmallerOutput,omitempty"`
+	// PreserveResolution and PreserveHDR request output validation for video
+	// streams. They are fidelity constraints, not implicit format guarantees;
+	// a profile must provide a bounded media probe when either is enabled.
+	PreserveResolution bool `json:"preserveResolution,omitempty"`
+	PreserveHDR        bool `json:"preserveHDR,omitempty"`
 	// TargetQualityOption enables a bounded quality search when a target-size
 	// option is selected. The option's range is the search domain; the value
 	// supplied by the user caps the best quality that may be attempted.
@@ -306,6 +311,9 @@ func (d Definition) ValidateCompression() error {
 	}
 	if c.AudioBitrateKbps < 0 || c.AudioBitrateKbps > 512 || c.MinimumVideoKbps < 0 || c.MinimumVideoKbps > 10000 {
 		return fmt.Errorf("compression bitrate settings are invalid")
+	}
+	if (c.PreserveResolution || c.PreserveHDR) && strings.TrimSpace(c.ProbeExecutable) == "" {
+		return fmt.Errorf("video fidelity constraints require a probe executable")
 	}
 	if c.TargetSizeAttempts == 1 || c.TargetSizeAttempts < 0 || c.TargetSizeAttempts > 12 {
 		return fmt.Errorf("compression target-size attempts must be 0 or between 2 and 12")

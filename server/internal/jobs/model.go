@@ -109,6 +109,8 @@ type ExecutionSpec struct {
 	CompressionQualityStep         float64  `json:"compressionQualityStep,omitempty"`
 	CompressionQualityHigherBetter bool     `json:"compressionQualityHigherIsBetter,omitempty"`
 	CompressionQualityAttempts     int      `json:"compressionQualityAttempts,omitempty"`
+	PreserveResolution             bool     `json:"preserveResolution,omitempty"`
+	PreserveHDR                    bool     `json:"preserveHDR,omitempty"`
 }
 
 type JobDetail struct {

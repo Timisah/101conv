@@ -899,11 +899,14 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	var qualityMin, qualityMax, qualityStep float64
 	var qualityHigherBetter bool
 	var qualityAttempts int
+	var preserveResolution, preserveHDR bool
 	optionValues := map[string]string{}
 	if mode == "compress" {
 		if profileDef.Compression == nil || len(rule.CompressionArguments) == 0 {
 			return Job{}, false, fmt.Errorf("%w: profile does not provide compression for %s to %s", ErrUnsupported, upload.Extension, target)
 		}
+		preserveResolution = profileDef.Compression.PreserveResolution
+		preserveHDR = profileDef.Compression.PreserveHDR
 		var optionValues map[string]string
 		optionValues, targetSizeBytes, err = validateCompressionOptions(*profileDef.Compression, req.Options)
 		if err != nil {
@@ -942,6 +945,12 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 				qualityAttempts = profileDef.Compression.TargetSizeAttempts
 			}
 		}
+		if preserveResolution || preserveHDR {
+			probeRelative = engineDef.Executables[profileDef.Compression.ProbeExecutable]
+			if !safeExecutableRelative(probeRelative) {
+				return Job{}, false, fmt.Errorf("%w: video fidelity probe executable is unavailable", ErrUnsupported)
+			}
+		}
 	}
 	if mode == "convert" {
 		optionValues, err = validateConversionOptions(rule.Options, req.Options)
@@ -963,7 +972,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			return Job{}, false, err
 		}
 	}
-	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && profileDef.Compression != nil && profileDef.Compression.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts}
+	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && profileDef.Compression != nil && profileDef.Compression.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts, PreserveResolution: preserveResolution, PreserveHDR: preserveHDR}
 	specBytes, err := json.Marshal(spec)
 	if err != nil {
 		return Job{}, false, err

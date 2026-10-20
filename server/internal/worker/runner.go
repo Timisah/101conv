@@ -49,6 +49,8 @@ type Invocation struct {
 	CompressionQualityStep         float64
 	CompressionQualityHigherBetter bool
 	CompressionQualityAttempts     int
+	PreserveResolution             bool
+	PreserveHDR                    bool
 	TargetExtension                string
 	SourceExtension                string
 	ExpectedInputSHA256            string
@@ -86,6 +88,10 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	adaptiveQuality := in.TargetSizeBytes > 0 && in.CompressionQualityStep > 0
 	if in.TargetSizeBytes > 0 && !adaptiveQuality && (!safeRelative(in.ProbeExecutableRelativePath) || in.AudioBitrateKbps < 1 || in.MinimumVideoKbps < 1) {
 		return Result{}, fmt.Errorf("invalid compression target-size settings")
+	}
+	needsMediaProbe := in.PreserveResolution || in.PreserveHDR || in.TargetSizeBytes > 0 && !adaptiveQuality
+	if needsMediaProbe && !safeRelative(in.ProbeExecutableRelativePath) {
+		return Result{}, fmt.Errorf("invalid compression media-fidelity probe settings")
 	}
 	if adaptiveQuality && (math.IsNaN(in.CompressionQualityMin) || math.IsNaN(in.CompressionQualityMax) || math.IsNaN(in.CompressionQualityStep) || math.IsInf(in.CompressionQualityMin, 0) || math.IsInf(in.CompressionQualityMax, 0) || math.IsInf(in.CompressionQualityStep, 0) || in.CompressionQualityMin > in.CompressionQualityMax || in.CompressionQualityStep <= 0) {
 		return Result{}, fmt.Errorf("invalid adaptive compression quality settings")
@@ -149,10 +155,6 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 			retErr = errors.Join(retErr, fmt.Errorf("remove attempt workspace: %w", cleanupErr))
 		}
 	}()
-	compressionArgs, err := resolveCompressionArguments(parent, engineRoot, work, inputPath, in)
-	if err != nil {
-		return Result{}, err
-	}
 	maxOutput := r.MaxOutput
 	if maxOutput <= 0 {
 		maxOutput = DefaultMaxOutput
@@ -163,6 +165,17 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	var inputMedia *mediaProbe
+	if needsMediaProbe {
+		inputMedia, err = probeMedia(ctx, engineRoot, work, inputPath, in)
+		if err != nil {
+			return Result{}, err
+		}
+	}
+	compressionArgs, err := resolveCompressionArguments(in, inputMedia)
+	if err != nil {
+		return Result{}, err
+	}
 	type candidate struct {
 		path           string
 		size           int64
@@ -255,6 +268,15 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 		}
 		if signatureErr := validateImageSignature(outputPath, in.TargetExtension); signatureErr != nil {
 			return candidate{exitCode: 0, stdout: stdout.String(), stderr: stderr.String()}, signatureErr
+		}
+		if inputMedia != nil && (in.PreserveResolution || in.PreserveHDR) {
+			outputMedia, probeErr := probeMedia(ctx, engineRoot, work, outputPath, in)
+			if probeErr != nil {
+				return candidate{stdout: stdout.String(), stderr: stderr.String()}, fmt.Errorf("validate output media: %w", probeErr)
+			}
+			if fidelityErr := validateMediaFidelity(*inputMedia, *outputMedia, in); fidelityErr != nil {
+				return candidate{stdout: stdout.String(), stderr: stderr.String()}, fidelityErr
+			}
 		}
 		return candidate{path: outputPath, size: outputInfo.Size(), stdout: stdout.String(), stderr: stderr.String()}, nil
 	}
@@ -436,37 +458,16 @@ func validatePDFSignature(path string) error {
 	return nil
 }
 
-func resolveCompressionArguments(parent context.Context, engineRoot, work, inputPath string, in Invocation) ([]string, error) {
+func resolveCompressionArguments(in Invocation, media *mediaProbe) ([]string, error) {
 	if len(in.CompressionArguments) == 0 {
 		return nil, nil
 	}
 	values := map[string]string{}
 	if in.TargetSizeBytes > 0 && in.CompressionQualityStep <= 0 {
-		executable := filepath.Join(engineRoot, in.EngineID, in.EngineVersion, filepath.FromSlash(in.ProbeExecutableRelativePath))
-		if err := rejectSymlinkPath(engineRoot, executable); err != nil {
-			return nil, fmt.Errorf("resolve media probe: %w", err)
-		}
-		info, err := os.Lstat(executable)
-		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0111 == 0 {
-			return nil, fmt.Errorf("compression probe executable is unavailable")
-		}
-		probeCtx, cancel := context.WithTimeout(parent, 30*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(probeCtx, executable, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", inputPath)
-		cmd.Dir = work
-		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work, "LANG=C.UTF-8"}
-		out, stderr := &boundedBuffer{}, &boundedBuffer{}
-		cmd.Stdout, cmd.Stderr = out, stderr
-		if err = cmd.Run(); err != nil {
-			if probeCtx.Err() != nil {
-				return nil, fmt.Errorf("media probe timed out")
-			}
-			return nil, fmt.Errorf("could not inspect media duration: %s", strings.TrimSpace(stderr.String()))
-		}
-		duration, err := strconv.ParseFloat(strings.TrimSpace(out.String()), 64)
-		if err != nil || duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+		if media == nil || media.Duration <= 0 || math.IsNaN(media.Duration) || math.IsInf(media.Duration, 0) {
 			return nil, fmt.Errorf("media probe returned an invalid duration")
 		}
+		duration := media.Duration
 		// Reserve 10%% of the requested budget for container metadata and
 		// muxing overhead; the final artifact is still checked against the cap.
 		budget := in.TargetSizeBytes
