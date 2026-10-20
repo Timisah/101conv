@@ -70,18 +70,19 @@ type Report struct {
 
 type FileSummary struct {
 	ID        string `json:"id"`
-	Name      string `json:"name"`
+	Name      string `json:"fileName"`
 	Extension string `json:"extension"`
 	Size      int64  `json:"size"`
 	SHA256    string `json:"sha256"`
 }
 
 type ImageSummary struct {
-	Width       int    `json:"width"`
-	Height      int    `json:"height"`
-	ColorModel  string `json:"colorModel,omitempty"`
-	EXIFPresent bool   `json:"exifPresent,omitempty"`
-	ICCProfile  bool   `json:"iccProfile,omitempty"`
+	Width       int            `json:"width"`
+	Height      int            `json:"height"`
+	ColorModel  string         `json:"colorModel,omitempty"`
+	EXIFPresent bool           `json:"exifPresent,omitempty"`
+	ICCProfile  bool           `json:"iccProfile,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 type DocumentSummary struct {
@@ -380,7 +381,8 @@ func isOffice(ext string) bool {
 }
 
 func inspectImage(path, extension string, header []byte) (*ImageSummary, error) {
-	summary := &ImageSummary{EXIFPresent: strings.Contains(string(header), "Exif\x00\x00"), ICCProfile: strings.Contains(string(header), "ICC_PROFILE") || strings.Contains(string(header), "iCCP")}
+	exifMetadata := parseJPEGEXIF(header)
+	summary := &ImageSummary{EXIFPresent: len(exifMetadata) > 0 || strings.Contains(string(header), "Exif\x00\x00"), ICCProfile: strings.Contains(string(header), "ICC_PROFILE") || strings.Contains(string(header), "iCCP"), Metadata: exifMetadata}
 	f, err := os.Open(path)
 	if err == nil {
 		config, _, decodeErr := image.DecodeConfig(io.LimitReader(f, MaxHeaderBytes))
