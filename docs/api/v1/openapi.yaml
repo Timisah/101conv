@@ -882,6 +882,26 @@ paths:
         '403': { description: The account or API key cannot read owned uploads }
         '404': { description: Upload is not owned by the caller or is unavailable }
         '422': { description: The bounded inspector could not safely parse the file }
+  /api/v1/uploads/{id}/metadata-removal:
+    parameters:
+      - { $ref: '#/components/parameters/UploadId' }
+    post:
+      summary: Queue an explicit same-format metadata-removal job
+      description: Creates a separate conversion result with the selected profile's metadata option set to strip metadata. The source upload is retained and never modified.
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MetadataRemovalRequest' }
+      responses:
+        '202': { description: Metadata-removal job queued }
+        '200': { description: An identical idempotent request already exists }
+        '400': { description: Invalid request or the selected profile does not support explicit metadata removal }
+        '401': { description: Authentication required }
+        '403': { description: The account or API key cannot submit jobs }
+        '404': { description: Upload is not owned by the caller or is unavailable }
+        '429': { description: Guest submission rate limit exceeded }
   /api/v1/jobs:
     get:
       summary: List durable jobs with optional status and text filters
@@ -1622,6 +1642,14 @@ components:
         extension: { type: string }
         size: { type: integer, minimum: 1, maximum: 1073741824 }
         sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    MetadataRemovalRequest:
+      type: object
+      required: [idempotencyKey]
+      properties:
+        profileId: { type: string, description: Optional installed same-format conversion profile. Omission uses normal profile resolution. }
+        profileVersion: { type: string }
+        targetFormat: { type: string, description: Must match the upload's current extension when provided. }
+        idempotencyKey: { type: string, minLength: 8, maxLength: 128 }
     JobSubmission:
       type: object
       required: [job, duplicate]

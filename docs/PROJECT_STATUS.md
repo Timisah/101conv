@@ -56,7 +56,7 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 
 - P1 capability/provider migration and saved presets: implemented in the completion commit. The remaining release gate is remote CI and browser evidence; the deployment continues to retain legacy profile IDs as a migration boundary.
 - Metadata-based automation conditions, richer media controls, and optional GPU workers/device probing.
-- Visual multi-format Document Creator with per-page reorder/rotation, save/resume and exports.
+- Document Creator: the first Build editor and validated non-destructive page-manifest foundation are started; multipage expansion, thumbnails, saved/expiring projects, and fidelity-tested PDF export remain planned.
 - Visual Automations blocks/branches and broader blueprint system.
 - Versioned extension installation/compatibility/rollback and Immich connector.
 - New brand/logo, static public pages/SEO and rate-limited public demo.
@@ -91,6 +91,14 @@ The P2 scope is implemented and source-verified in this worktree:
   is held in an ephemeral file, never added to conversion storage, and removed
   after the scan. Analysis reuses the shared probe and returns bounded full
   metadata, including sensitive tags when present, to the authorized caller.
+- An explicit same-format metadata-removal endpoint now queues a separate
+  conversion result through the selected profile's typed `metadata=-1` option;
+  the source upload is retained and the normal job idempotency, quota, and
+  output validation paths remain in force.
+- The first Build slice adds a validated page-manifest package and responsive
+  editor for add, reorder, rotate, duplicate, remove, undo/redo, source
+  preparation, and manifest download. PDF assembly and saved projects remain
+  open.
 - Successful jobs expose input/output savings, and batch allocations remain
   independently frozen per item for deterministic retry behavior.
 
