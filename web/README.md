@@ -21,3 +21,13 @@ The browser verification script `../scripts/phase5-browser-smoke.sh` provisions 
 - Use responsive desktop/mobile layouts and the system-aware light/dark theme.
 
 Authentication uses HttpOnly browser sessions. `ENGINE_ADMIN_TOKEN` is never sent back to the browser. User/group/role and API-key operations are protected by the current effective server permissions. Changes to a user's role, groups, permissions, or enabled state are reloaded for authorization on each API request.
+
+## Responsive UI checks
+
+With the Vite dev server running, run `npm run test:ui` in another terminal.
+The Chromium checks use deterministic API fixtures to verify desktop, tablet,
+and phone layouts, upload selection and submission, guest batch limits, theme
+switching, mobile navigation, and sign-in errors. They do not run a converter.
+Set `UI_BASE` to test another frontend URL, `CHROMIUM_PATH` to select Chromium,
+and `UI_ARTIFACT_DIR` to change the screenshot directory (default: `/tmp/101conv-ui`).
+The Docker browser suite above verifies real server and worker integration.
