@@ -10,7 +10,7 @@ The Go catalog exposes separate conversion and compression profiles:
 
 - **FFmpeg Audio/Video Conversion** and **FFmpeg Audio/Video Compression** share one FFmpeg engine installation.
 - **JPEG XL Image Conversion** and **JPEG XL Image Compression** share one JPEG XL engine installation.
-- **FFmpeg Image Conversion 1.1.0** uses the same pinned LGPL FFmpeg engine for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings verified against the selected build. Rules are target-specific: JPEG uses FFmpeg quantizer quality, PNG uses compression level, WebP uses libwebp quality, AVIF uses libaom CRF, and TIFF/BMP/GIF expose no controls that their encoders ignore. Still-image targets select the first frame; WebP and GIF preserve animation; AVIF is encoded as one still image.
+- **FFmpeg Image Conversion 1.1.0** uses the same pinned LGPL FFmpeg engine for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings verified against the selected build. It is published at a new immutable target path while 1.0.0 remains available for older installations and clients. Rules are target-specific: JPEG uses FFmpeg quantizer quality, PNG uses compression level, WebP uses libwebp quality, AVIF uses libaom CRF, and TIFF/BMP/GIF expose no controls that their encoders ignore. Still-image targets select the first frame; WebP and GIF preserve animation; AVIF is encoded as one still image.
 
 Their engine/profile manifests live under `catalog/targets/`. The package SHA-256 values were checked against the upstream release bytes. FFmpeg is the LGPL BtbN build; JPEG XL is the upstream BSD-3-Clause build. Review the upstream notices and local legal obligations before publishing.
 
