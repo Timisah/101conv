@@ -4,6 +4,22 @@
 
 This is a curated **request register**, not a feature-completion list. `Requested` means a user goal has been captured, **not** that the code implements it. Priorities are indicative and can be changed by the owner. GitHub issues may track individual implementation tasks; do not open dozens of duplicates or copy entire documents into every issue.
 
+## GitHub tracking issues
+
+The issue numbers below track implementation work; the FR descriptions remain the durable statement of user intent. Do not close a request merely because part of an epic was coded.
+
+| Request | Issue | Request | Issue |
+| --- | --- | --- | --- |
+| FR-001 | [#1](https://github.com/Timisah/101conv/issues/1) | FR-010 | [#10](https://github.com/Timisah/101conv/issues/10) |
+| FR-002 | [#2](https://github.com/Timisah/101conv/issues/2) | FR-011 | [#11](https://github.com/Timisah/101conv/issues/11) |
+| FR-003 | [#3](https://github.com/Timisah/101conv/issues/3) | FR-012 | [#12](https://github.com/Timisah/101conv/issues/12) |
+| FR-004 | [#4](https://github.com/Timisah/101conv/issues/4) | FR-013 | [#13](https://github.com/Timisah/101conv/issues/13) |
+| FR-005 | [#5](https://github.com/Timisah/101conv/issues/5) | FR-014 | [#14](https://github.com/Timisah/101conv/issues/14) |
+| FR-006 | [#6](https://github.com/Timisah/101conv/issues/6) | FR-015 | [#15](https://github.com/Timisah/101conv/issues/15) |
+| FR-007 | [#7](https://github.com/Timisah/101conv/issues/7) | FR-016 | [#16](https://github.com/Timisah/101conv/issues/16) |
+| FR-008 | [#8](https://github.com/Timisah/101conv/issues/8) | FR-017 | [#17](https://github.com/Timisah/101conv/issues/17) |
+| FR-009 | [#9](https://github.com/Timisah/101conv/issues/9) | FR-018 | [#18](https://github.com/Timisah/101conv/issues/18) |
+
 ## Universal acceptance checks
 
 Every feature: (1) simple mobile first path and accessible advanced controls, (2) typed, modular, tested API/UI, (3) no arbitrary CLI/execution injection or destructive state migration, (4) real functional/output tests, (5) truthful unsupported states, (6) documentation and status update, (7) safe upgrade from the existing Portainer Compose deployment. “No regression” applies to jobs, guest sessions, accounts, storage, mounted drives, automation revisions and installed historical engine/profile releases.
