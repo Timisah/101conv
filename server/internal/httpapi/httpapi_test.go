@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/timisah/101conv/server/internal/capability"
 	"github.com/timisah/101conv/server/internal/catalog"
 	"github.com/timisah/101conv/server/internal/engine"
 	"github.com/timisah/101conv/server/internal/management"
@@ -199,6 +200,53 @@ func TestManagementRESTLifecycleAndRestart(t *testing.T) {
 		if got := post("/api/v1/profiles", body); got != http.StatusCreated {
 			t.Fatalf("install profile status=%d", got)
 		}
+	}
+	capabilitiesRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/capabilities", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilitiesRequest.Header.Set("Authorization", "Bearer secret")
+	capabilitiesResponse, err := server.Client().Do(capabilitiesRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var canonical capability.Catalog
+	if capabilitiesResponse.StatusCode != http.StatusOK {
+		capabilitiesResponse.Body.Close()
+		t.Fatalf("capabilities status=%d", capabilitiesResponse.StatusCode)
+	}
+	if err = json.NewDecoder(capabilitiesResponse.Body).Decode(&canonical); err != nil {
+		capabilitiesResponse.Body.Close()
+		t.Fatal(err)
+	}
+	capabilitiesResponse.Body.Close()
+	if len(canonical.Capabilities) != 1 || canonical.Capabilities[0].ID != "convert:mp4:webm" || len(canonical.Providers) != 2 {
+		t.Fatalf("canonical catalog=%+v", canonical)
+	}
+	resolveRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/capabilities/resolve?operation=convert&source=.MP4&target=.WEBM", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolveRequest.Header.Set("Authorization", "Bearer secret")
+	resolveResponse, err := server.Client().Do(resolveRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolved struct {
+		Provider capability.Provider `json:"provider"`
+		Strategy string              `json:"strategy"`
+	}
+	if resolveResponse.StatusCode != http.StatusOK {
+		resolveResponse.Body.Close()
+		t.Fatalf("resolve capability status=%d", resolveResponse.StatusCode)
+	}
+	if err = json.NewDecoder(resolveResponse.Body).Decode(&resolved); err != nil {
+		resolveResponse.Body.Close()
+		t.Fatal(err)
+	}
+	resolveResponse.Body.Close()
+	if resolved.Provider.ProfileID != "mov-webm" || resolved.Strategy != "stable provider order" {
+		t.Fatalf("resolved canonical provider=%+v", resolved)
 	}
 	if err = manager.Close(); err != nil {
 		t.Fatal(err)

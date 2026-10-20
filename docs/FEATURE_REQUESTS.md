@@ -63,6 +63,7 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 **Goal:** one user-facing format operation regardless of how many engines implement it; no “best profile” guessing for everyday tasks.  
 **Acceptance:** typed capability/option descriptors, provider compatibility/resolver/explanations, advanced implementation override, deterministic failure/fallback, immutable job resolution, migration adapters for existing profile API/versions and automation pins; unit/integration tests including provider conflicts. UI default hides technical engine/profile pickers.  
 **Dependencies:** FR-003; design approval and migration plan.
+**Status:** First backend slice implemented additively on 2026-10-20. The canonical typed capability/provider catalog, deterministic resolver, explainable candidate diagnostics, legacy adapters, and API contract are covered by unit and HTTP tests. Presets, novice UI migration, immutable job-resolution integration, and the final multi-constraint provider policy remain open.
 
 ### FR-007 — User presets and defaults
 

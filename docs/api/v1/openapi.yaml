@@ -625,6 +625,35 @@ paths:
       responses:
         '200': { description: Catalog sources and installed profile summaries }
         '403': { description: Administrator access required }
+  /api/v1/capabilities:
+    get:
+      summary: List canonical capabilities and installed providers
+      description: "Returns the additive Capability → Provider read model. Legacy profile APIs remain available for compatibility; executable paths and argument templates are never returned here."
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      responses:
+        '200':
+          description: Canonical capability/provider catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityCatalog'
+        '401': { description: Authentication required }
+        '403': { description: Conversion or compression permission required }
+  /api/v1/capabilities/resolve:
+    get:
+      summary: Resolve one canonical capability to a provider
+      description: "Uses an explicit providerId preference when available, otherwise a stable profile/version/engine order. The response includes candidate reasons for support diagnostics."
+      security: [{ engineAdmin: [] }, { userAPIKey: [] }, { adminSession: [] }]
+      parameters:
+        - { in: query, name: operation, required: true, schema: { type: string, enum: [convert, compress] } }
+        - { in: query, name: source, required: true, schema: { type: string } }
+        - { in: query, name: target, required: true, schema: { type: string } }
+        - { in: query, name: providerId, required: false, schema: { type: string }, description: Explicit provider preference; unavailable preferences fall back deterministically }
+      responses:
+        '200': { description: Resolved provider and explainable candidates }
+        '401': { description: Authentication required }
+        '403': { description: Conversion or compression permission required }
+        '422': { description: No available provider satisfies the requested mapping }
   /api/v1/profiles/catalogs:
     post:
       summary: Add a community profile catalog
@@ -1164,6 +1193,64 @@ components:
       required: true
       schema: { type: string, format: uuid }
   schemas:
+    CapabilityCatalog:
+      type: object
+      required: [schemaVersion, capabilities, providers]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/Capability' }
+        providers:
+          type: array
+          items: { $ref: '#/components/schemas/Provider' }
+    Capability:
+      type: object
+      required: [id, operation, sourceFormat, targetFormat, providerIds]
+      properties:
+        id: { type: string, example: convert:png:jpg }
+        operation: { type: string, enum: [convert, compress] }
+        sourceFormat: { type: string }
+        targetFormat: { type: string }
+        providerIds: { type: array, items: { type: string } }
+    Provider:
+      type: object
+      required: [id, profileId, version, name, engineId, enabled, installed, available, capabilities]
+      properties:
+        id: { type: string }
+        profileId: { type: string, description: Legacy profile key retained for migration and preferences }
+        version: { type: string }
+        name: { type: string }
+        description: { type: string }
+        license: { type: string }
+        engineId: { type: string }
+        engineVersion: { type: string }
+        enabled: { type: boolean }
+        installed: { type: boolean }
+        available: { type: boolean }
+        capabilities:
+          type: array
+          items:
+            type: object
+            required: [capabilityId]
+            properties:
+              capabilityId: { type: string }
+              options:
+                type: array
+                items: { $ref: '#/components/schemas/CapabilityOption' }
+    CapabilityOption:
+      type: object
+      required: [key, label, type, default]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        type: { type: string, enum: [number, select] }
+        default: { type: string }
+        min: { type: number }
+        max: { type: number }
+        step: { type: number }
+        choices: { type: array, items: { type: string } }
+        targetSizeMb: { type: boolean }
     MountedDrive:
       type: object
       required: [id, name, path, access, enabled, accessible, writable, automationCount]

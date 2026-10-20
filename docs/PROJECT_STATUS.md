@@ -28,6 +28,7 @@ See [MASTER_PLAN.md](MASTER_PLAN.md), [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md)
 | PDF-to-image (one selected page) and text through managed Poppler | `docs/architecture/documents-d2.md`; not an all-pages PDF editor or OCR |
 | Mounted Drives and bounded folder-scan Automations | `server/internal/automation/`, `docs/architecture/automations-c1.md`; Core-only registered mounts, worker does not mount input NAS paths |
 | Improved mobile/desktop UI and system theme | Commits `e5e3c98` and `3fdccaa` with UI/theme smoke scripts |
+| P1 canonical capability/provider read model (first slice) | `server/internal/capability/`, `docs/architecture/capabilities-p1.md`, additive `/api/v1/capabilities` and `/api/v1/capabilities/resolve`; legacy profiles, preferences, jobs and automations remain the compatibility boundary |
 
 ### Automated verification present
 
@@ -51,7 +52,7 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 
 ## Planned, not yet implemented as generally available
 
-- Unified canonical capability/provider resolver; UX no longer requires competing profile selection.
+- Full P1 capability/provider migration: the canonical read model and deterministic resolver are implemented as an additive first slice; novice UI migration, immutable job-resolution adapter, and final provider precedence policy remain open.
 - User-created Convert/Compress presets, personal/shared defaults and compatibility-safe migration.
 - Full file analysis / metadata Inspector and metadata-based conditions.
 - Rich image target size + combined batch maximum, bounded adaptive compression, advanced media options.

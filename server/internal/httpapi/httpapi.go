@@ -121,6 +121,8 @@ func NewWithAutomation(version string, catalogService *catalog.Service, manageme
 	mux.HandleFunc("POST /api/v1/engines/manual", a.registerManualEngine)
 	mux.HandleFunc("DELETE /api/v1/engines/{id}/{version}", a.removeEngine)
 	mux.HandleFunc("GET /api/v1/profiles", a.listProfiles)
+	mux.HandleFunc("GET /api/v1/capabilities", a.listCapabilities)
+	mux.HandleFunc("GET /api/v1/capabilities/resolve", a.resolveCapability)
 	mux.HandleFunc("GET /api/v1/profile-preferences", a.listProfilePreferences)
 	mux.HandleFunc("PUT /api/v1/profile-preferences/me/{mode}/{source}/{target}", a.setMyProfilePreference)
 	mux.HandleFunc("DELETE /api/v1/profile-preferences/me/{mode}/{source}/{target}", a.deleteMyProfilePreference)
