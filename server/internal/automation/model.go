@@ -26,6 +26,34 @@ type Definition struct {
 	Filter    FileFilter `json:"filter"`
 	Condition *Condition `json:"condition,omitempty"`
 	Action    FileAction `json:"action"`
+	// Graph is the visual, typed representation of the workflow. The flat
+	// fields above remain the execution compatibility boundary for C.1 jobs.
+	// New revisions store both representations so older runners and clients can
+	// continue to read the definition while the editor works with nodes/edges.
+	Graph *Graph `json:"graph,omitempty"`
+}
+
+// Graph is deliberately declarative. Nodes contain typed configuration only;
+// they never contain shell commands, expressions, or executable source.
+type Graph struct {
+	Nodes []GraphNode `json:"nodes"`
+	Edges []GraphEdge `json:"edges"`
+}
+
+type GraphNode struct {
+	ID               string         `json:"id"`
+	BlockID          string         `json:"blockId"`
+	Version          string         `json:"version"`
+	Kind             string         `json:"kind"`
+	ExtensionID      string         `json:"extensionId,omitempty"`
+	ExtensionVersion string         `json:"extensionVersion,omitempty"`
+	Config           map[string]any `json:"config,omitempty"`
+}
+
+type GraphEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	Port string `json:"port,omitempty"`
 }
 
 type Trigger struct {
@@ -54,13 +82,13 @@ type FileFilter struct {
 }
 
 type FileAction struct {
-	Mode           string `json:"mode"` // convert or compress
-	ProfileID      string `json:"profileId"`
-	ProfileVersion string `json:"profileVersion,omitempty"`
-	TargetFormat   string `json:"targetFormat"`
+	Mode           string            `json:"mode"` // convert or compress
+	ProfileID      string            `json:"profileId"`
+	ProfileVersion string            `json:"profileVersion,omitempty"`
+	TargetFormat   string            `json:"targetFormat"`
 	Options        map[string]string `json:"options,omitempty"`
-	OutputDriveID  string `json:"outputDriveId"`
-	OutputBehavior string `json:"outputBehavior"` // create, skip_existing, unique
+	OutputDriveID  string            `json:"outputDriveId"`
+	OutputBehavior string            `json:"outputBehavior"` // create, skip_existing, unique
 }
 
 type Automation struct {
@@ -127,6 +155,19 @@ type ExtensionManifest struct {
 	Dependencies        map[string]string `json:"dependencies,omitempty"`
 	Integrity           string            `json:"integrity,omitempty"`
 	ConfigurationSchema int               `json:"configurationSchema"`
+}
+
+// InstalledExtension describes one retained declarative package release. An
+// incompatible release is retained for rollback/inspection but never becomes
+// active. No package code is loaded or executed by Core or Worker.
+type InstalledExtension struct {
+	Manifest    ExtensionManifest `json:"manifest"`
+	Compatible  bool              `json:"compatible"`
+	Active      bool              `json:"active"`
+	Status      string            `json:"status"`
+	Diagnostic  string            `json:"diagnostic,omitempty"`
+	InstalledAt time.Time         `json:"installedAt"`
+	UpdatedAt   time.Time         `json:"updatedAt"`
 }
 
 type APIVersionRange struct {

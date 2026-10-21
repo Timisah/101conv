@@ -53,6 +53,7 @@ The versioned endpoints are documented in [`../api/v1/openapi.yaml`](../api/v1/o
 
 - `GET/POST /api/v1/drives`, `PUT/DELETE /api/v1/drives/{id}`, `POST /api/v1/drives/test`
 - `GET /api/v1/automation-blocks`, `GET /api/v1/blueprints`, `POST /api/v1/blueprints/{id}/install`
+- `GET /api/v1/extensions`, `POST /api/v1/extensions/install`, `POST /api/v1/extensions/{id}/activate`, `POST /api/v1/extensions/{id}/rollback` (administrator-only declarative lifecycle)
 - `GET/POST /api/v1/automations`, `GET/PUT/DELETE /api/v1/automations/{id}`
 - `PATCH /api/v1/automations/{id}/enabled`, `POST .../dry-run`, `POST .../run`, `GET .../history`
 
@@ -62,7 +63,13 @@ Drive, automation, read, and execute permissions are enforced by the Core on eve
 
 Built-in blueprints are versioned definitions. Installing one copies its selected configuration into a new, independently editable automation; changing a built-in blueprint later does not mutate installed automations. Current blueprints are **Automatic Folder Conversion** and **Automatic Compression**.
 
-`ExtensionManifest` is a declarative contract with package ID, publisher, package version, extension API range, optional external application/version, permissions/capabilities, block definitions, dependencies, integrity metadata, and configuration schema version. `SelectCompatibleExtension` chooses the newest semver release whose declared extension API range contains the running API version; incompatible newest releases do not hide older compatible ones. No extension packages are downloaded, activated, or executed in C.1. There is no third-party connector runtime, marketplace extension UI, external application probing, migration runner, or rollback activation yet. Those require a separate constrained service and a future milestone.
+`ExtensionManifest` is a declarative contract with package ID, publisher, package version, extension API range, optional external application/version, permissions/capabilities, block definitions, dependencies, integrity metadata, and configuration schema version. `SelectCompatibleExtension` chooses the newest semver release whose declared extension API range contains the running API version; incompatible newest releases do not hide older compatible ones.
+
+P6 adds the first visual/extension lifecycle slice:
+
+- Every new revision stores a bounded `graph` alongside the C.1 flat definition. Graph nodes pin a built-in or extension block ID/version and contain typed JSON configuration only; edges are acyclic, reachable from one trigger, and bounded to 32 nodes/64 edges. Core projects the graph into the existing folder-scan executor, so queued jobs still use the immutable profile/engine specification and older definitions remain readable. The Web editor presents the trigger → condition → action → output flow on narrow screens and keeps the detailed controls available as progressive disclosure.
+- `conv_automation_extensions` retains every submitted declarative manifest release. Administrators can install a manifest, activate a compatible release, and roll back to the previous retained compatible release through `/api/v1/extensions`. Incompatible releases remain visible and cannot replace an active version. Active extension blocks are added to the typed block catalog; automation revisions retain their own block/version snapshot.
+- Extension manifests are metadata-only in this slice. Core never downloads, loads, or executes package code, arbitrary commands, external application probes, or user expressions. A future constrained connector service must add signed package retrieval, permissions/secrets isolation, configuration migration, and external-version health checks before those capabilities are enabled.
 
 ## Operational limitations
 

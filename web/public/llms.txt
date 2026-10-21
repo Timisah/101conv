@@ -1,0 +1,42 @@
+# 101conv
+
+> 101conv is a private, self-hosted workspace for converting, compressing, assembling, inspecting, and automating files. The name is provisional.
+
+This is a concise project index for search crawlers and assistant tools. It is
+informational only; it is not an API, a deployment configuration, or a promise
+that every deployment exposes every capability.
+
+## Project
+
+- Repository: https://github.com/Timisah/101conv
+- Installation and deployment: https://github.com/Timisah/101conv#readme
+- Public information page: /about/
+- Project status and verified evidence: https://github.com/Timisah/101conv/blob/main/docs/PROJECT_STATUS.md
+
+## Workspace areas
+
+- Convert: submit supported files to installed, versioned conversion profiles.
+- Compress: set quality or bounded size goals and inspect actual output savings.
+- Build: order pages non-destructively, preview, and generate a raster-image PDF in the current first slice.
+- Inspect: run an ephemeral, bounded metadata scan without adding the source to conversion storage.
+- Automate: use registered mounted-folder blueprints with stable-file checks, history, and safe publication.
+
+## Verified catalog scope
+
+- Images: JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF image profiles; JPEG XL paths cover JPG/JPEG, PNG/APNG, and GIF to JXL, plus JXL to JPG/JPEG/PNG.
+- Audio/video: FFmpeg profiles cover MP4/MKV/MOV/AVI/WebM-family video and MP3/AAC/M4A/OGG/OPUS/WAV/FLAC/WMA/AMR audio, with separate conversion and compression paths.
+- Documents: DOCX/DOC/ODT/XLSX/XLS/ODS/PPTX/PPT/ODP/RTF/TXT to PDF; PDF to PNG/JPG/JPEG or TXT through managed document profiles on supported Linux AMD64 deployments.
+- Catalog rules and provenance: https://github.com/Timisah/101conv/blob/main/docs/profiles/catalog-format.md
+
+## Important limits
+
+- A deployment exposes only the engines and profiles its administrator installs.
+- Format pairs, animation behavior, metadata mapping, HDR preservation, and exact target-size results are profile- and engine-specific; no universal fidelity guarantee is made.
+- PDF rendering produces one selected page; this release does not provide OCR or editable Office export.
+- The public page is informational. There is no anonymous public conversion demo selected by this project index.
+
+## Documentation
+
+- Media fidelity and compression: https://github.com/Timisah/101conv/blob/main/docs/architecture/compression-p2.md
+- Office and PDF support: https://github.com/Timisah/101conv/blob/main/docs/architecture/documents-d2.md
+- Public discoverability contract: https://github.com/Timisah/101conv/blob/main/docs/architecture/public-discoverability-p5.md

@@ -10,6 +10,22 @@ The long-term product aims to make **Convert, Compress, Build, Inspect, and Auto
 
 The deployment includes a lightweight public information page at `/about/` for accurate project discovery. The authenticated workspace shell is excluded from indexing; no public conversion demo or new brand identity is implied by that page.
 
+![101conv public landing page](docs/assets/landing-page.png)
+
+The public page is also accompanied by a concise [`llms.txt`](web/public/llms.txt) project index for crawlers and assistant tools. It links to the repository's evidence-backed documentation and repeats the same capability limits; it does not expose private deployment data or claim guaranteed search placement.
+
+### Verified catalog overview
+
+The official catalog is versioned and deployment-dependent: an installation exposes only the engines and profiles its administrator installs. These are the currently verified paths, not a promise that every format pair or fidelity property is universal.
+
+| Area | Verified paths | Important limits |
+| --- | --- | --- |
+| Images | JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF image profiles; JPEG XL paths from JPG/JPEG, PNG/APNG, and GIF to JXL, plus JXL to JPG/JPEG/PNG | Target-specific encoder behavior; animation and metadata preservation are format-dependent |
+| Audio/video | FFmpeg profiles for MP4/MKV/MOV/AVI/WebM-family video and MP3/AAC/M4A/OGG/OPUS/WAV/FLAC/WMA/AMR audio, with separate conversion and compression paths | Stream, codec, HDR, and exact target-size behavior are validated per profile; see [media fidelity limits](docs/architecture/compression-p2.md) |
+| Documents | DOCX/DOC/ODT/XLSX/XLS/ODS/PPTX/PPT/ODP/RTF/TXT to PDF; PDF to PNG/JPG/JPEG or TXT | PDF rendering is one selected page; there is no OCR or editable Office export in this release; see [document support](docs/architecture/documents-d2.md) |
+
+See the [catalog format documentation](docs/profiles/catalog-format.md) for profile rules, provenance, compatibility, and verification requirements.
+
 The official catalog currently includes pinned LGPL FFmpeg audio/video and compression profiles, JPEG XL conversion and compression profiles, and FFmpeg image profile 1.1.0 for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings verified against the selected build. Image resize, aspect-ratio, target-specific quality/compression, metadata controls, and compression savings are validated by Core and stored in each job's immutable execution specification. JPEG XL compression can enforce per-file and deterministic combined-batch maximums with bounded quality search; FFmpeg video compression uses explicit stream/HDR policies and validates selected-stream fidelity, while not every codec can meet an exact byte target or preserve every codec-specific dynamic HDR payload. The authenticated Inspector workspace performs an ephemeral bounded scan: the source file is never added to conversion storage, and the report returns the extracted metadata in full, including sensitive tags when present. Still-image targets take the first frame; WebP and GIF preserve animation; AVIF is intentionally encoded as a still image. Metadata mapping requests preservation or removal, but container conversions cannot guarantee that every EXIF, orientation, timestamp, or color-profile field survives. Managed LibreOffice Office-to-PDF and Poppler PDF rendering/text extraction profiles are also published for supported Linux AMD64 deployments; see [D.2 document conversion](docs/architecture/documents-d2.md) for exact formats, limitations and runtime requirements. The signed target catalog is authoritative; `catalog/index.json` and Core's embedded compatibility index are generated from it and checked by `scripts/sync-compatibility-catalog.py`.
 
 The first Build / Document Creator workspace is also available for non-destructive page ordering, rotation, duplication, removal, undo/redo, image thumbnails, ordered preview, and browser-local PDF generation for raster image pages. Server-side PDF/Office expansion and merging plus saved projects are still being built. Explicit metadata removal remains a separate same-format job for retained uploads and never mutates the source.

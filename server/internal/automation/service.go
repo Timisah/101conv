@@ -119,6 +119,14 @@ CREATE TABLE IF NOT EXISTS conv_generated_files (
  automation_id TEXT NOT NULL REFERENCES conv_automations(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  PRIMARY KEY(drive_id,fingerprint)
 );
+CREATE TABLE IF NOT EXISTS conv_automation_extensions (
+ id TEXT NOT NULL, version TEXT NOT NULL, publisher TEXT NOT NULL,
+ manifest JSONB NOT NULL, compatible BOOLEAN NOT NULL DEFAULT false,
+ active BOOLEAN NOT NULL DEFAULT false, status TEXT NOT NULL DEFAULT 'incompatible',
+ diagnostic TEXT NOT NULL DEFAULT '', installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(id,version)
+);
+CREATE INDEX IF NOT EXISTS conv_automation_extensions_active_idx ON conv_automation_extensions(id,active);
 `)
 	if err != nil {
 		return err
@@ -313,6 +321,13 @@ func (s *Service) CreateAutomation(ctx context.Context, owner, name string, def 
 	if owner == "" || strings.TrimSpace(name) == "" || len(name) > 120 {
 		return Automation{}, errors.New("owner and automation name are required")
 	}
+	if err := ApplyGraphToDefinition(&def); err != nil {
+		return Automation{}, err
+	}
+	if def.Graph == nil {
+		graph := GraphFromDefinition(def)
+		def.Graph = &graph
+	}
 	if err := s.validateOwner(ctx, owner, def.Action.Mode); err != nil {
 		return Automation{}, err
 	}
@@ -347,6 +362,13 @@ func (s *Service) CreateAutomation(ctx context.Context, owner, name string, def 
 func (s *Service) UpdateAutomation(ctx context.Context, id, owner, name string, def Definition) (Automation, error) {
 	if strings.TrimSpace(name) == "" || len(name) > 120 {
 		return Automation{}, errors.New("automation name is required and must be at most 120 characters")
+	}
+	if err := ApplyGraphToDefinition(&def); err != nil {
+		return Automation{}, err
+	}
+	if def.Graph == nil {
+		graph := GraphFromDefinition(def)
+		def.Graph = &graph
 	}
 	if err := s.validateOwner(ctx, owner, def.Action.Mode); err != nil {
 		return Automation{}, err
@@ -407,6 +429,10 @@ func (s *Service) GetAutomation(ctx context.Context, id, owner string) (Automati
 	if err = json.Unmarshal(raw, &a.Definition); err != nil {
 		return Automation{}, err
 	}
+	if a.Definition.Graph == nil {
+		graph := GraphFromDefinition(a.Definition)
+		a.Definition.Graph = &graph
+	}
 	return a, nil
 }
 
@@ -425,6 +451,10 @@ func (s *Service) ListAutomations(ctx context.Context, owner string) ([]Automati
 		}
 		if err = json.Unmarshal(raw, &a.Definition); err != nil {
 			return nil, err
+		}
+		if a.Definition.Graph == nil {
+			graph := GraphFromDefinition(a.Definition)
+			a.Definition.Graph = &graph
 		}
 		out = append(out, a)
 	}
@@ -563,6 +593,11 @@ func (s *Service) pinProfile(ctx context.Context, d *Definition) error {
 }
 
 func (s *Service) ValidateDefinition(ctx context.Context, d Definition) error {
+	if d.Graph != nil {
+		if err := ValidateGraph(*d.Graph); err != nil {
+			return err
+		}
+	}
 	if d.Action.ProfileVersion == "" {
 		return errors.New("profile version is not pinned; edit and save this automation before executing")
 	}

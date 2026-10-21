@@ -126,6 +126,41 @@ func TestSelectCompatibleExtensionDoesNotHideOlderRelease(t *testing.T) {
 	}
 }
 
+func TestVisualGraphValidationAndLegacyProjection(t *testing.T) {
+	d := Definition{
+		Trigger: Trigger{Type: "folder.scan", InputDriveID: "incoming", IntervalSeconds: 60, StabilitySeconds: 30, MaxConcurrent: 1},
+		Action:  FileAction{Mode: "convert", ProfileID: "png-jpg", ProfileVersion: "1.0.0", TargetFormat: "jpg", OutputDriveID: "out", OutputBehavior: "unique"},
+		Filter:  FileFilter{Extensions: []string{"png"}},
+	}
+	graph := GraphFromDefinition(d)
+	if err := ValidateGraph(graph); err != nil {
+		t.Fatal(err)
+	}
+	projected := Definition{Graph: &graph}
+	if err := ApplyGraphToDefinition(&projected); err != nil {
+		t.Fatal(err)
+	}
+	if projected.Trigger.InputDriveID != "incoming" || projected.Action.OutputDriveID != "out" || projected.Filter.Extensions[0] != "png" {
+		t.Fatalf("graph projection lost execution fields: %+v", projected)
+	}
+	cycle := graph
+	cycle.Edges = append(cycle.Edges, GraphEdge{From: "output", To: "trigger"})
+	if err := ValidateGraph(cycle); err == nil {
+		t.Fatal("accepted a cyclic visual graph")
+	}
+}
+
+func TestExtensionManifestValidationRemainsDeclarative(t *testing.T) {
+	manifest := ExtensionManifest{ID: "example", Name: "Example", Publisher: "owner", Version: "1.0.0", ExtensionAPIRange: APIVersionRange{Minimum: "1.0.0", MaximumExclusive: "2.0.0"}, ConfigurationSchema: 1, Blocks: []Block{{ID: "example.condition", Version: "1.0.0", Kind: "condition", Name: "Match", ConfigSchema: map[string]any{"value": "string"}}}}
+	if err := ValidateExtensionManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Blocks[0].ConfigSchema["command"] = "string"
+	if err := ValidateExtensionManifest(manifest); err == nil {
+		t.Fatal("accepted executable extension configuration")
+	}
+}
+
 func TestAutomationMigrationsAreIdempotentAndDriveRecordsPersist(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
