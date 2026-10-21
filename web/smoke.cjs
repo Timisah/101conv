@@ -333,15 +333,15 @@ const assert = require('node:assert/strict');
     let maxConcurrent=0,maxAdminBatchRunning=0,userServedBeforeAdminDone=false,adminState,userState;
     for(let i=0;i<100;i++){
       [adminState,userState]=await Promise.all([admin('/batches/'+adminSlowBatch.id,'GET'),admin('/batches/'+userSlowBatch.id,'GET')]);
-      const a=(await adminState.json()).batch,u=(await userState.json()).batch;
+      const a=await adminState.json(),u=await userState.json();
       maxConcurrent=Math.max(maxConcurrent,a.running+u.running);
       maxAdminBatchRunning=Math.max(maxAdminBatchRunning,a.running);
       if(u.running>0&&a.succeeded<a.total)userServedBeforeAdminDone=true;
       if(a.succeeded+a.failed+a.cancelled===a.total&&u.succeeded+u.failed+u.cancelled===u.total)break;
       await new Promise(resolve=>setTimeout(resolve,200));
     }
-    const finalAdmin=(await admin('/batches/'+adminSlowBatch.id,'GET')).batch;
-    const finalUser=(await admin('/batches/'+userSlowBatch.id,'GET')).batch;
+    const finalAdmin=await (await admin('/batches/'+adminSlowBatch.id,'GET')).json();
+    const finalUser=await (await admin('/batches/'+userSlowBatch.id,'GET')).json();
     assert.equal(maxConcurrent,3,'configured worker pool actually ran three conversions concurrently');
     assert.ok(maxAdminBatchRunning<=2,'a single batch never exceeded its configured two-slot limit');
     assert.ok(userServedBeforeAdminDone,'round-robin scheduling served another owner before the first owner batch completed');
