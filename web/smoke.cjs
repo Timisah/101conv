@@ -307,7 +307,7 @@ const assert = require('node:assert/strict');
     async function uploadFor(token,name){const form=new FormData();form.append('file',new Blob([ppm]),name);const response=await fetch(base+'/api/v1/uploads',{method:'POST',headers:{Authorization:'Bearer '+token},body:form});assert.equal(response.status,201,'concurrency fixture upload is accepted');return (await response.json()).id;}
     const adminSlowUploads=await Promise.all(Array.from({length:4},(_,i)=>uploadFor(process.env.ENGINE_ADMIN_TOKEN,`admin-slow-${i+1}.ppm`)));
     const adminSlowResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'admin-fairness-batch-0001',items:adminSlowUploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))});
-    assert.equal(adminSlowResponse.status,201,'admin submits a four-file slow batch');
+    assert.equal(adminSlowResponse.status,202,'admin submits a four-file slow batch');
     const adminSlowBatch=(await adminSlowResponse.json()).batch;
     const userContext=await browser.newContext({viewport:{width:1280,height:900}});const userPage=await userContext.newPage();
     userPage.on('pageerror',error=>errors.push(error.message));
@@ -328,7 +328,7 @@ const assert = require('node:assert/strict');
       const uploads=[];
       for(let i=0;i<2;i++){const form=new FormData();form.append('file',new Blob([source]),`user-slow-${i+1}.ppm`);const up=await fetch('/api/v1/uploads',{method:'POST',body:form});if(up.status!==201)throw Error('user upload failed: '+up.status);uploads.push((await up.json()).id);}
       const response=await fetch('/api/v1/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'convert',idempotencyKey:'user-fairness-batch-0001',items:uploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))})});
-      if(response.status!==201)throw Error('user batch submission failed: '+response.status+' '+await response.text());return (await response.json()).batch;
+      if(response.status!==202)throw Error('user batch submission failed: '+response.status+' '+await response.text());return (await response.json()).batch;
     },ppm.toString());
     let maxConcurrent=0,maxAdminBatchRunning=0,userServedBeforeAdminDone=false,adminState,userState;
     for(let i=0;i<100;i++){
