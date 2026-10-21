@@ -210,6 +210,17 @@ Evidence: `server/internal/worker/runner.go`,
 performed in this worktree. Production deployment and broad codec-specific
 HDR10+/Dolby Vision compatibility remain unverified release risks.
 
+## Owner-approved backlog additions — 2026-10-21 (not implemented)
+
+These items document product UX and reporting requests rather than verified deployed functionality:
+
+- **[FR-019](FEATURE_REQUESTS.md#fr-019--clear-profileengine-updates-and-catalog-lifecycle-ux) / [#23](https://github.com/Timisah/101conv/issues/23):** clearly distinguish new converter-profile installation from an available newer version, with admin update discovery, preview/compatibility, safe version retention and rollback. Existing catalog/version APIs are not a complete intuitive update experience; the reported JPG→JXL-only instance required installation of a **separate** FFmpeg Image Compression profile, not an update to JPEG XL.
+- **[FR-020](FEATURE_REQUESTS.md#fr-020--unified-filterable-jobs-and-history) / [#24](https://github.com/Timisah/101conv/issues/24):** one filterable Jobs & history page for independent and grouped-batch Convert/Compress jobs; Batches is a secondary drilldown preserving existing routes and permissions.
+- **[FR-021](FEATURE_REQUESTS.md#fr-021--admin-only-lifetime-processing-statistics) / [#25](https://github.com/Timisah/101conv/issues/25):** admin-only durable lifetime and per-user processed-data stats with reliable counting, retention-independent storage, privacy and honest legacy backfill.
+- **[FR-009](FEATURE_REQUESTS.md#fr-009--rich-image-compression-and-combined-batch-size-goal) / [#9](https://github.com/Timisah/101conv/issues/9) follow-up:** optional maximum size must be initially blank; when explicitly set, maximize feasible quality under the cap rather than over-compressing. The owner's 5 MB source / 2 MB requested maximum / ~0.5 MB result is a reproduction target; the existing implementation is not accepted as fully meeting this UX.
+
+None of these requests changes the current P0 release gates. At this review, [CI #100](https://github.com/Timisah/101conv/actions/runs/39587970784) passed all ten jobs but the following [main CI #101](https://github.com/Timisah/101conv/actions/runs/39589077454) failed Docker browser acceptance and skipped backup/restore; re-check latest CI before any release or feature-completion claim.
+
 ## Immediate implementation queue
 
 **Next:** execute the owner-controlled trust-root ceremony when release ownership is ready, then continue the targeted Worker compatibility-grant and public-demo threat-model audits. Keep the deployment classified as trusted single tenant/small team until those gates are accepted.
