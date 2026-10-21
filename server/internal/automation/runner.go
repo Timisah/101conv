@@ -235,11 +235,12 @@ func (s *Service) scanAutomation(ctx context.Context, a Automation, manual bool)
 }
 
 type scanProgress struct {
-	Generation      int64
-	Cutoff          time.Time
-	Cursor          string
-	ProcessExisting bool
-	InventoryReady  bool
+	Generation              int64
+	Cutoff                  time.Time
+	Cursor                  string
+	ProcessExisting         bool
+	BaselineProcessExisting bool
+	InventoryReady          bool
 }
 
 func (s *Service) scanState(ctx context.Context, a Automation, input Drive) (scanProgress, error) {
@@ -248,16 +249,17 @@ func (s *Service) scanState(ctx context.Context, a Automation, input Drive) (sca
 	// an authority for whether a name existed at baseline capture.
 	// A fresh explicit request is identified by its immutable revision number.
 	var p scanProgress
-	err := s.db.QueryRowContext(ctx, `INSERT INTO conv_automation_scans(automation_id,input_drive,input_path,process_existing,request_revision)
- VALUES($1,$2,$3,$4,$5) ON CONFLICT(automation_id) DO UPDATE SET
+	err := s.db.QueryRowContext(ctx, `INSERT INTO conv_automation_scans(automation_id,input_drive,input_path,process_existing,baseline_process_existing,request_revision)
+	VALUES($1,$2,$3,$4,$4,$5) ON CONFLICT(automation_id) DO UPDATE SET
  generation=conv_automation_scans.generation+CASE WHEN conv_automation_scans.input_drive<>$2 OR conv_automation_scans.input_path<>$3 OR ($4 AND conv_automation_scans.request_revision<>$5) THEN 1 ELSE 0 END,
  cutoff=CASE WHEN conv_automation_scans.input_drive<>$2 OR conv_automation_scans.input_path<>$3 OR ($4 AND conv_automation_scans.request_revision<>$5) THEN now() ELSE conv_automation_scans.cutoff END,
  cursor=CASE WHEN conv_automation_scans.input_drive<>$2 OR conv_automation_scans.input_path<>$3 OR ($4 AND conv_automation_scans.request_revision<>$5) THEN '' ELSE conv_automation_scans.cursor END,
  inventory_ready=CASE WHEN conv_automation_scans.input_drive<>$2 OR conv_automation_scans.input_path<>$3 OR ($4 AND conv_automation_scans.request_revision<>$5) THEN false ELSE conv_automation_scans.inventory_ready END,
  baseline_complete=CASE WHEN conv_automation_scans.input_drive<>$2 OR conv_automation_scans.input_path<>$3 OR ($4 AND conv_automation_scans.request_revision<>$5) THEN false ELSE conv_automation_scans.baseline_complete END,
  process_existing=CASE WHEN conv_automation_scans.request_revision<>$5 AND $4 THEN true WHEN conv_automation_scans.input_drive<>$2 OR conv_automation_scans.input_path<>$3 THEN false ELSE conv_automation_scans.process_existing END,
+ baseline_process_existing=CASE WHEN conv_automation_scans.request_revision<>$5 AND $4 THEN true WHEN conv_automation_scans.input_drive<>$2 OR conv_automation_scans.input_path<>$3 THEN false ELSE conv_automation_scans.baseline_process_existing END,
  request_revision=$5,input_drive=$2,input_path=$3
- RETURNING generation,cutoff,cursor,process_existing,inventory_ready`, a.ID, input.ID, input.Path, a.Definition.Trigger.ProcessExistingOnNext, a.Revision).Scan(&p.Generation, &p.Cutoff, &p.Cursor, &p.ProcessExisting, &p.InventoryReady)
+ RETURNING generation,cutoff,cursor,process_existing,baseline_process_existing,inventory_ready`, a.ID, input.ID, input.Path, a.Definition.Trigger.ProcessExistingOnNext, a.Revision).Scan(&p.Generation, &p.Cutoff, &p.Cursor, &p.ProcessExisting, &p.BaselineProcessExisting, &p.InventoryReady)
 	if err != nil || p.InventoryReady {
 		return p, err
 	}
@@ -312,12 +314,12 @@ func (s *Service) scanEntry(ctx context.Context, principal auth.Principal, a Aut
 		return err
 	}
 	var baseline bool
-	if !scan.ProcessExisting && (errors.Is(err, sql.ErrNoRows) || state == "skipped_existing") {
+	if !scan.ProcessExisting && !scan.BaselineProcessExisting && (errors.Is(err, sql.ErrNoRows) || state == "skipped_existing") {
 		if e := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conv_automation_baseline WHERE automation_id=$1 AND generation=$2 AND source_name=$3)`, a.ID, scan.Generation, entry.Name()).Scan(&baseline); e != nil {
 			return e
 		}
 	}
-	if baseline && (errors.Is(err, sql.ErrNoRows) || size == info.Size() && mtime == info.ModTime().UnixNano()) {
+	if baseline && !scan.BaselineProcessExisting && (errors.Is(err, sql.ErrNoRows) || size == info.Size() && mtime == info.ModTime().UnixNano()) {
 		if errors.Is(err, sql.ErrNoRows) {
 			_, err = s.db.ExecContext(ctx, `INSERT INTO conv_automation_runs(id,automation_id,revision,fingerprint,source_name,source_path,state,observed_size,observed_mtime,scan_generation,finished_at) VALUES($1,$2,$3,$4,$5,$5,'skipped_existing',$6,$7,$8,now()) ON CONFLICT DO NOTHING`, mustID(), a.ID, a.Revision, fmt.Sprintf("baseline:%d:%s", scan.Generation, fileIdentityFingerprint(entry.Name(), fmt.Sprint(info.Size(), ":", info.ModTime().UnixNano()))), entry.Name(), info.Size(), info.ModTime().UnixNano(), scan.Generation)
 			return err

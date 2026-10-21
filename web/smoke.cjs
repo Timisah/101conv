@@ -317,7 +317,7 @@ const assert = require('node:assert/strict');
     await userPage.getByRole('heading',{name:'What are we converting?'}).waitFor();
     const userSlowBatch=await userPage.evaluate(async source=>{
       const uploads=[];
-      for(let i=0;i<2;i++){const form=new FormData();form.append('file',new Blob([source]),`user-slow-${i+1}.ppm`);const up=await fetch('/api/v1/uploads',{method:'POST',body:form});if(up.status!==201)throw Error('user upload failed: '+up.status);uploads.push((await up.json()).id);}
+      for(let i=0;i<3;i++){const form=new FormData();form.append('file',new Blob([source]),`user-slow-${i+1}.ppm`);const up=await fetch('/api/v1/uploads',{method:'POST',body:form});if(up.status!==201)throw Error('user upload failed: '+up.status);uploads.push((await up.json()).id);}
       const response=await fetch('/api/v1/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'convert',idempotencyKey:'user-fairness-batch-0001',items:uploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))})});
       if(response.status!==202)throw Error('user batch submission failed: '+response.status+' '+await response.text());return (await response.json()).batch;
     },ppm.toString());
@@ -355,7 +355,7 @@ const assert = require('node:assert/strict');
     assert.ok(maxAdminBatchRunning<=2,'a single batch never exceeded its configured two-slot limit');
     assert.ok(userServedBeforeAdminDone,'round-robin scheduling served another owner before the first owner batch completed');
     assert.equal(finalAdmin.succeeded,4,'admin concurrency fixture completed all conversions');
-    assert.equal(finalUser.succeeded,2,'second owner concurrency fixture completed all conversions');
+    assert.equal(finalUser.succeeded,3,'second owner concurrency fixture completed all conversions');
     const ownerJobIDs=new Set(finalAdmin.items.map(item=>item.jobId));
     const userJobs=await userPage.evaluate(async()=>fetch('/api/v1/jobs?limit=100').then(r=>r.json()));
     assert.equal(userJobs.jobs.some(job=>ownerJobIDs.has(job.id)),false,'second owner history omits another owner’s jobs');
