@@ -30,19 +30,19 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 
 **Problem:** Nginx rejects requests over 105 MiB despite advertised app 1 GiB ceiling and configurable account quotas.  
 **Acceptance:** reconcile Nginx and reverse proxy request size with app setting; test a real upload above 105 MiB and boundary cases, guest smaller quota, multipart overhead, cancellation, storage/reservation and response errors. Never interpret 1 GiB as a promise of available RAM/Worker output space.  
-**Status:** Ingress fix implemented in the continuation working tree based on `5cfcbac`; locally verified full 1 GiB multipart forwarding, 106 MiB chunked forwarding, Nginx config validity and HTTP 413 above the request ceiling. CI regression added. Full Core quota/cancellation/storage acceptance and actual deployment verification remain outstanding; see PROJECT_STATUS.md.
+**Status:** Ingress fix implemented and verified by CI run #98, including full 1 GiB multipart forwarding, 106 MiB chunked forwarding, Nginx config validity, HTTP 413 above the request ceiling, browser cancellation, and guest-storage paths. Full Core quota behavior and deployment-specific outer-proxy/host-capacity verification remain outstanding; see PROJECT_STATUS.md and GitHub issue #1.
 
 ### FR-002 — True dependency-aware readiness
 
 **Problem:** `/readyz` always returns ready; health details exist only in admin operations.  
 **Acceptance:** liveness vs Core API readiness vs ready-to-convert semantics documented; database/storage failures reflected appropriately; new unconfigured installation can complete setup; Worker/profile status exposed accurately without flapping or leaking admin data. Compose/healthchecks tested.  
-**Status:** Implemented in the continuation working tree based on `5cfcbac`: `/healthz` is liveness-only; `/readyz` checks PostgreSQL schema access and Core storage, returns 503 with safe diagnostics when unavailable, and remains 200 for an unconfigured fresh instance. Conversion capability remains a separate authenticated operations signal. Unit coverage and the Compose readiness healthcheck are added; full deployment outage/recovery verification remains outstanding.
+**Status:** Implemented and verified by CI run #98: `/healthz` is liveness-only; `/readyz` checks PostgreSQL schema access and Core storage, returns 503 with safe diagnostics when unavailable, and remains 200 for an unconfigured fresh instance. Conversion capability remains a separate authenticated operations signal. Full live dependency outage/recovery verification remains outstanding; see GitHub issue #2.
 
 ### FR-003 — One accurate official capability catalog and docs
 
 **Problem:** legacy embedded catalog and profile docs differ from shipped Office/PDF target catalog.  
 **Acceptance:** specify authoritative source or generate compatibility index from it; verify all official entries against real manifests, appropriate release/version compatibility; update README/docs/API. CI fails on drift. Preserve old compatible manifest paths.  
-**Status:** Implemented in the continuation working tree on 2026-10-20. `catalog/targets/catalog/index.json` is the authoritative release list; `scripts/sync-compatibility-catalog.py` validates every engine/profile manifest identity and deterministically generates both `catalog/index.json` and the Core-embedded compatibility index. CI now fails on drift, the README and catalog format documentation describe the managed LibreOffice/Poppler entries, and the legacy `catalog/profiles/` manifest paths remain present for older clients. Remote CI and production publication remain unverified.
+**Status:** Implemented on 2026-10-20 and verified by CI run #98. `catalog/targets/catalog/index.json` is the authoritative release list; `scripts/sync-compatibility-catalog.py` validates every engine/profile manifest identity and deterministically generates both `catalog/index.json` and the Core-embedded compatibility index. CI fails on drift, the README and catalog format documentation describe the managed LibreOffice/Poppler entries, and the legacy `catalog/profiles/` manifest paths remain present for older clients. Signed production publication remains the owner-controlled #4 trust-root gate.
 
 ### FR-004 — Production publisher trust and reproducible builds
 
@@ -94,9 +94,10 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 JPEG plus PNG, WebP, and AVIF targets with rule-scoped codec controls,
 metadata selection, bounded adaptive target sizing where supported, original
 pixel dimensions, and verified output signatures. The existing combined batch
-budget remains in the P2 path. Pinned-artifact CI, browser acceptance, and
-remote GitHub Actions evidence are still release gates; the local host smoke
-used FFmpeg 7.1.5 rather than the pinned catalog artifact.
+budget remains in the P2 path. CI run #98 passed the pinned FFmpeg matrix,
+browser acceptance, and restore
+conversion; the local host smoke used FFmpeg 7.1.5 rather than the pinned
+catalog artifact.
 
 ### FR-010 — Shared file analysis and File Inspector workspace
 
@@ -123,10 +124,10 @@ bounded layout contract and shared preview/export geometry. Automatic image
 pages follow oriented source ratios; Fit and Fill support A4, Letter, custom
 millimetres, margins, backgrounds, focal position, and per-page mode overrides.
 The browser smoke fixture now checks actual generated PDF MediaBox dimensions
-for rotated, square, panoramic, and fixed-A4 pages. PDF/Office expansion,
-native vector preservation, saved/expiring projects, and remote CI evidence
-remain open; browser-local PDF generation is intentionally limited to raster
-image pages.
+for rotated, square, panoramic, and fixed-A4 pages. CI run #98 verified the
+browser Build slice; PDF/Office expansion, native vector preservation, and
+saved/expiring projects remain open. Browser-local PDF generation is
+intentionally limited to raster image pages.
 
 ## P4 — GPU, automations and extensions
 
