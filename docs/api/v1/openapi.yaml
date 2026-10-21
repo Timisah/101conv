@@ -1250,6 +1250,67 @@ paths:
                   blueprintId: { type: string }
                   blueprintVersion: { type: string }
         '422': { description: Missing drive or compatible installed profile }
+  /api/v1/extensions:
+    get:
+      summary: List retained declarative extension releases
+      description: Administrator-only inventory. Incompatible releases remain retained for inspection and rollback safety; no package code is loaded or executed.
+      security: [{ adminSession: [] }]
+      responses:
+        '200': { description: Installed extension releases and the running extension API version }
+  /api/v1/extensions/install:
+    post:
+      summary: Install a declarative extension manifest
+      description: Stores a versioned manifest and its typed blocks. This endpoint does not download, execute, or activate arbitrary package code.
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifest]
+              properties:
+                manifest: { $ref: '#/components/schemas/ExtensionManifest' }
+                activate: { type: boolean, default: true }
+      responses:
+        '201': { description: Manifest retained and optionally activated }
+        '422': { description: Invalid manifest or incompatible activation request }
+  /api/v1/extensions/{id}/activate:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      summary: Activate a retained compatible extension release
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: string }
+      responses:
+        '200': { description: Active extension release }
+        '409': { description: Release is incompatible with the running API }
+  /api/v1/extensions/{id}/rollback:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      summary: Roll back to the previous retained compatible release
+      description: An optional version selects a specific retained compatible release.
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version: { type: string }
+      responses:
+        '200': { description: Active rolled-back release }
+        '409': { description: No older compatible release is retained }
   /api/v1/automations:
     get:
       summary: List automations owned by the caller
@@ -1542,6 +1603,8 @@ components:
             options: { type: object, additionalProperties: { type: string }, maxProperties: 32 }
             outputDriveId: { type: string }
             outputBehavior: { type: string, enum: [create, skip_existing, unique] }
+        graph:
+          $ref: '#/components/schemas/AutomationGraph'
     AutomationCondition:
       type: object
       description: Declarative condition tree; arbitrary executable expressions are not supported.
@@ -1577,7 +1640,7 @@ components:
         requiredPermission: { type: string }
     ExtensionManifest:
       type: object
-      description: Declarative compatibility metadata only; C.1 does not load or execute extension packages.
+      description: Declarative compatibility metadata and typed blocks only. Core does not load or execute extension package code.
       required: [id, name, publisher, version, extensionApiRange]
       properties:
         id: { type: string }
@@ -1596,6 +1659,40 @@ components:
         dependencies: { type: object, additionalProperties: { type: string } }
         integrity: { type: string }
         configurationSchema: { type: integer, minimum: 1 }
+        blocks:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/BlockDefinition' }
+    AutomationGraph:
+      type: object
+      description: Bounded typed visual workflow graph. The flat definition fields remain the execution compatibility representation.
+      required: [nodes, edges]
+      properties:
+        nodes:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: object
+            required: [id, blockId, version, kind]
+            properties:
+              id: { type: string, pattern: '^[a-z0-9][a-z0-9._-]{0,127}$' }
+              blockId: { type: string, maxLength: 128 }
+              version: { type: string, maxLength: 40 }
+              kind: { type: string, enum: [trigger, condition, action, output] }
+              extensionId: { type: string }
+              extensionVersion: { type: string }
+              config: { type: object, maxProperties: 32, additionalProperties: true }
+        edges:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            required: [from, to]
+            properties:
+              from: { type: string }
+              to: { type: string }
+              port: { type: string, maxLength: 32 }
     QuotaSettings:
       type: object
       required: [maxFileBytes, monthlyJobs, monthlyBytes]

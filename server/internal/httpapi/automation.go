@@ -105,13 +105,91 @@ func (a *API) listAutomationBlocks(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) || !a.automationService(w) {
 		return
 	}
-	writeJSON(w, 200, map[string]any{"blocks": automation.Blocks, "extensionApiVersion": automation.ExtensionAPIVersion})
+	blocks, err := a.automations.ActiveBlocks(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "extension_storage_error", "could not list active automation blocks")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"blocks": blocks, "extensionApiVersion": automation.ExtensionAPIVersion})
 }
 func (a *API) listBlueprints(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) || !a.automationService(w) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"blueprints": automation.BuiltinBlueprints()})
+}
+
+func (a *API) listExtensions(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) || !a.automationService(w) {
+		return
+	}
+	items, err := a.automations.ListExtensions(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "extension_storage_error", "could not list extension releases")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"extensions": items, "extensionApiVersion": automation.ExtensionAPIVersion})
+}
+
+type extensionInstallRequest struct {
+	Manifest automation.ExtensionManifest `json:"manifest"`
+	Activate *bool                        `json:"activate,omitempty"`
+}
+
+func (a *API) installExtension(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) || !a.automationService(w) {
+		return
+	}
+	var req extensionInstallRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	activate := true
+	if req.Activate != nil {
+		activate = *req.Activate
+	}
+	item, err := a.automations.InstallExtension(r.Context(), req.Manifest, activate)
+	if err != nil {
+		writeExtensionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"extension": item, "extensionApiVersion": automation.ExtensionAPIVersion})
+}
+
+func (a *API) activateExtension(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) || !a.automationService(w) {
+		return
+	}
+	var req struct {
+		Version string `json:"version"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	item, err := a.automations.ActivateExtension(r.Context(), r.PathValue("id"), req.Version)
+	if err != nil {
+		writeExtensionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"extension": item})
+}
+
+func (a *API) rollbackExtension(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) || !a.automationService(w) {
+		return
+	}
+	var req struct {
+		Version string `json:"version"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	item, err := a.automations.RollbackExtension(r.Context(), r.PathValue("id"), req.Version)
+	if err != nil {
+		writeExtensionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"extension": item})
 }
 func (a *API) listAutomations(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) || !a.automationService(w) {
@@ -328,5 +406,20 @@ func writeAutomationError(w http.ResponseWriter, err error) {
 			msg = msg[:350]
 		}
 		writeAPIError(w, 422, "automation_invalid", msg)
+	}
+}
+
+func writeExtensionError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, automation.ErrExtensionNotFound):
+		writeAPIError(w, http.StatusNotFound, "extension_not_found", "extension release was not found")
+	case errors.Is(err, automation.ErrExtensionConflict):
+		writeAPIError(w, http.StatusConflict, "extension_activation_blocked", strings.TrimSpace(err.Error()))
+	default:
+		msg := strings.TrimSpace(err.Error())
+		if len(msg) > 350 {
+			msg = msg[:350]
+		}
+		writeAPIError(w, http.StatusUnprocessableEntity, "extension_invalid", msg)
 	}
 }

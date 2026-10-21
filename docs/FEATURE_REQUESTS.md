@@ -148,11 +148,24 @@ does not map GPU devices.
 **Acceptance:** typed triggers, conditional branches, Inspect/Convert/Compress/Build/Output blocks, explainable dry-run/history, schedules where safe, revision pinning and dedup; mobile functional version without desktop-only graph demands. Preserve existing automation engine and safe publication guarantees.  
 **Dependencies:** FR-006/010, current C.1 runtime.
 
+**Current worktree status:** The first P6 slice is implemented: bounded typed
+graph nodes/edges are stored alongside the legacy executor definition, the
+mobile-friendly visual flow editor is available, and existing previews,
+history, deduplication, immutable revisions, and safe publication remain in
+place. Full multi-action branching and a larger blueprint library remain open.
+
 ### FR-015 — Extensions marketplace and Immich
 
 **Goal:** install/update compatible connector packages independently of app version; Immich workflows through supported API.  
 **Acceptance:** manifests with app/provider compatibility, old compatible downloads, verified signatures/integrity, constrained permissions, secrets protection, configuration migration/rollback, only affected blocks paused when incompatible. Immich supported API media discovery/export/import only; no guaranteed in-place asset ID replacement or preservation of every tag/face relationship.  
 **Dependencies:** FR-014 and explicit extension security design.
+
+**Current worktree status:** Declarative extension manifest installation,
+API-range compatibility selection, retained releases, activation, rollback,
+and typed block catalog exposure are implemented. Remote package retrieval,
+signatures/permission isolation, migration runners, external application
+health, and Immich are deliberately deferred until the constrained extension
+security design is approved.
 
 ## P5 — identity, discoverability and optional public demo
 
@@ -170,9 +183,15 @@ does not map GPU devices.
 
 **Current worktree progress:** the Web image now includes an owner-neutral,
 static `/about/` page with responsive metadata, semantic Schema.org markup,
-accurate five-workspace descriptions, repository/install links, and a robots
-policy that excludes authenticated/API paths. Canonical and sitemap metadata
-remain deferred until a public domain and publication target are approved.
+accurate five-workspace descriptions, a compact catalog-backed capability
+summary, a copyable Docker quick start, repository/install links, and a robots
+policy that excludes authenticated/API paths. The README carries a matching
+format matrix with fidelity caveats and a real landing-page screenshot. A
+credential-free `llms.txt` index supports machine-readable discovery without
+claiming ranking or universal assistant support. A post-build contract test
+covers the public route, no-index boundary, quick-start content, README asset,
+and crawler index. Canonical and sitemap metadata remain deferred until a
+public domain and publication target are approved.
 
 ### FR-018 — Resource-limited public demo
 
