@@ -1,0 +1,368 @@
+{
+  "profile": {
+    "schemaVersion": 1,
+    "type": "compression",
+    "id": "ffmpeg-image-compression-linux-amd64",
+    "version": "1.0.0",
+    "name": "FFmpeg Image Compression",
+    "description": "Verified JPEG, PNG, WebP, and AVIF image compression through the pinned LGPL FFmpeg build. Output keeps the source pixel dimensions; AVIF is encoded as a still image.",
+    "license": "LGPL-2.1-or-later for FFmpeg; bundled dependencies have separate terms. See the upstream license notices.",
+    "minimumAppVersion": "0.1.0",
+    "maximumAppVersionExclusive": "1.0.0",
+    "priority": 40,
+    "engines": [
+      {
+        "engineId": "ffmpeg",
+        "versions": {
+          "minimum": "9.0.0",
+          "maximumExclusive": "10.0.0"
+        },
+        "capabilities": [
+          "image.decode",
+          "image.encode"
+        ]
+      }
+    ],
+    "compression": {
+      "options": [
+        {
+          "key": "quality",
+          "label": "Image quality",
+          "type": "number",
+          "default": "5",
+          "min": 2,
+          "max": 31,
+          "step": 1
+        },
+        {
+          "key": "targetSizeMb",
+          "label": "Maximum output size (MB)",
+          "type": "number",
+          "default": "8",
+          "min": 1,
+          "max": 200,
+          "step": 1,
+          "targetSizeMb": true
+        },
+        {
+          "key": "compressionLevel",
+          "label": "PNG compression level",
+          "type": "number",
+          "default": "6",
+          "min": 0,
+          "max": 9,
+          "step": 1
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "select",
+          "default": "0",
+          "choices": [
+            "0",
+            "-1"
+          ]
+        }
+      ],
+      "targetQualityOption": "quality",
+      "targetQualityHigherIsBetter": false,
+      "targetSizeAttempts": 8,
+      "requireSmallerOutput": true
+    },
+    "rules": [
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": [
+          "jpg",
+          "jpeg",
+          "png",
+          "webp",
+          "tif",
+          "tiff",
+          "bmp",
+          "gif",
+          "avif"
+        ],
+        "targets": [
+          "jpg",
+          "jpeg"
+        ],
+        "preserveMetadata": false,
+        "arguments": [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-nostdin",
+          "-y",
+          "-i",
+          "{source}",
+          "{compression.args}",
+          "{target}"
+        ],
+        "compressionArguments": [
+          "-map_metadata",
+          "{option:metadata}",
+          "-frames:v",
+          "1",
+          "-c:v",
+          "mjpeg",
+          "-q:v",
+          "{compression.quality}"
+        ],
+        "compressionOptions": [
+          {
+            "key": "quality",
+            "label": "JPEG quality (lower number is better)",
+            "type": "number",
+            "default": "5",
+            "min": 2,
+            "max": 31,
+            "step": 1
+          },
+          {
+            "key": "targetSizeMb",
+            "label": "Maximum output size (MB)",
+            "type": "number",
+            "default": "8",
+            "min": 1,
+            "max": 200,
+            "step": 1,
+            "targetSizeMb": true
+          },
+          {
+            "key": "metadata",
+            "label": "Metadata",
+            "type": "select",
+            "default": "0",
+            "choices": [
+              "0",
+              "-1"
+            ]
+          }
+        ],
+        "compressionTargetQualityHigherIsBetter": false
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": [
+          "jpg",
+          "jpeg",
+          "png",
+          "webp",
+          "tif",
+          "tiff",
+          "bmp",
+          "gif",
+          "avif"
+        ],
+        "targets": [
+          "png"
+        ],
+        "arguments": [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-nostdin",
+          "-y",
+          "-i",
+          "{source}",
+          "{compression.args}",
+          "{target}"
+        ],
+        "compressionArguments": [
+          "-map_metadata",
+          "{option:metadata}",
+          "-frames:v",
+          "1",
+          "-c:v",
+          "png",
+          "-compression_level",
+          "{compression.quality}"
+        ],
+        "compressionOptions": [
+          {
+            "key": "compressionLevel",
+            "label": "PNG compression level (0 fastest; 9 smallest)",
+            "type": "number",
+            "default": "6",
+            "min": 0,
+            "max": 9,
+            "step": 1
+          },
+          {
+            "key": "targetSizeMb",
+            "label": "Maximum output size (MB)",
+            "type": "number",
+            "default": "8",
+            "min": 1,
+            "max": 200,
+            "step": 1,
+            "targetSizeMb": true
+          },
+          {
+            "key": "metadata",
+            "label": "Metadata",
+            "type": "select",
+            "default": "0",
+            "choices": [
+              "0",
+              "-1"
+            ]
+          }
+        ],
+        "compressionTargetQualityOption": "compressionLevel",
+        "compressionTargetQualityHigherIsBetter": false
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": [
+          "jpg",
+          "jpeg",
+          "png",
+          "webp",
+          "tif",
+          "tiff",
+          "bmp",
+          "gif",
+          "avif"
+        ],
+        "targets": [
+          "webp"
+        ],
+        "arguments": [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-nostdin",
+          "-y",
+          "-i",
+          "{source}",
+          "{compression.args}",
+          "{target}"
+        ],
+        "compressionArguments": [
+          "-map_metadata",
+          "{option:metadata}",
+          "-frames:v",
+          "1",
+          "-c:v",
+          "libwebp",
+          "-quality",
+          "{compression.quality}"
+        ],
+        "compressionOptions": [
+          {
+            "key": "quality",
+            "label": "WebP quality (0–100; higher is better)",
+            "type": "number",
+            "default": "75",
+            "min": 0,
+            "max": 100,
+            "step": 1
+          },
+          {
+            "key": "targetSizeMb",
+            "label": "Maximum output size (MB)",
+            "type": "number",
+            "default": "8",
+            "min": 1,
+            "max": 200,
+            "step": 1,
+            "targetSizeMb": true
+          },
+          {
+            "key": "metadata",
+            "label": "Metadata",
+            "type": "select",
+            "default": "0",
+            "choices": [
+              "0",
+              "-1"
+            ]
+          }
+        ],
+        "compressionTargetQualityOption": "quality",
+        "compressionTargetQualityHigherIsBetter": true
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": [
+          "jpg",
+          "jpeg",
+          "png",
+          "webp",
+          "tif",
+          "tiff",
+          "bmp",
+          "gif",
+          "avif"
+        ],
+        "targets": [
+          "avif"
+        ],
+        "arguments": [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-nostdin",
+          "-y",
+          "-i",
+          "{source}",
+          "{compression.args}",
+          "{target}"
+        ],
+        "compressionArguments": [
+          "-map_metadata",
+          "{option:metadata}",
+          "-frames:v",
+          "1",
+          "-c:v",
+          "libaom-av1",
+          "-crf",
+          "{compression.quality}",
+          "-b:v",
+          "0",
+          "-still-picture",
+          "1"
+        ],
+        "compressionOptions": [
+          {
+            "key": "quality",
+            "label": "AV1 quality / CRF (0–63; lower number is better)",
+            "type": "number",
+            "default": "30",
+            "min": 0,
+            "max": 63,
+            "step": 1
+          },
+          {
+            "key": "targetSizeMb",
+            "label": "Maximum output size (MB)",
+            "type": "number",
+            "default": "8",
+            "min": 1,
+            "max": 200,
+            "step": 1,
+            "targetSizeMb": true
+          },
+          {
+            "key": "metadata",
+            "label": "Metadata",
+            "type": "select",
+            "default": "0",
+            "choices": [
+              "0",
+              "-1"
+            ]
+          }
+        ],
+        "compressionTargetQualityOption": "quality",
+        "compressionTargetQualityHigherIsBetter": false
+      }
+    ]
+  }
+}

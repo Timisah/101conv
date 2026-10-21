@@ -30,6 +30,8 @@ This is a lightweight decision log, not a record of every implementation detail.
 | A-024 | Open | Brand, logo, repository/domain migration | Check trademark/domain availability, plan redirects/versioned identifiers/volume compatibility. No speculative name finalized. |
 | A-025 | Accepted | Provider selection policy | Normalize the operation and format mapping, honor a compatible personal preference, then an administrator preference, then a compatible personal/shared default preset, and finally choose the stable profile/version/engine provider order. An unavailable saved choice is reported and never silently executed; every submitted job freezes the selected profile/version/engine execution specification. |
 | A-026 | Open | Document Builder editable-output semantics | PDF/CBZ/page-image exports differ from DOCX/PPTX/ODT. Determine honest content models, page fidelity, and when native content can be preserved. |
+| A-027 | Accepted | Compression controls are scoped to the source/target rule | A provider may use different quality ranges and search direction for JPEG, PNG, WebP, and AVIF. The canonical capability API publishes only the controls valid for the selected mapping; the profile-level schema remains the compatibility fallback for older manifests. |
+| A-028 | Accepted | Document page geometry is a shared typed contract | Automatic, Fit, and Fill layout resolve oriented pixel dimensions into bounded physical page geometry. Preview and export consume the same resolver; margins, backgrounds, focal position, and per-page mode overrides are validated and additive in the manifest. Browser export remains raster-only until the server exporter can preserve native PDF/vector content. |
 
 ## Decision-making process
 

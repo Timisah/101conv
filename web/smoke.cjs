@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'compression',id:'ppm-pgm-compress',version:'1.0.0',name:'PPM Image Compressor',description:'Compress a PPM image to grayscale PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],compression:{options:[{key:'quality',label:'Quality',type:'number',default:'85',min:1,max:100,step:1}]},rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','{compression.args}','--output','{target}'],compressionArguments:['--quality','{option:quality}']}]}});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'pnm-pgm-alternate',version:'1.0.0',name:'PNM to grayscale PGM',description:'Convert portable anymap images to PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['pnm'],targets:['pgm'],arguments:['--input','{source}','--output','{target}']}]}});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-slow',version:'1.0.0',name:'PPM to PGM (slow test)',description:'A delayed test profile for cancellation checks.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--sleep-ms','5000','--input','{source}','--output','{target}']}]}});
+  await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-cancel',version:'1.0.0',name:'PPM to PGM (cancellation test)',description:'A long-running fixture that keeps cancellation controls active.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--sleep-ms','60000','--input','{source}','--output','{target}']}]}});
   const ppm = Buffer.from('P3\n2 1\n255\n255 0 0 0 255 0\n');
   const uploadForm = new FormData(); uploadForm.append('file', new Blob([ppm]), 'mode-check.ppm');
   const uploadResponse = await fetch(base+'/api/v1/uploads',{method:'POST',headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN},body:uploadForm});
@@ -225,22 +226,28 @@ const assert = require('node:assert/strict');
     const afterRetry=await page.evaluate(async id=>fetch('/api/v1/batches/'+id).then(r=>r.json()),partialID);
     assert.equal(afterRetry.items.find(item=>item.state==='succeeded').jobId,successfulJobID,'retry did not rerun successful work');
 
-    // Slow fixture jobs make cancellation controls deterministic without
-    // changing the production worker or its isolation settings.
+    // The cancellation-only fixture stays active while the browser renders
+    // history, without changing the production worker or its isolation settings.
     await page.goto(base + '/convert', { waitUntil: 'networkidle' });
     await page.locator('input[type=file]').setInputFiles([
       {name:'cancel-one.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm},
       {name:'cancel-two.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm}
     ]);
     await page.getByLabel('Convert to').selectOption('pgm');
-    await chooseAdvanced(page, 'ppm-pgm-slow');
+    await chooseAdvanced(page, 'ppm-pgm-cancel');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
+    await page.getByRole('status').filter({hasText:'Batch created: 2 item(s) submitted.'}).waitFor({timeout:15000});
     await page.getByRole('link',{name:'Jobs & history'}).click();
-    const itemCancelBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
+    const itemCancelID=await page.evaluate(()=>{
+      const ids=JSON.parse(localStorage.getItem('101conv-batch-ids')||'[]');
+      return ids.at(-1);
+    });
+    assert.match(itemCancelID,/^[0-9a-f-]{36}$/,'item-cancellation batch ID is persisted before cancellation');
+    const itemCancelBatch=page.locator('.batch-history-card').filter({hasText:itemCancelID});
+    await itemCancelBatch.waitFor({timeout:15000});
     await itemCancelBatch.locator(':scope > summary').click();
     await itemCancelBatch.getByText('cancel-one.ppm',{exact:true}).waitFor();
     await itemCancelBatch.getByRole('button',{name:'Cancel this file'}).first().click();
-    const itemCancelID=(await itemCancelBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(itemCancelID);
     await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.cancelled===1&&b.succeeded===1;},itemCancelID,{timeout:60000});
 
     await page.goto(base + '/convert', { waitUntil: 'networkidle' });
@@ -249,11 +256,18 @@ const assert = require('node:assert/strict');
       {name:'batch-cancel-two.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm}
     ]);
     await page.getByLabel('Convert to').selectOption('pgm');
-    await chooseAdvanced(page, 'ppm-pgm-slow');
+    await chooseAdvanced(page, 'ppm-pgm-cancel');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
+    await page.getByRole('status').filter({hasText:'Batch created: 2 item(s) submitted.'}).waitFor({timeout:15000});
     await page.getByRole('link',{name:'Jobs & history'}).click();
-    const wholeCancelBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
-    const wholeCancelID=(await wholeCancelBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(wholeCancelID);
+    const wholeCancelID=await page.evaluate(()=>{
+      const ids=JSON.parse(localStorage.getItem('101conv-batch-ids')||'[]');
+      return ids.at(-1);
+    });
+    assert.match(wholeCancelID,/^[0-9a-f-]{36}$/,'new batch ID is persisted before cancellation');
+    const wholeCancelBatch=page.locator('.batch-history-card').filter({hasText:wholeCancelID});
+    await wholeCancelBatch.waitFor({timeout:15000});
+    await wholeCancelBatch.locator(':scope > summary').click();
     await wholeCancelBatch.getByRole('button',{name:'Cancel batch'}).click();
     await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.queued===0&&b.running===0&&b.cancelled===2;},wholeCancelID,{timeout:60000});
 
@@ -263,10 +277,27 @@ const assert = require('node:assert/strict');
     const hostileUpload=await hostileUploadResponse.json();
     const hostileBatchResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'hostile-zip-test-001',items:[{uploadId:hostileUpload.id,targetFormat:'pgm'}]});
     const hostileBatch=(await hostileBatchResponse.json()).batch;
-    await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.succeeded===1;},hostileBatch.id,{timeout:60000});
-    const safeZipResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id+'/results.zip',{headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN}});
-    assert.equal(safeZipResponse.status,200,'hostile-name batch ZIP is downloadable');
-    const safeZip=Buffer.from(await safeZipResponse.arrayBuffer()).toString('latin1');
+    const adminHeaders={Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN};
+    let hostileStatus;
+    let hostileReady=false;
+    const hostileDeadline=Date.now()+60000;
+    while(Date.now()<hostileDeadline){
+      const batchResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id,{headers:adminHeaders});
+      hostileStatus={httpStatus:batchResponse.status,batch:await batchResponse.json()};
+      const item=hostileStatus.batch.items?.[0];
+      if(hostileStatus.batch.failed>0||hostileStatus.batch.cancelled>0)break;
+      if(hostileStatus.batch.succeeded===1&&item?.job?.resultState==='available'&&item.jobId){
+        const resultResponse=await fetch(base+'/api/v1/jobs/'+item.jobId+'/result',{headers:adminHeaders});
+        await resultResponse.arrayBuffer();
+        if(resultResponse.ok){hostileReady=true;break;}
+      }
+      await new Promise(resolve=>setTimeout(resolve,250));
+    }
+    assert.ok(hostileReady,'hostile-name result is downloadable before archive: '+JSON.stringify({httpStatus:hostileStatus?.httpStatus,batchState:{state:hostileStatus?.batch.state,succeeded:hostileStatus?.batch.succeeded,failed:hostileStatus?.batch.failed,cancelled:hostileStatus?.batch.cancelled,items:hostileStatus?.batch.items?.map(item=>({state:item.state,jobId:item.jobId,resultState:item.job?.resultState}))}}));
+    const safeZipResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id+'/results.zip',{headers:adminHeaders});
+    const safeZipBody=Buffer.from(await safeZipResponse.arrayBuffer());
+    assert.equal(safeZipResponse.status,200,'hostile-name batch ZIP is downloadable: '+JSON.stringify({batchState:{state:hostileStatus?.batch.state,succeeded:hostileStatus?.batch.succeeded,items:hostileStatus?.batch.items?.map(item=>({state:item.state,jobId:item.jobId,resultState:item.job?.resultState}))},zipBody:safeZipBody.toString('utf8').slice(0,200)}));
+    const safeZip=safeZipBody.toString('latin1');
     assert.match(safeZip,/item-001-[0-9a-f-]{36}\.pgm/,'ZIP uses a generated safe item name');
     assert.equal(safeZip.includes('../escape'),false,'ZIP does not contain a client-controlled path');
 
@@ -275,10 +306,6 @@ const assert = require('node:assert/strict');
     const userCreate=await admin('/users','POST',{username:'smokeuser',password:'smoke-user-password-123',roleId:'converter',permissionOverrides:{},quotas:{maxFileBytes:{mode:'unlimited'},monthlyJobs:{mode:'unlimited'},monthlyBytes:{mode:'unlimited'}}});
     const smokeUser=(await userCreate.json()).user;assert.ok(smokeUser.id,'test account created through the admin API');
     async function uploadFor(token,name){const form=new FormData();form.append('file',new Blob([ppm]),name);const response=await fetch(base+'/api/v1/uploads',{method:'POST',headers:{Authorization:'Bearer '+token},body:form});assert.equal(response.status,201,'concurrency fixture upload is accepted');return (await response.json()).id;}
-    const adminSlowUploads=await Promise.all(Array.from({length:4},(_,i)=>uploadFor(process.env.ENGINE_ADMIN_TOKEN,`admin-slow-${i+1}.ppm`)));
-    const adminSlowResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'admin-fairness-batch-0001',items:adminSlowUploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))});
-    assert.equal(adminSlowResponse.status,201,'admin submits a four-file slow batch');
-    const adminSlowBatch=(await adminSlowResponse.json()).batch;
     const userContext=await browser.newContext({viewport:{width:1280,height:900}});const userPage=await userContext.newPage();
     userPage.on('pageerror',error=>errors.push(error.message));
     await userPage.goto(base,{waitUntil:'networkidle'});
@@ -288,30 +315,35 @@ const assert = require('node:assert/strict');
     await userPage.getByLabel('Password').fill('smoke-user-password-123');
     await userPage.getByRole('button',{name:/Sign in/}).click();
     await userPage.getByRole('heading',{name:'What are we converting?'}).waitFor();
+    const userSlowBatch=await userPage.evaluate(async source=>{
+      const uploads=[];
+      for(let i=0;i<2;i++){const form=new FormData();form.append('file',new Blob([source]),`user-slow-${i+1}.ppm`);const up=await fetch('/api/v1/uploads',{method:'POST',body:form});if(up.status!==201)throw Error('user upload failed: '+up.status);uploads.push((await up.json()).id);}
+      const response=await fetch('/api/v1/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'convert',idempotencyKey:'user-fairness-batch-0001',items:uploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))})});
+      if(response.status!==202)throw Error('user batch submission failed: '+response.status+' '+await response.text());return (await response.json()).batch;
+    },ppm.toString());
+    await userPage.waitForFunction(async id=>{const response=await fetch('/api/v1/batches/'+id);return response.ok&&(await response.json()).running>0;},userSlowBatch.id,{timeout:15000});
+    const adminSlowUploads=await Promise.all(Array.from({length:4},(_,i)=>uploadFor(process.env.ENGINE_ADMIN_TOKEN,`admin-slow-${i+1}.ppm`)));
+    const adminSlowResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'admin-fairness-batch-0001',items:adminSlowUploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))});
+    assert.equal(adminSlowResponse.status,202,'admin submits a four-file slow batch');
+    const adminSlowBatch=(await adminSlowResponse.json()).batch;
     const userAccess=await userPage.evaluate(async id=>{
       const batch=await fetch('/api/v1/batches/'+id);const zip=await fetch('/api/v1/batches/'+id+'/results.zip');
       return {batchStatus:batch.status,zipStatus:zip.status};
     },adminSlowBatch.id);
     assert.ok(userAccess.batchStatus===403||userAccess.batchStatus===404,'another owner cannot view an admin batch');
     assert.ok(userAccess.zipStatus===403||userAccess.zipStatus===404,'another owner cannot download an admin ZIP');
-    const userSlowBatch=await userPage.evaluate(async source=>{
-      const uploads=[];
-      for(let i=0;i<2;i++){const form=new FormData();form.append('file',new Blob([source]),`user-slow-${i+1}.ppm`);const up=await fetch('/api/v1/uploads',{method:'POST',body:form});if(up.status!==201)throw Error('user upload failed: '+up.status);uploads.push((await up.json()).id);}
-      const response=await fetch('/api/v1/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'convert',idempotencyKey:'user-fairness-batch-0001',items:uploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))})});
-      if(response.status!==201)throw Error('user batch submission failed: '+response.status+' '+await response.text());return (await response.json()).batch;
-    },ppm.toString());
     let maxConcurrent=0,maxAdminBatchRunning=0,userServedBeforeAdminDone=false,adminState,userState;
     for(let i=0;i<100;i++){
       [adminState,userState]=await Promise.all([admin('/batches/'+adminSlowBatch.id,'GET'),admin('/batches/'+userSlowBatch.id,'GET')]);
-      const a=(await adminState.json()).batch,u=(await userState.json()).batch;
+      const a=await adminState.json(),u=await userState.json();
       maxConcurrent=Math.max(maxConcurrent,a.running+u.running);
       maxAdminBatchRunning=Math.max(maxAdminBatchRunning,a.running);
       if(u.running>0&&a.succeeded<a.total)userServedBeforeAdminDone=true;
       if(a.succeeded+a.failed+a.cancelled===a.total&&u.succeeded+u.failed+u.cancelled===u.total)break;
       await new Promise(resolve=>setTimeout(resolve,200));
     }
-    const finalAdmin=(await admin('/batches/'+adminSlowBatch.id,'GET')).batch;
-    const finalUser=(await admin('/batches/'+userSlowBatch.id,'GET')).batch;
+    const finalAdmin=await (await admin('/batches/'+adminSlowBatch.id,'GET')).json();
+    const finalUser=await (await admin('/batches/'+userSlowBatch.id,'GET')).json();
     assert.equal(maxConcurrent,3,'configured worker pool actually ran three conversions concurrently');
     assert.ok(maxAdminBatchRunning<=2,'a single batch never exceeded its configured two-slot limit');
     assert.ok(userServedBeforeAdminDone,'round-robin scheduling served another owner before the first owner batch completed');

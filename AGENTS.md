@@ -30,6 +30,16 @@ Read this file before making substantial changes. Project documentation, not pri
 6. Update `docs/PROJECT_STATUS.md` with verified progress; update `docs/MASTER_PLAN.md` only for approved roadmap changes; add decision entries for material architectural choices and keep technical docs synchronized.
 7. Report changed files, migration impact, tests (including failures/skips), limitations, and next steps. Never call a commit or green badge proof of a successful real deployment.
 
+### Fresh-session “Continue development” protocol
+
+When a fresh session is asked to **Continue development**, first locate the actual repository, inspect its remote, branch, commit, worktree and current `origin/main`, and preserve any existing local work. Read this file and the linked plan, status, backlog and decision documents before selecting scope. Inspect the current GitHub issues and CI evidence as well as the code; do not assume that an old checkout, an open issue, or an implementation commit is current proof.
+
+Select exactly one highest-priority approved, unblocked task that is supported by the roadmap and issue state. P0 correctness, security, compatibility, CI and release-gate repairs take precedence over new feature milestones. If CI or project tracking is known to be incorrect, repair and verify those gates before beginning another feature milestone. Stop for owner input only when the selected work requires an owner decision identified by the plan, issue, or decision log.
+
+Create a focused branch from the latest synchronized `origin/main` (or report a genuine dirty-worktree conflict without overwriting it). Keep the change modular and backwards-compatible, including mobile and security requirements. Run the relevant unit, integration, compatibility, security, browser/mobile, Docker and backup/restore checks; distinguish passed, failed, skipped and environment-blocked checks. Update `docs/PROJECT_STATUS.md` and related tracking only from verified evidence, and reconcile GitHub issue state without closing work whose acceptance or release gate remains open.
+
+Commit the focused change with a clear message, push the branch, and open a pull request against `main` with the verification evidence and remaining limitations. Do not claim CI is green until the actual PR run is complete and all required jobs—including Docker browser acceptance and backup/restore when applicable—pass. After opening a pull request, attach its URL to the task. Continue monitoring the PR checks until they are complete or report the exact external blocker; never weaken tests, delete production resources, or start another milestone to hide a failure.
+
 ## Authority and documentation policy
 
 - The project owner approves branding, major scope changes, breaking API changes, release readiness and architecture departures.
