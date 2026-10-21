@@ -1,6 +1,6 @@
 # 101conv — Product Master Plan
 
-**Status:** Living product charter and architecture direction, as of 2026-10-20.  
+**Status:** Living product charter and architecture direction, as of 2026-10-21.  
 **Temporary project name:** 101conv. Branding, public name, logo and domains are **undecided**.  
 **Current implementation state:** [PROJECT_STATUS.md](PROJECT_STATUS.md).  
 **Tracked requests:** [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md).  
@@ -22,7 +22,7 @@ The product is not merely a list of extension pairs, a general-purpose untrusted
 4. **Inspect / File Inspector** — readable file and stream information, advanced metadata and structured export; optional explicitly invoked metadata-removal job.
 5. **Automate** — approachable blueprints with optional visual block editor, triggers, metadata conditions and reusable processing actions.
 
-Jobs/results/history serve all five. The administrative interface (engines, providers, packages, storage, permissions, repositories and system health) must remain separate from everyday task selection.
+Jobs & history are one primary, filterable destination for individual tasks and grouped batches across Convert and Compress; specialized batch handling belongs in the detail view rather than a competing first-class page. The administrative interface (engines, providers, packages, storage, permissions, repositories and system health) must remain separate from everyday task selection.
 
 ## 2. UX contract — must survive every milestone
 
@@ -30,6 +30,8 @@ Jobs/results/history serve all five. The administrative interface (engines, prov
 - **Progressive disclosure:** common controls are understandable and reachable; expert options are available but do not dominate. Never hide genuinely common settings (resolution, target size, HDR preservation) behind a technical maze.
 - **File-aware:** analyze source properties, show only compatible formats/operations/settings, explain disabled options and show safe defaults. Do not ask users to know codecs or CLI flags.
 - **Preset-friendly:** a sophisticated configuration becomes one-tap reuse; never confuse a user preset with an executable provider.
+- **Understandable upgrades:** distinguish a distinct new capability/profile needing installation from a newer version of an existing installed profile. Show version, availability, compatibility, update indicators, changelog and safe migration paths; upgrading application code must not be presented as having installed converter packages.
+- **One history:** users can find and filter Convert and Compress work, independently submitted jobs and grouped batches, from one Jobs & history page; advanced batch actions are available through details, not a competing prominent section.
 - **Mobile-first:** touch targets, readable type, single-column flows, no horizontal scrolling at narrow widths, visible primary action, accessible reordering alternatives, bottom sheets/details where useful. Test real touch and keyboard flows. Desktop may use richer previews but must preserve functional parity.
 - **Non-destructive:** originals and projects remain intact by default. Undo page edits; explicit confirmation for irreversible actions. Treat privacy and retention as first-class UX.
 - **Meaningful outcomes:** display progress and clear errors, before/after sizes, validation warnings (e.g. lost HDR), downloads and next actions. Avoid a false “100% successful” for invalid or incomplete output.
@@ -69,7 +71,7 @@ Extend file format support only with tested engine/runtime builds; use target-sp
 
 - Basic: keep original dimensions unless the user explicitly requests otherwise; choose a reasonable quality/size goal.
 - Advanced: image quality/lossless where feasible, metadata policy, format-specific encoder options, audio codec/bitrate/channels, video codec, bitrate or quality mode, resolution, frame rate, pixel format, color properties and selected streams.
-- Target-size compression: per-file limit, **combined maximum size across the selected batch**, or both. Use bounded analysis/attempts, allocate budgets intelligently, verify actual outputs, avoid unbounded retries, and explain impossible constraints.
+- Target-size compression: per-file limit, **combined maximum size across the selected batch**, or both; both limits are **optional and unset by default** (unless the user explicitly applies a preset that includes one). Empty means no cap: ordinary format conversion or general compression does not secretly adopt a numeric target. When a cap is requested, favor the highest feasible quality subject to the bound, preferring a result close to (but never above) the requested maximum rather than gratuitously shrinking much further. Use codec-specific bounded search/analysis, intelligently allocate batch budgets, validate actual outputs and explain infeasible limits; never claim an exact target size can always be reached.
 - “Keep 4K resolution, reduce bitrate” must be independently selectable. Resolution and video bitrate are not the same control.
 - HDR: preserve source transfer, primaries, matrix/range, bit depth and applicable static metadata where supported; validate resulting streams. Explicit SDR tone mapping is separate. HDR10+/Dolby Vision preservation is conditional, never silently promised.
 - Report actual input/output size, saved bytes/percent and relevant quality/fidelity warnings.
@@ -106,6 +108,12 @@ Keep GitHub as code/distribution source and early landing page. Improve README/s
 
 Current name `101conv` is provisional; a similarly named company/product exists. Choose an original legal/trademark/domain-checked name and scalable logo/symbol, with both light/dark and favicon usage. Do not automatically rename repository, package paths, API or volumes until a non-breaking rollout plan is approved. Brand must represent Convert / Compress / Build / Inspect / Automate, not only file extension swapping.
 
+### I. Converter update discovery and history / admin statistics
+
+- **Converter lifecycle UX:** automatically surface *available* catalog changes for admins without automatically installing them; clearly label `New profile — Install` for a new logical profile ID and `Update available vX → vY` only for a higher version of the same installed ID. Explain missing engines, unsigned trust, changed settings, pinned jobs/presets and safe rollback before explicit user-approved updates. Treat the existing backend install/update-preview machinery as a foundation, not as a completed user experience ([FR-019](FEATURE_REQUESTS.md#fr-019--clear-profileengine-updates-and-catalog-lifecycle-ux)).
+- **Jobs & history:** a unified searchable/filterable primary page spans individual and batched Convert/Compress operations, with operation/type/status/date filters and batch expansion. Preserve existing deep links and APIs; admin-only cross-user filters must be permission-checked server-side ([FR-020](FEATURE_REQUESTS.md#fr-020--unified-filterable-jobs-and-history)).
+- **Admin-only lifetime statistics:** server and per-user aggregates can report historical processed input bytes, output bytes, job and batch counts, operation split, failures and savings. Count each completed processing item once (not batch parent *and* children or retried attempts); persist totals independently of retained files/jobs, disclose uncertain historical baselines, and protect guest/deleted-user privacy. Only authorized admins may view even per-user lifetime metrics ([FR-021](FEATURE_REQUESTS.md#fr-021--admin-only-lifetime-processing-statistics)).
+
 ## 5. Security, deployment and release requirements
 
 - Runtime shall not execute arbitrary user expressions, commands or unsafe converter arguments. Parser input is hostile. Maintain non-root Worker, mounts/network isolation, resource bounds and strict process cleanup. Strong multi-tenant isolation would require additional architecture; do not oversell current guarantees.
@@ -129,11 +137,13 @@ Current name `101conv` is provisional; a similarly named company/product exists.
 - Introduce file analysis and canonical typed operation descriptions; provider resolution and explainable defaults.
 - Remove competing technical profile choices from novice UIs (retain advanced override); migrate safely without removing legacy support.
 - First-class personal presets and admin-shared defaults. Keep all new code in feature-focused modules, with mobile UX tests.
+- **P1 follow-up after the architecture baseline:** improve new-profile vs profile-update discovery, safe install/upgrade UX ([FR-019](FEATURE_REQUESTS.md#fr-019--clear-profileengine-updates-and-catalog-lifecycle-ux)), and make filterable, unified Jobs & history the main entry point for singles and grouped batches ([FR-020](FEATURE_REQUESTS.md#fr-020--unified-filterable-jobs-and-history)).
 
 **P2 — Rich compression and media fidelity**:
-- Per-image target size and combined batch size budgets, bounded iterations and result comparisons.
+- Per-image target size and combined batch size budgets, bounded iterations and result comparisons. Maximum size is optional and initially blank; when set, choose the highest feasible quality under the ceiling rather than an unnecessarily tiny output (FR-009).
 - Keep resolution while reducing bitrate, stream selection, metadata handling.
 - HDR-aware CPU transcoding before GPU-specific features; output verification and explicit unsupported states.
+- **P2 admin reporting follow-up:** retention-independent, permission-gated lifetime per-user and server processing metrics, with transparent counting and legacy/guest privacy rules ([FR-021](FEATURE_REQUESTS.md#fr-021--admin-only-lifetime-processing-statistics)).
 
 **P3 — File Inspector**:
 - Reusable safe metadata analysis service, readable UI, JSON/export and privacy controls; use same analysis in processing flows.
