@@ -130,3 +130,29 @@ func TestCompressionUsesTypedCompressionOptions(t *testing.T) {
 		t.Fatalf("compression options = %#v", provider.Capabilities)
 	}
 }
+
+func TestCompressionOptionsFollowTheCodecRule(t *testing.T) {
+	min, max, step := 2.0, 31.0, 1.0
+	quality := profile.OptionDefinition{Key: "quality", Label: "JPEG quality", Type: "number", Default: "5", Min: &min, Max: &max, Step: &step}
+	levelMin, levelMax, levelStep := 0.0, 9.0, 1.0
+	level := profile.OptionDefinition{Key: "compressionLevel", Label: "PNG compression level", Type: "number", Default: "6", Min: &levelMin, Max: &levelMax, Step: &levelStep}
+	d := profile.Definition{
+		SchemaVersion: 1, Type: profile.TypeCompression, ID: "image-compressor", Version: "1.0.0", Name: "Image compressor",
+		Engines: []profile.EngineRequirement{{EngineID: "tool"}},
+		Compression: &profile.CompressionConfig{Options: []profile.OptionDefinition{quality, level}},
+		Rules: []profile.ConversionRule{
+			{EngineID: "tool", Executable: "tool", Sources: []string{"jpg"}, Targets: []string{"jpg"}, Arguments: []string{"{source}", "{compression.args}", "{target}"}, CompressionArguments: []string{"-q", "{option:quality}"}, CompressionOptions: []profile.OptionDefinition{quality}},
+			{EngineID: "tool", Executable: "tool", Sources: []string{"jpg"}, Targets: []string{"png"}, Arguments: []string{"{source}", "{compression.args}", "{target}"}, CompressionArguments: []string{"-compression_level", "{option:compressionLevel}"}, CompressionOptions: []profile.OptionDefinition{level}},
+		},
+	}
+	engineRecord := management.EngineRecord{Definition: engine.Definition{SchemaVersion: 1, ID: "tool", Version: "1.0.0", Name: "Tool", Executables: map[string]string{"tool": "tool"}}, Installation: engine.Installation{EngineID: "tool", Version: "1.0.0", Managed: true, ExecutablePaths: map[string]string{"tool": "/tool"}}}
+	catalog := Build([]management.ProfileRecord{{Definition: d, State: profile.Installation{ProfileID: d.ID, Version: d.Version, Enabled: true}}}, []management.EngineRecord{engineRecord})
+	for _, item := range catalog.Providers[0].Capabilities {
+		if item.CapabilityID == "compress:jpg:jpg" && len(item.Options) != 1 || item.CapabilityID == "compress:jpg:jpg" && item.Options[0].Key != "quality" {
+			t.Fatalf("JPEG options = %#v", item.Options)
+		}
+		if item.CapabilityID == "compress:jpg:png" && len(item.Options) != 1 || item.CapabilityID == "compress:jpg:png" && item.Options[0].Key != "compressionLevel" {
+			t.Fatalf("PNG options = %#v", item.Options)
+		}
+	}
+}

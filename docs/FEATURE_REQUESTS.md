@@ -89,6 +89,15 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 **Acceptance:** canonical quality/size controls, format/encoder-specific options, bounded iterative quality search, fair batch budget allocation, hard vs best-effort policies, impossible-target errors, real output validation and before/after data. Do not assume every codec provides exact target-size encoding.  
 **Dependencies:** FR-006, FR-010.
 
+**Status:** The current worktree implements the image-capability portion on
+2026-10-21. A separate FFmpeg image-compression provider supports same-format
+JPEG plus PNG, WebP, and AVIF targets with rule-scoped codec controls,
+metadata selection, bounded adaptive target sizing where supported, original
+pixel dimensions, and verified output signatures. The existing combined batch
+budget remains in the P2 path. Pinned-artifact CI, browser acceptance, and
+remote GitHub Actions evidence are still release gates; the local host smoke
+used FFmpeg 7.1.5 rather than the pinned catalog artifact.
+
 ### FR-010 — Shared file analysis and File Inspector workspace
 
 **Goal:** upload any supported file and see useful metadata without technical knowledge; data also drives other workspaces.  
@@ -108,6 +117,16 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 **Goal:** upload JPG/PNG/PDF/multipage PDFs and supported Office files; reorder individual pages, rotate and export one document.  
 **Acceptance:** real thumbnails, accessible reorder + drag, rotation, remove/duplicate, multipage flatten/group, undo/redo, mobile one-column/touch editor, non-destructive manifest, expiring guest and saved logged-in projects, PDF export preserving vector text/images and original bytes where possible; no needless resizing/resampling. Export formats beyond PDF (DOCX/ODT/PPTX/ODP/CBZ/multipage TIFF/ZIP) shipped only with honest fidelity and format-specific tests. Default one input page per output page.  
 **Dependencies:** PDF/Office engines, FR-010 and design of safe project lifecycle.
+
+**Status:** The current worktree extends the first Build slice with a typed,
+bounded layout contract and shared preview/export geometry. Automatic image
+pages follow oriented source ratios; Fit and Fill support A4, Letter, custom
+millimetres, margins, backgrounds, focal position, and per-page mode overrides.
+The browser smoke fixture now checks actual generated PDF MediaBox dimensions
+for rotated, square, panoramic, and fixed-A4 pages. PDF/Office expansion,
+native vector preservation, saved/expiring projects, and remote CI evidence
+remain open; browser-local PDF generation is intentionally limited to raster
+image pages.
 
 ## P4 — GPU, automations and extensions
 

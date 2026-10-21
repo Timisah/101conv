@@ -126,6 +126,14 @@ type ConversionRule struct {
 	// placeholders and {compression.videoKbps}, {compression.audioKbps}, and
 	// {compression.bufferKbps}.
 	CompressionArguments []string `json:"compressionArguments,omitempty"`
+	// CompressionOptions optionally narrows the compression controls to this
+	// source/target rule. Older profiles keep using CompressionConfig.Options;
+	// rule-local options let one provider expose codec-appropriate controls
+	// without showing JPEG quality on PNG output (or vice versa).
+	CompressionOptions                    []OptionDefinition `json:"compressionOptions,omitempty"`
+	CompressionTargetQualityOption        *string            `json:"compressionTargetQualityOption,omitempty"`
+	CompressionTargetQualityHigherBetter  *bool              `json:"compressionTargetQualityHigherIsBetter,omitempty"`
+	CompressionTargetSizeAttempts         int                `json:"compressionTargetSizeAttempts,omitempty"`
 }
 
 // Installation represents user state for a profile. It is independent of both
@@ -229,6 +237,9 @@ func (d Definition) Validate() error {
 		if err := validateOptions(rule.Options); err != nil {
 			return fmt.Errorf("rule %d options: %w", i, err)
 		}
+		if err := validateOptions(rule.CompressionOptions); err != nil {
+			return fmt.Errorf("rule %d compression options: %w", i, err)
+		}
 		optionKeys := make(map[string]bool, len(rule.Options))
 		for _, option := range rule.Options {
 			optionKeys[option.Key] = true
@@ -275,6 +286,17 @@ func (d Definition) Validate() error {
 	if err := d.ValidateCompression(); err != nil {
 		return err
 	}
+	if d.Compression != nil {
+		for i, rule := range d.Rules {
+			if len(rule.CompressionOptions) == 0 && rule.CompressionTargetQualityOption == nil && rule.CompressionTargetQualityHigherBetter == nil && rule.CompressionTargetSizeAttempts == 0 {
+				continue
+			}
+			config := d.CompressionForRule(rule)
+			if err := validateCompressionConfig(config, []ConversionRule{rule}); err != nil {
+				return fmt.Errorf("rule %d compression settings: %w", i, err)
+			}
+		}
+	}
 	switch d.Type {
 	case "": // Existing on-disk definitions are handled by the legacy adapter.
 	case TypeConversion:
@@ -282,8 +304,8 @@ func (d Definition) Validate() error {
 			return fmt.Errorf("conversion profiles must not declare compression settings")
 		}
 		for _, rule := range d.Rules {
-			if len(rule.CompressionArguments) != 0 {
-				return fmt.Errorf("conversion profiles must not declare compression arguments")
+			if len(rule.CompressionArguments) != 0 || len(rule.CompressionOptions) != 0 || rule.CompressionTargetQualityOption != nil || rule.CompressionTargetQualityHigherBetter != nil || rule.CompressionTargetSizeAttempts != 0 {
+				return fmt.Errorf("conversion profiles must not declare compression settings on rules")
 			}
 		}
 	case TypeCompression:
@@ -337,7 +359,33 @@ func (d Definition) ValidateCompression() error {
 		}
 		return nil
 	}
-	c := d.Compression
+	return validateCompressionConfig(*d.Compression, d.Rules)
+}
+
+// CompressionForRule returns the effective typed compression contract for a
+// source/target rule. It is additive for compatibility: manifests that do not
+// declare rule-local settings continue to use the profile-level contract.
+func (d Definition) CompressionForRule(rule ConversionRule) CompressionConfig {
+	if d.Compression == nil {
+		return CompressionConfig{}
+	}
+	c := *d.Compression
+	if len(rule.CompressionOptions) > 0 {
+		c.Options = append([]OptionDefinition(nil), rule.CompressionOptions...)
+	}
+	if rule.CompressionTargetQualityOption != nil {
+		c.TargetQualityOption = *rule.CompressionTargetQualityOption
+	}
+	if rule.CompressionTargetQualityHigherBetter != nil {
+		c.TargetQualityHigherBetter = *rule.CompressionTargetQualityHigherBetter
+	}
+	if rule.CompressionTargetSizeAttempts != 0 {
+		c.TargetSizeAttempts = rule.CompressionTargetSizeAttempts
+	}
+	return c
+}
+
+func validateCompressionConfig(c CompressionConfig, rules []ConversionRule) error {
 	if len(c.Options) == 0 || len(c.Options) > 16 {
 		return fmt.Errorf("compression must define between 1 and 16 options")
 	}
@@ -413,7 +461,7 @@ func (d Definition) ValidateCompression() error {
 	usesTargetSize := false
 	usesTargetQuality := false
 	usesBitrate := false
-	for _, rule := range d.Rules {
+	for _, rule := range rules {
 		if len(rule.CompressionArguments) == 0 {
 			continue
 		}

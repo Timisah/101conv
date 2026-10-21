@@ -49,6 +49,7 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 		{"jpeg-xl-linux-amd64", "1.2.0"},
 		{"ffmpeg-compression-linux-amd64", "1.0.0"},
 		{"jpeg-xl-compression-linux-amd64", "1.0.0"},
+		{"ffmpeg-image-compression-linux-amd64", "1.0.0"},
 		{"libreoffice-pdf-linux-amd64", "1.0.0"},
 		{"poppler-pdf-linux-amd64", "1.0.0"},
 	}

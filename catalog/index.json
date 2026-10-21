@@ -96,6 +96,15 @@
       "maximumAppVersionExclusive": "1.0.0"
     },
     {
+      "id": "ffmpeg-image-compression-linux-amd64",
+      "version": "1.0.0",
+      "name": "FFmpeg Image Compression",
+      "description": "Verified JPEG, PNG, WebP, and AVIF image compression through the pinned LGPL FFmpeg build. Output keeps the source pixel dimensions; AVIF is encoded as a still image.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-image-compression-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
       "id": "libreoffice-pdf-linux-amd64",
       "version": "1.0.0",
       "name": "Office Documents to PDF",

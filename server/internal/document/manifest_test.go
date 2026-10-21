@@ -56,3 +56,23 @@ func TestManifestValidateRejectsPageLimit(t *testing.T) {
 		t.Fatal("expected page limit validation error")
 	}
 }
+
+func TestManifestValidateAcceptsMixedPageLayout(t *testing.T) {
+	manifest := validManifest()
+	manifest.Layout = &Layout{Mode: "fit", PageSize: "a4", CustomWidthMM: 210, CustomHeightMM: 297, MarginMM: 8, Background: "white", PositionX: 0.5, PositionY: 0.5}
+	manifest.Pages[0].Layout = &LayoutOverride{Mode: stringPtr("fill"), PositionX: floatPtr(0.25)}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("mixed layout manifest rejected: %v", err)
+	}
+}
+
+func TestManifestValidateRejectsUnsafeLayout(t *testing.T) {
+	manifest := validManifest()
+	manifest.Layout = &Layout{Mode: "fit", PageSize: "a4", CustomWidthMM: 210, CustomHeightMM: 297, MarginMM: 51, Background: "white", PositionX: 0.5, PositionY: 0.5}
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("expected invalid margin to be rejected")
+	}
+}
+
+func stringPtr(value string) *string  { return &value }
+func floatPtr(value float64) *float64 { return &value }

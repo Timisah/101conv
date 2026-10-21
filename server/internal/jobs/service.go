@@ -927,17 +927,18 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	streamSelection, hdrPolicy, dynamicHDRPolicy := rule.StreamSelection, rule.HDRPolicy, rule.DynamicHDRPolicy
 	preserveMetadata := rule.PreserveMetadata
 	optionValues := map[string]string{}
+	compressionConfig := profile.CompressionConfig{}
 	if mode == "compress" {
 		if profileDef.Compression == nil || len(rule.CompressionArguments) == 0 {
 			return Job{}, false, fmt.Errorf("%w: profile does not provide compression for %s to %s", ErrUnsupported, upload.Extension, target)
 		}
-		preserveResolution = profileDef.Compression.PreserveResolution
-		preserveHDR = profileDef.Compression.PreserveHDR
+		compressionConfig = profileDef.CompressionForRule(rule)
+		preserveResolution = compressionConfig.PreserveResolution
+		preserveHDR = compressionConfig.PreserveHDR
 		if hdrPolicy == "preserve" {
 			preserveHDR = true
 		}
-		var optionValues map[string]string
-		optionValues, targetSizeBytes, err = validateCompressionOptions(*profileDef.Compression, req.Options)
+		optionValues, targetSizeBytes, err = validateCompressionOptions(compressionConfig, req.Options)
 		if err != nil {
 			return Job{}, false, err
 		}
@@ -946,14 +947,14 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			return Job{}, false, err
 		}
 		if targetSizeBytes > 0 {
-			probeRelative = engineDef.Executables[profileDef.Compression.ProbeExecutable]
-			if profileDef.Compression.TargetQualityOption == "" && !safeExecutableRelative(probeRelative) {
+			probeRelative = engineDef.Executables[compressionConfig.ProbeExecutable]
+			if compressionConfig.TargetQualityOption == "" && !safeExecutableRelative(probeRelative) {
 				return Job{}, false, fmt.Errorf("%w: compression probe executable is unavailable", ErrUnsupported)
 			}
-			audioBitrateKbps, minimumVideoKbps = profileDef.Compression.AudioBitrateKbps, profileDef.Compression.MinimumVideoKbps
-			if qualityKey := profileDef.Compression.TargetQualityOption; qualityKey != "" {
+			audioBitrateKbps, minimumVideoKbps = compressionConfig.AudioBitrateKbps, compressionConfig.MinimumVideoKbps
+			if qualityKey := compressionConfig.TargetQualityOption; qualityKey != "" {
 				var quality profile.OptionDefinition
-				for _, candidate := range profileDef.Compression.Options {
+				for _, candidate := range compressionConfig.Options {
 					if candidate.Key == qualityKey {
 						quality = candidate
 						break
@@ -963,7 +964,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 					return Job{}, false, fmt.Errorf("%w: compression target quality metadata is invalid", ErrUnsupported)
 				}
 				qualityMin, qualityMax, qualityStep = *quality.Min, *quality.Max, *quality.Step
-				qualityHigherBetter = profileDef.Compression.TargetQualityHigherBetter
+				qualityHigherBetter = compressionConfig.TargetQualityHigherBetter
 				if selected, parseErr := strconv.ParseFloat(optionValues[qualityKey], 64); parseErr == nil {
 					if qualityHigherBetter {
 						qualityMax = selected
@@ -971,11 +972,11 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 						qualityMin = selected
 					}
 				}
-				qualityAttempts = profileDef.Compression.TargetSizeAttempts
+				qualityAttempts = compressionConfig.TargetSizeAttempts
 			}
 		}
 		if preserveResolution || preserveHDR || streamSelection != "" || preserveMetadata || dynamicHDRPolicy != "" {
-			probeRelative = engineDef.Executables[profileDef.Compression.ProbeExecutable]
+			probeRelative = engineDef.Executables[compressionConfig.ProbeExecutable]
 			if !safeExecutableRelative(probeRelative) {
 				return Job{}, false, fmt.Errorf("%w: video fidelity probe executable is unavailable", ErrUnsupported)
 			}
@@ -1001,7 +1002,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			return Job{}, false, err
 		}
 	}
-	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && profileDef.Compression != nil && profileDef.Compression.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts, PreserveResolution: preserveResolution, PreserveHDR: preserveHDR, StreamSelection: streamSelection, PreserveMetadata: preserveMetadata, HDRPolicy: hdrPolicy, DynamicHDRPolicy: dynamicHDRPolicy}
+	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && compressionConfig.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts, PreserveResolution: preserveResolution, PreserveHDR: preserveHDR, StreamSelection: streamSelection, PreserveMetadata: preserveMetadata, HDRPolicy: hdrPolicy, DynamicHDRPolicy: dynamicHDRPolicy}
 	specBytes, err := json.Marshal(spec)
 	if err != nil {
 		return Job{}, false, err
