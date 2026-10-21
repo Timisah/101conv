@@ -194,6 +194,14 @@ func TestSuccessfulRetentionExpiresFilesButPreservesJobHistory(t *testing.T) {
 	if err = svc.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	legacyDays := 7
+	if _, err = db.ExecContext(ctx, `UPDATE conv_storage_settings SET abandoned_upload_days=$1,unsubmitted_mode='after_days' WHERE id=1`, legacyDays); err != nil {
+		t.Fatal(err)
+	}
+	legacyPolicy, err := svc.GetRetentionPolicy(ctx)
+	if err != nil || legacyPolicy.Unsubmitted.Days == nil || *legacyPolicy.Unsubmitted.Days != legacyDays {
+		t.Fatalf("legacy unsubmitted retention was not normalized: %+v err=%v", legacyPolicy.Unsubmitted, err)
+	}
 	initialScan, err := svc.StorageScan(ctx)
 	if err != nil || initialScan.Owners == nil {
 		t.Fatalf("empty storage scan must serialize owners as an empty list: %+v err=%v", initialScan, err)
