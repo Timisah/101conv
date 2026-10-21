@@ -315,18 +315,24 @@ const assert = require('node:assert/strict');
     await userPage.getByLabel('Password').fill('smoke-user-password-123');
     await userPage.getByRole('button',{name:/Sign in/}).click();
     await userPage.getByRole('heading',{name:'What are we converting?'}).waitFor();
+    const adminSlowUploads=await Promise.all(Array.from({length:4},(_,i)=>uploadFor(process.env.ENGINE_ADMIN_TOKEN,`admin-slow-${i+1}.ppm`)));
+    const adminSlowResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'admin-fairness-batch-0001',items:adminSlowUploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))});
+    assert.equal(adminSlowResponse.status,202,'admin submits a four-file slow batch');
+    const adminSlowBatch=(await adminSlowResponse.json()).batch;
+    let adminStarted=false;
+    for(let i=0;i<75;i++){
+      const state=await (await admin('/batches/'+adminSlowBatch.id,'GET')).json();
+      if(state.running>=2){adminStarted=true;break;}
+      await new Promise(resolve=>setTimeout(resolve,200));
+    }
+    assert.equal(adminStarted,true,'admin batch occupies its two permitted worker slots before the second owner submits work');
     const userSlowBatch=await userPage.evaluate(async source=>{
       const uploads=[];
-      // Leave two worker slots available for the other owner's capped batch.
       for(let i=0;i<1;i++){const form=new FormData();form.append('file',new Blob([source]),`user-slow-${i+1}.ppm`);const up=await fetch('/api/v1/uploads',{method:'POST',body:form});if(up.status!==201)throw Error('user upload failed: '+up.status);uploads.push((await up.json()).id);}
       const response=await fetch('/api/v1/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'convert',idempotencyKey:'user-fairness-batch-0001',items:uploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))})});
       if(response.status!==202)throw Error('user batch submission failed: '+response.status+' '+await response.text());return (await response.json()).batch;
     },ppm.toString());
     await userPage.waitForFunction(async id=>{const response=await fetch('/api/v1/batches/'+id);return response.ok&&(await response.json()).running>0;},userSlowBatch.id,{timeout:15000});
-    const adminSlowUploads=await Promise.all(Array.from({length:4},(_,i)=>uploadFor(process.env.ENGINE_ADMIN_TOKEN,`admin-slow-${i+1}.ppm`)));
-    const adminSlowResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'admin-fairness-batch-0001',items:adminSlowUploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))});
-    assert.equal(adminSlowResponse.status,202,'admin submits a four-file slow batch');
-    const adminSlowBatch=(await adminSlowResponse.json()).batch;
     const userAccess=await userPage.evaluate(async id=>{
       const batch=await fetch('/api/v1/batches/'+id);const zip=await fetch('/api/v1/batches/'+id+'/results.zip');
       return {batchStatus:batch.status,zipStatus:zip.status};
