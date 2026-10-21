@@ -21,6 +21,7 @@ The issue numbers below track implementation work; the FR descriptions remain th
 | FR-009 | [#9](https://github.com/Timisah/101conv/issues/9) | FR-018 | [#18](https://github.com/Timisah/101conv/issues/18) |
 | FR-019 | [#23](https://github.com/Timisah/101conv/issues/23) | FR-020 | [#24](https://github.com/Timisah/101conv/issues/24) |
 | FR-021 | [#25](https://github.com/Timisah/101conv/issues/25) | FR-022 | [#27](https://github.com/Timisah/101conv/issues/27) |
+| FR-023 | [#28](https://github.com/Timisah/101conv/issues/28) | — | — |
 
 ## Universal acceptance checks
 
@@ -218,7 +219,7 @@ public domain and publication target are approved.
 **Goal:** Jobs & history is one primary destination for both **single** and **batch** Convert/Compress processing. Batch-specific screens become contextual details rather than a prominently separate competing page.  
 **Acceptance:** unified chronological searchable/filterable records with operation (Convert/Compress), type (Single/Batch), status, time range, and authorized-admin user filters. Show progress, dates, sizes, savings, outputs and error states; display a batch as one grouped top-level row with expandable child items/aggregate results, without double listing child jobs by default. Preserve deep links, APIs, downloads/cancel/retry actions, authorization, performance/pagination, guest retention and keyboard/touch/mobile usability. **Completed singles and batches must also be downloadable directly from their originating Convert/Compress workspace, without navigating to Jobs** (FR-022); Jobs keeps the full historical result/download experience. Retain a secondary detailed batch view.  
 **Dependencies:** durable jobs/batch model, FR-008 UX and permissions.  
-**Status:** Requested and approved for planning on 2026-10-21, **not implemented**. Tracked in [#24](https://github.com/Timisah/101conv/issues/24).
+**Status:** Core unified history API and filterable, grouped Jobs & history UI are implemented and CI-verified in [#107](https://github.com/Timisah/101conv/actions/runs/39597290879) on 2026-10-21; this does not prove full deployment verification or complete all batch-scale edge cases. Visual batch thumbnails and expanded preview galleries remain a new follow-up ([FR-023](#fr-023--safe-upload-and-jobs-history-file-previews)). Tracked in [#24](https://github.com/Timisah/101conv/issues/24).
 
 ### FR-022 — Simple metadata controls, quiet helper copy and inline downloads
 
@@ -227,7 +228,21 @@ public domain and publication target are approved.
 
 After a single Convert or Compress submission, show on-page progress/status and a prominent **Download result** button as soon as the authorized output becomes available. After a multi-file batch, show **Download successful files (.zip)** and optional individual results on the same Convert/Compress page, including partial successes; use existing guarded result endpoints. A link to Jobs & history stays available but is not mandatory. Handle failed, queued, expired and missing results accessibly, avoid download/auth leaks and excessive polling; test keyboard/mobile/screen reader plus real single and batch completions. Do not grow `App.tsx` for this; share typed job/result status components.  
 **Dependencies:** FR-008 reusable UI/module design, FR-020 unified historical Jobs, existing job/batch download APIs.  
-**Status:** Owner-approved requested UX improvement on 2026-10-21, **not yet implemented**. Tracked in [#27](https://github.com/Timisah/101conv/issues/27).
+**Status:** The Preserve metadata toggle, reduced helper text and on-page single/batch result downloads are implemented and CI-verified in [#112](https://github.com/Timisah/101conv/actions/runs/39600102181) and the later [main CI #114](https://github.com/Timisah/101conv/actions/runs/39601103435). Actual production deployment and additional accessibility/real-image edge cases remain separate verification. Tracked in [#27](https://github.com/Timisah/101conv/issues/27).
+
+### FR-023 — Safe upload and Jobs/History file previews
+
+**Goal:** Users can recognize files visually immediately when choosing/uploads are staged; Jobs & history is a visual archive rather than rows of anonymous IDs, with intuitive single-file and batch galleries plus downloads.  
+**Acceptance:**
+- **Upload:** Render thumbnail previews immediately when compatible image files are selected in Convert, Compress, Document Creator and other relevant upload inputs; show name, format and size, handle EXIF orientation, removal and same-name files without confusion. For PDFs, videos, Office, audio and unsupported/untrusted formats use a truthful icon or a *separately verified, bounded and secure* preview extractor rather than implying universal thumbnail support.
+- **History overview:** Standalone and one-file-batch jobs show a single representative thumbnail. A batch with more than three files has **four tiles**: previews of the first three and a fourth **`+N`** tile for the remainder (e.g. 12 files → three previews and `+9`); batches containing one to three files show those without a misleading `+0`. Preview tiles retain clear filenames, operation/status, file-size information and an obvious expand action.
+- **Details:** Expanding a job or batch reveals **every associated file** in a lazy/paginated gallery or list, including source/result preview labels, progress/status, dimensions/formats where known, failures and expiry states. Allow downloads for each successful authorized result, and a **Download all successful files (.zip)** action for batches (including partial successes), reusing existing secured result endpoints. A preview of an original is **never mislabeled as a converted/compressed result**.
+- **Security and lifecycle:** Client thumbnails may be created locally from selected image files without external services, with object URLs revoked when removed/unmounted. Any stored/server thumbnails are bounded, content-validated and permission/guest gated, with retention and cache invalidation tied to originals/results; avoid third-party fetches, untrusted renderer execution, privacy leaks and excessive memory/CPU. Do not keep miniature files forever if their sources expire.
+- **Scale and usability:** Lazy loads, pagination/virtualization, small cached thumbnails, responsive mobile four-tile collage, keyboard/touch accessible gallery and meaningful loading/empty/failure fallbacks. Shared typed components rather than growing `App.tsx`; no giant upfront preview rendering for large batches.
+- **Regression tests:** Real JPEG/PNG with EXIF rotation; 1/2/3/4/12 and large-file batches; mixed media; immediate upload/remove; failed/expired/unavailable items; source vs output labels, owner/guest isolation, per-file/ZIP downloads, object URL cleanup and 320–390 px browser/mobile.
+  
+**Dependencies:** [FR-020](#fr-020--unified-filterable-jobs-and-history) grouped history, [FR-022](#fr-022--simple-metadata-controls-quiet-helper-copy-and-inline-downloads) download UX, FR-008 modular frontend, file analysis/retention and authorization boundaries.  
+**Status:** Owner-approved requested enhancement on 2026-10-21, **not implemented**. Tracked in [#28](https://github.com/Timisah/101conv/issues/28).
 
 ## P2 follow-up — privacy-conscious administrative reporting
 
