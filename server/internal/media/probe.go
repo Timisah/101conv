@@ -209,7 +209,7 @@ func ProbeFile(parent context.Context, executable, work, inputPath string) (*Pro
 	}
 	ctx, cancel := context.WithTimeout(parent, ProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, executable, "-v", "error", "-show_private_data", "1", "-show_streams", "-show_programs", "-show_format", "-show_chapters", "-of", "json", inputPath)
+	cmd := exec.CommandContext(ctx, executable, "-v", "error", "-show_private_data", "-show_streams", "-show_programs", "-show_format", "-show_chapters", "-of", "json", inputPath)
 	cmd.Dir = work
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work, "LANG=C.UTF-8"}
 	stdout, stderr := &boundedBuffer{}, &boundedBuffer{}

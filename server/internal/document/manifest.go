@@ -19,12 +19,12 @@ const (
 var identifierRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 type Manifest struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	ProjectID     string `json:"projectId,omitempty"`
-	Name          string `json:"name"`
-	OutputFormat  string `json:"outputFormat"`
+	SchemaVersion int     `json:"schemaVersion"`
+	ProjectID     string  `json:"projectId,omitempty"`
+	Name          string  `json:"name"`
+	OutputFormat  string  `json:"outputFormat"`
 	Layout        *Layout `json:"layout,omitempty"`
-	Pages         []Page `json:"pages"`
+	Pages         []Page  `json:"pages"`
 }
 
 // Layout is the optional v1 page-placement contract. It is additive so older
@@ -57,10 +57,10 @@ type LayoutOverride struct {
 // Page is a reference to an existing upload and source page. Page order is
 // the order in Manifest.Pages; the source upload remains unchanged.
 type Page struct {
-	ID         string         `json:"id"`
-	UploadID   string         `json:"uploadId"`
-	SourcePage int            `json:"sourcePage"`
-	Rotation   int            `json:"rotation"`
+	ID         string          `json:"id"`
+	UploadID   string          `json:"uploadId"`
+	SourcePage int             `json:"sourcePage"`
+	Rotation   int             `json:"rotation"`
 	Layout     *LayoutOverride `json:"layout,omitempty"`
 }
 
