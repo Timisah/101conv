@@ -321,7 +321,7 @@ const assert = require('node:assert/strict');
       const response=await fetch('/api/v1/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'convert',idempotencyKey:'user-fairness-batch-0001',items:uploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))})});
       if(response.status!==202)throw Error('user batch submission failed: '+response.status+' '+await response.text());return (await response.json()).batch;
     },ppm.toString());
-    await userPage.waitForFunction(async id=>{const response=await fetch('/api/v1/batches/'+id);return response.ok&&(await response.json()).running>0;},userSlowBatch.id,{timeout:15000});
+    await userPage.waitForFunction(async id=>{const response=await fetch('/api/v1/batches/'+id);return response.ok&&(await response.json()).running===2;},userSlowBatch.id,{timeout:15000});
     const adminSlowUploads=await Promise.all(Array.from({length:4},(_,i)=>uploadFor(process.env.ENGINE_ADMIN_TOKEN,`admin-slow-${i+1}.ppm`)));
     const adminSlowResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'admin-fairness-batch-0001',items:adminSlowUploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))});
     assert.equal(adminSlowResponse.status,202,'admin submits a four-file slow batch');
@@ -332,6 +332,13 @@ const assert = require('node:assert/strict');
     },adminSlowBatch.id);
     assert.ok(userAccess.batchStatus===403||userAccess.batchStatus===404,'another owner cannot view an admin batch');
     assert.ok(userAccess.zipStatus===403||userAccess.zipStatus===404,'another owner cannot download an admin ZIP');
+    let adminStarted=false;
+    for(let i=0;i<75&&!adminStarted;i++){
+      const batch=await (await admin('/batches/'+adminSlowBatch.id,'GET')).json();
+      adminStarted=batch.running>0;
+      if(!adminStarted)await new Promise(resolve=>setTimeout(resolve,200));
+    }
+    assert.ok(adminStarted,'admin fairness batch reached a running worker before concurrency sampling');
     let maxConcurrent=0,maxAdminBatchRunning=0,userServedBeforeAdminDone=false,adminState,userState;
     for(let i=0;i<100;i++){
       [adminState,userState]=await Promise.all([admin('/batches/'+adminSlowBatch.id,'GET'),admin('/batches/'+userSlowBatch.id,'GET')]);
