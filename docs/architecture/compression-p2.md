@@ -101,3 +101,11 @@ have focused tests. Frontend lint, type checking, and a Vite production build
 also pass. Catalog preflight validates the profile fields and placeholder
 rules. These checks are source/test evidence; they do not establish deployment
 or production-engine verification.
+
+## Owner-requested maximum-size UX follow-up (2026-10-21; planned, not verified)
+
+- The per-file **Maximum size** field and optional combined batch maximum start **blank/unset** unless the user explicitly applies a size-constrained preset. `unset` means no byte ceiling and does not imply a numeric default. A user changing JPG to WebP/AVIF/JXL can simply choose normal format/quality compression without a target size.
+- When a cap is supplied (example: a 5 MB original, 2 MB maximum), optimize for **highest feasible quality** while remaining at/below 2 MB, not the smallest possible byte count. The search may aim near 2 MB when the codec allows it, but user intent is quality subject to an upper bound, **not** an exact-byte promise. Codec-specific search direction/granularity and non-monotonic results require bounded actual-size validation and selection among feasible candidates.
+- Preserve separate strict/best-effort policies and honest impossible-limit errors. Never silently resize, corrupt or emit an invalid output to meet a cap. Do not expand unbounded CPU/time/batch budget.
+- Add regression cases for empty default, explicit size preset, JPG/JPEG/JXL/WebP/AVIF mappings where supported, targets with a higher-quality candidate nearer the limit than the current chosen result, impossible caps, inputs already smaller than the cap, mixed batches, cancellation/retries and result size/quality comparison.
+- This documents [FR-009](../FEATURE_REQUESTS.md#fr-009--rich-image-compression-and-combined-batch-size-goal) / [#9](https://github.com/Timisah/101conv/issues/9); it does **not** claim the current encoder/UI already satisfy those criteria.
