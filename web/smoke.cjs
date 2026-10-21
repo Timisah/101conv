@@ -276,7 +276,13 @@ const assert = require('node:assert/strict');
     const hostileUpload=await hostileUploadResponse.json();
     const hostileBatchResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'hostile-zip-test-001',items:[{uploadId:hostileUpload.id,targetFormat:'pgm'}]});
     const hostileBatch=(await hostileBatchResponse.json()).batch;
-    await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.succeeded===1;},hostileBatch.id,{timeout:60000});
+    await page.waitForFunction(async id=>{
+      const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());
+      if(b.succeeded!==1||!b.items?.every(item=>item.job?.resultState==='available'))return false;
+      const item=b.items[0];
+      const result=await fetch('/api/v1/jobs/'+item.jobId+'/result');
+      return result.ok;
+    },hostileBatch.id,{timeout:60000});
     const safeZipResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id+'/results.zip',{headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN}});
     assert.equal(safeZipResponse.status,200,'hostile-name batch ZIP is downloadable');
     const safeZip=Buffer.from(await safeZipResponse.arrayBuffer()).toString('latin1');
