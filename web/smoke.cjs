@@ -62,7 +62,8 @@ async function searchHistory(page, text) {
     await Promise.all([page.waitForResponse(r => r.url().includes('/api/v1/storage/retention') && r.request().method() === 'PUT' && r.status() === 200), page.locator('.retention-policy-row').first().getByRole('button', { name: 'Save' }).click()]);
     await page.goto(base + '/operations', { waitUntil: 'networkidle' });
     await page.getByRole('heading', { name: 'Operations', exact: true }).waitFor();
-    await page.getByText(/usable profiles/).first().waitFor();
+    await page.locator('.ops-tile').filter({ hasText: 'Converters' }).getByText(/^\d+ usable$/).waitFor();
+    await page.getByRole('heading', { name: /ready to convert/i }).waitFor();
 
     await page.getByRole('link', { name: 'Profile defaults' }).click();
     await page.getByRole('heading', { name: 'Profile defaults' }).waitFor();
