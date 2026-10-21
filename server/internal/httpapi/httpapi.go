@@ -191,6 +191,7 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 	mux.HandleFunc("POST /api/v1/batches/{id}/cancel", a.cancelBatch)
 	mux.HandleFunc("POST /api/v1/batches/{id}/retry", a.retryBatch)
 	mux.HandleFunc("POST /api/v1/batches/{id}/items/{index}/cancel", a.cancelBatchItem)
+	mux.HandleFunc("GET /api/v1/history", a.listHistory)
 	mux.HandleFunc("GET /api/v1/jobs", a.listJobs)
 	mux.HandleFunc("GET /api/v1/jobs/{id}", a.getJob)
 	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", a.cancelJob)

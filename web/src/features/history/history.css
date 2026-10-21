@@ -1,0 +1,68 @@
+/* Jobs & history. Selectors are scoped under .history-* so they win over the
+   legacy batch card rules regardless of stylesheet order. */
+.history-filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-bottom: 10px; }
+.history-search-row { display: flex; gap: 8px; min-width: 0; }
+.history-search-row .search-box { min-width: 0; }
+.history-search-row .search-box { min-height: 44px; height: auto; }
+.history-search-row .search-box input { min-height: 40px; }
+.history-filters .clear-search { width: 32px; height: 32px; flex-shrink: 0; }
+.history-filters .filter-toggle { min-height: 44px; }
+.history-filter-panel { display: none; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: end; }
+.history-filter-panel.open { display: grid; }
+.history-filters .filter-field { display: grid; gap: 5px; font-size: 12px; color: var(--sub); font-weight: 600; min-width: 0; }
+.history-filters .filter-field .select-wrap { min-height: 44px; }
+.history-filters .reset-filters { justify-self: start; min-height: 36px; grid-column: 1 / -1; }
+.history-count { margin: 4px 0 10px; font-size: 13px; color: var(--muted); }
+.history-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+
+.history-entry { min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.history-entry.job-entry { display: grid; gap: 10px; padding: 14px; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main status" "profile actions" "date size"; align-items: start; }
+.job-entry .entry-main { grid-area: main; min-width: 0; display: grid; gap: 4px; }
+.job-entry .entry-title { overflow-wrap: anywhere; font-size: 14px; }
+.job-entry .entry-profile { grid-area: profile; min-width: 0; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12px; color: var(--text); }
+.job-entry .entry-profile small { margin: 0; display: inline; }
+.job-entry .entry-status { grid-area: status; display: grid; gap: 6px; justify-items: end; min-width: 0; max-width: 46vw; }
+.job-entry .entry-status .error-hint { text-align: right; overflow-wrap: anywhere; }
+.job-entry .entry-date, .job-entry .entry-size { font-size: 12px; color: var(--sub); display: grid; gap: 3px; min-width: 0; }
+.job-entry .entry-date { grid-area: date; }
+.job-entry .entry-size { grid-area: size; justify-items: end; }
+.job-entry .entry-date small { color: var(--muted); }
+.job-entry .row-actions { grid-area: actions; display: flex; gap: 6px; justify-content: flex-end; }
+.job-entry .row-actions:empty { display: none; }
+.job-entry .row-actions { align-self: center; }
+.job-entry .icon-btn { min-width: 44px; min-height: 44px; }
+
+.history-entry.batch-history-card > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: start; padding: 14px; }
+.history-entry.batch-history-card .batch-summary-main { grid-column: 1; }
+.history-entry.batch-history-card .batch-summary-counts { grid-column: 2; grid-row: 1; flex-direction: column; align-items: flex-end; }
+.history-entry.batch-history-card .batch-summary-counts small { display: block; }
+.history-entry.batch-history-card .batch-file-hint { font-size: 13px; overflow-wrap: anywhere; color: var(--text); }
+.history-entry.batch-history-card .batch-progress { grid-column: 1 / -1; }
+.batch-state-line { display: inline-flex; align-items: center; gap: 6px; }
+.batch-chevron { color: var(--muted); transition: transform .15s; }
+.batch-history-card[open] .batch-chevron { transform: rotate(180deg); }
+.batch-progress { display: flex; height: 5px; border-radius: 4px; overflow: hidden; background: var(--line); }
+.batch-progress .ok { background: var(--accent); }
+.batch-progress .bad { background: #bd514b; }
+.batch-progress .skip { background: var(--muted); }
+.history-entry.batch-history-card .icon-btn { min-width: 44px; min-height: 44px; }
+.history-entry.batch-history-card .batch-card-actions .secondary { min-height: 40px; }
+.history-entry.batch-history-card .batch-id { font-size: 11px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.history-entry .job-savings { color: var(--accent-dark); display: block; }
+
+.state-pill.partial { color: #a47727; background: #fff5df; }
+:root[data-theme=dark] .state-pill.partial { background: #433722; color: #e8c677; }
+.history-list + .pagination { margin-top: 14px; }
+
+@media (min-width: 720px) {
+  .history-search-row .filter-toggle { display: none; }
+  .history-filter-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .history-filters .reset-filters { grid-column: auto; }
+  .history-filter-panel .filter-field .select-wrap, .history-search-row .search-box { min-height: 37px; }
+  .history-entry.job-entry { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.3fr) minmax(0, 1.1fr) minmax(0, 1.2fr) minmax(0, 1fr) auto; grid-template-areas: "main profile status date size actions"; align-items: center; gap: 14px; padding: 12px 16px; }
+  .job-entry .entry-status { justify-items: start; max-width: none; }
+  .job-entry .entry-status .error-hint { text-align: left; }
+  .job-entry .entry-size { justify-items: start; }
+  .job-entry .icon-btn { min-width: 36px; min-height: 36px; }
+}
+@media (prefers-reduced-motion: reduce) { .history-entry * { transition: none !important; } }

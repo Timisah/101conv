@@ -2,6 +2,14 @@ const { chromium } = require('./node_modules/playwright-core');
 const fs = require('node:fs/promises');
 const assert = require('node:assert/strict');
 
+async function searchHistory(page, text) {
+  // The history list keeps showing the previous results until the filtered
+  // response arrives, so wait for that response and for the list to settle.
+  const response = page.waitForResponse(r => r.url().includes('/api/v1/history') && r.url().includes('q=' + encodeURIComponent(text)), { timeout: 15000 });
+  await page.getByLabel('Search jobs').fill(text);
+  await response;
+  await page.waitForFunction(() => !/Loading/.test(document.querySelector('.history-count')?.textContent || 'Loading'), null, { timeout: 15000 });
+}
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', args: ['--no-sandbox','--disable-dev-shm-usage'] });
   const errors = [];
@@ -360,25 +368,32 @@ const assert = require('node:assert/strict');
     const userJobs=await userPage.evaluate(async()=>fetch('/api/v1/jobs?limit=100').then(r=>r.json()));
     assert.equal(userJobs.jobs.some(job=>ownerJobIDs.has(job.id)),false,'second owner history omits another owner’s jobs');
     await userContext.close();
-    await page.getByLabel('Search jobs').fill('ppm-pgm-grayscale');
+    await page.getByRole('combobox', { name: 'Type' }).selectOption('batch');
     await page.getByLabel('Filter jobs by status').selectOption('succeeded');
-    const row = page.locator('tr').filter({ hasText: 'ppm-pgm-grayscale' }).first();
-    try { await row.waitFor({ timeout: 15000 }); } catch (error) { console.error('job diagnostic',JSON.stringify({ids:await page.evaluate(()=>localStorage.getItem('101conv-job-ids')),body:(await page.locator('body').innerText()).slice(0,1200),apiResponses})); throw error; }
+    await searchHistory(page, 'ppm-pgm-grayscale');
+    const groupedConversion = page.locator('.batch-history-card').first();
+    try { await groupedConversion.waitFor({ timeout: 15000 }); } catch (error) { console.error('job diagnostic',JSON.stringify({ids:await page.evaluate(()=>localStorage.getItem('101conv-job-ids')),body:(await page.locator('body').innerText()).slice(0,1200),apiResponses})); throw error; }
+    await groupedConversion.locator(':scope > summary').click();
+    const row = groupedConversion.locator('.batch-item-row').filter({ hasText: 'ppm-pgm-grayscale' }).first();
+    await row.waitFor({ timeout: 15000 });
     await row.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 });
     const retentionJobId = (await row.locator('.job-id').first().textContent()).match(/[0-9a-f]{8}-[0-9a-f-]{27,}/i)?.[0];
     assert.ok(retentionJobId, 'conversion job id is available for retention verification');
     if (process.env.SMOKE_OUTPUT_DIR) await fs.writeFile(process.env.SMOKE_OUTPUT_DIR + '/retention-job-id', retentionJobId);
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 15000 }),
-      row.getByRole('button', { name: 'Download result' }).click()
+      row.getByRole('button', { name: 'Download this result' }).click()
     ]);
     const path = await download.path();
     assert.ok(path, 'result file was downloaded');
     const result = await fs.readFile(path, 'utf8');
     assert.match(result, /^P2\n2 1\n255\n/);
     assert.match(result, /\b76\s+150\s/);
-    await page.getByLabel('Search jobs').fill('pnm-pgm-alternate');
-    const alternateRow = page.locator('tr').filter({ hasText: 'pnm-pgm-alternate' }).first();
+    await searchHistory(page, 'pnm-pgm-alternate');
+    const alternateCard = page.locator('.batch-history-card').first();
+    await alternateCard.waitFor({ timeout: 15000 });
+    await alternateCard.locator(':scope > summary').click();
+    const alternateRow = alternateCard.locator('.batch-item-row').filter({ hasText: 'pnm-pgm-alternate' }).first();
     await alternateRow.waitFor({ timeout: 15000 });
     await alternateRow.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 });
 
@@ -395,11 +410,14 @@ const assert = require('node:assert/strict');
     await page.getByRole('button', { name: /Compress 1 file/ }).click();
     await page.getByText(/Compression batch created: 1 item\(s\) submitted/).waitFor({ timeout: 10000 });
     await page.getByRole('link', { name: 'Jobs & history' }).click();
-    await page.getByLabel('Search jobs').fill('ppm-pgm-compress');
+    await page.getByRole('combobox', { name: 'Type' }).selectOption('batch');
     await page.getByLabel('Filter jobs by status').selectOption('');
-    const compressedRow = page.locator('tr').filter({ hasText: 'ppm-pgm-compress' }).first();
+    await searchHistory(page, 'ppm-pgm-compress');
+    const compressedBatch = page.locator('.batch-history-card').filter({ hasText: 'Compression batch' }).first();
+    await compressedBatch.waitFor({ timeout: 15000 });
+    await compressedBatch.locator(':scope > summary').click();
+    const compressedRow = compressedBatch.locator('.batch-item-row').filter({ hasText: 'ppm-pgm-compress' }).first();
     await compressedRow.waitFor({ timeout: 15000 });
-    await compressedRow.getByText(/^Compression ·/).waitFor();
     try { await compressedRow.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 }); } catch (error) { console.error('compression job diagnostic', (await compressedRow.innerText()).slice(0,1000)); throw error; }
 
     // Use a completely separate browser context to exercise the public guest

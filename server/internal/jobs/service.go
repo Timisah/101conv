@@ -133,6 +133,7 @@ CREATE INDEX IF NOT EXISTS conv_jobs_upload_idx ON conv_jobs(upload_id);
 ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_id TEXT;
 ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_item_index INTEGER;
 ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_submission_pending BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS conv_jobs_standalone_history_idx ON conv_jobs(owner_id, created_at DESC) WHERE batch_id IS NULL;
 CREATE TABLE IF NOT EXISTS conv_batches (
  id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('convert','compress')),
  idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued',

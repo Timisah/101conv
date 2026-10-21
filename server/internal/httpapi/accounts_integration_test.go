@@ -436,6 +436,30 @@ func TestPostgresAnonymousSessionIsolationAndAdministrativeBoundaries(t *testing
 		t.Fatalf("guest job listing leaked another guest's jobs: HTTP %d %s", resp.StatusCode, payload)
 	}
 	resp.Body.Close()
+	resp = call(second, http.MethodGet, "/api/v1/history", nil, "")
+	var history struct {
+		Entries []json.RawMessage `json:"entries"`
+		Total   int               `json:"total"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&history) != nil || len(history.Entries) != 0 || history.Total != 0 {
+		payload, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("guest history leaked another guest's entries: HTTP %d %s", resp.StatusCode, payload)
+	}
+	resp.Body.Close()
+	for path, want := range map[string]int{
+		"/api/v1/history?owner=someone-else":      http.StatusForbidden,
+		"/api/v1/history?limit=0":                 http.StatusBadRequest,
+		"/api/v1/history?from=yesterday":          http.StatusBadRequest,
+		"/api/v1/history?type=group":              http.StatusBadRequest,
+		"/api/v1/history?status=partial&type=job": http.StatusBadRequest,
+	} {
+		resp = call(second, http.MethodGet, path, nil, "")
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Fatalf("guest %s returned %d, want %d", path, resp.StatusCode, want)
+		}
+	}
 	settings, err = accounts.AnonymousSettings(ctx)
 	if err != nil {
 		t.Fatal(err)

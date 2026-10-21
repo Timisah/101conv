@@ -903,6 +903,58 @@ paths:
         '403': { description: The account or API key cannot submit jobs }
         '404': { description: Upload is not owned by the caller or is unavailable }
         '429': { description: Guest submission rate limit exceeded }
+  /api/v1/history:
+    get:
+      summary: Unified Jobs & history stream of standalone jobs and batches
+      description: |
+        Newest first. A batch is one grouped entry (`type: batch`); its member jobs are never returned as separate entries and are reached through `GET /api/v1/batches/{id}`. Ownership comes from the credential: non-administrators only ever see their own entries and receive no owner fields. Administrators see every owner, receive `ownerId`/`ownerName`, and may narrow with `owner`. `GET /api/v1/jobs` and `GET /api/v1/batches` are unchanged.
+        Search (`q`) matches IDs (including a batch member's job ID), file names, profile IDs and formats. Time bounds are RFC 3339 timestamps.
+      security: [{ userAPIKey: [] }, { adminSession: [] }]
+      parameters:
+        - { in: query, name: mode, schema: { type: string, enum: [convert, compress] } }
+        - { in: query, name: type, schema: { type: string, enum: [job, batch] } }
+        - { in: query, name: status, description: '`partial` (some items succeeded, others did not) is valid for batches only.', schema: { type: string, enum: [queued, running, succeeded, failed, cancelled, partial] } }
+        - { in: query, name: q, schema: { type: string, maxLength: 120 } }
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - { in: query, name: owner, description: Administrators only; other callers receive 403., schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, maximum: 100000, default: 0 } }
+      responses:
+        '200':
+          description: One page of entries and the total number of matching entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, total, limit, offset]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, createdAt]
+                      properties:
+                        type: { type: string, enum: [job, batch] }
+                        createdAt: { type: string, format: date-time }
+                        fileName: { type: string, description: The job's input file, or the first file of a batch. }
+                        ownerId: { type: string, description: Administrators only. }
+                        ownerName: { type: string, description: Administrators only. }
+                        job: { type: object, description: Present when type is job. }
+                        batch: { type: object, description: Present when type is batch; items are omitted. }
+                        totals:
+                          type: object
+                          description: Summed input/output sizes of a batch's succeeded items.
+                          properties:
+                            inputBytes: { type: integer }
+                            outputBytes: { type: integer }
+                            savedBytes: { type: integer }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        '400': { description: Invalid filter, timestamp or paging value }
+        '401': { description: Authentication required }
+        '403': { description: The owner filter requires an administrator }
   /api/v1/jobs:
     get:
       summary: List durable jobs with optional status and text filters

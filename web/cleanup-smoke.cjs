@@ -37,9 +37,14 @@ const assert = require('node:assert/strict');
     const resultStatus = await page.evaluate(async id => (await fetch('/api/v1/jobs/' + id + '/result')).status, process.env.RETENTION_JOB_ID);
     assert.equal(resultStatus, 410, 'cleanup expires the result endpoint without deleting job history');
     await page.goto(process.env.SMOKE_BASE + '/jobs', { waitUntil: 'networkidle' });
+    const retentionSearch = page.waitForResponse(r => r.url().includes('/api/v1/history') && r.url().includes('q=' + process.env.RETENTION_JOB_ID), { timeout: 15000 });
     await page.getByLabel('Search jobs').fill(process.env.RETENTION_JOB_ID);
+    await retentionSearch;
     await page.getByLabel('Filter jobs by status').selectOption('succeeded');
-    await page.getByText('Result expired', { exact: true }).waitFor();
+    const retainedBatch = page.locator('.batch-history-card').first();
+    await retainedBatch.waitFor({ timeout: 15000 });
+    await retainedBatch.locator(':scope > summary').click();
+    await retainedBatch.getByText('Result expired', { exact: true }).waitFor();
     await context.close();
     console.log('Browser verified retention preview, cleanup confirmation, expired result response, and retained job history.');
   } finally {
