@@ -283,9 +283,15 @@ const assert = require('node:assert/strict');
       const result=await fetch('/api/v1/jobs/'+item.jobId+'/result');
       return result.ok;
     },hostileBatch.id,{timeout:60000});
-    const safeZipResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id+'/results.zip',{headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN}});
-    assert.equal(safeZipResponse.status,200,'hostile-name batch ZIP is downloadable');
-    const safeZip=Buffer.from(await safeZipResponse.arrayBuffer()).toString('latin1');
+    const adminHeaders={Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN};
+    const adminBatchResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id,{headers:adminHeaders});
+    const adminBatch=await adminBatchResponse.json();
+    const adminItem=adminBatch.items?.[0];
+    const adminResultResponse=adminItem?.jobId?await fetch(base+'/api/v1/jobs/'+adminItem.jobId+'/result',{headers:adminHeaders}):null;
+    const safeZipResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id+'/results.zip',{headers:adminHeaders});
+    const safeZipBody=Buffer.from(await safeZipResponse.arrayBuffer());
+    assert.equal(safeZipResponse.status,200,'hostile-name batch ZIP is downloadable: '+JSON.stringify({batchStatus:adminBatchResponse.status,batchState:{state:adminBatch.state,succeeded:adminBatch.succeeded,items:adminBatch.items?.map(item=>({state:item.state,jobId:item.jobId,resultState:item.job?.resultState}))},resultStatus:adminResultResponse?.status,zipBody:safeZipBody.toString('utf8').slice(0,200)}));
+    const safeZip=safeZipBody.toString('latin1');
     assert.match(safeZip,/item-001-[0-9a-f-]{36}\.pgm/,'ZIP uses a generated safe item name');
     assert.equal(safeZip.includes('../escape'),false,'ZIP does not contain a client-controlled path');
 
