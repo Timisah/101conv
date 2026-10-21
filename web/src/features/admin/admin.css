@@ -57,7 +57,7 @@ section.access-panel select { appearance: none; -webkit-appearance: none; paddin
 .session-timeout-form .admin-field { flex: 1 1 280px; max-width: 440px; }
 
 /* Automations editor: everyday fields first, tuning behind disclosure; inputs match the rest of the app. */
-.automation-form input:not([type=checkbox]):not([type=radio]), .automation-form textarea { min-height: 40px; border: 1px solid var(--line2); border-radius: 6px; background: var(--surface); color: var(--text); padding: 0 10px; font-size: 14px; }
+.automation-form input:not([type=checkbox]):not([type=radio]), .automation-form textarea, .drive-test > input { min-height: 40px; border: 1px solid var(--line2); border-radius: 6px; background: var(--surface); color: var(--text); padding: 0 10px; font-size: 14px; }
 .automation-form textarea { padding: 10px; }
 .automation-form select { min-height: 40px; }
 .auto-advanced { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
