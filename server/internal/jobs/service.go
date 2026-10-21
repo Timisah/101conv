@@ -923,6 +923,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 	var qualityMin, qualityMax, qualityStep float64
 	var qualityHigherBetter bool
 	var qualityAttempts int
+	var fixedQuality string
 	var preserveResolution, preserveHDR bool
 	streamSelection, hdrPolicy, dynamicHDRPolicy := rule.StreamSelection, rule.HDRPolicy, rule.DynamicHDRPolicy
 	preserveMetadata := rule.PreserveMetadata
@@ -974,6 +975,13 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 				}
 				qualityAttempts = compressionConfig.TargetSizeAttempts
 			}
+		} else if qualityKey := compressionConfig.TargetQualityOption; qualityKey != "" {
+			// No size limit was requested: encode once at the chosen quality
+			// rather than searching, and freeze that value in the job.
+			fixedQuality = optionValues[qualityKey]
+			if fixedQuality == "" {
+				return Job{}, false, fmt.Errorf("%w: compression quality option %q is required", ErrInvalidInput, qualityKey)
+			}
 		}
 		if preserveResolution || preserveHDR || streamSelection != "" || preserveMetadata || dynamicHDRPolicy != "" {
 			probeRelative = engineDef.Executables[compressionConfig.ProbeExecutable]
@@ -1002,7 +1010,7 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			return Job{}, false, err
 		}
 	}
-	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && compressionConfig.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts, PreserveResolution: preserveResolution, PreserveHDR: preserveHDR, StreamSelection: streamSelection, PreserveMetadata: preserveMetadata, HDRPolicy: hdrPolicy, DynamicHDRPolicy: dynamicHDRPolicy}
+	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && compressionConfig.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts, CompressionFixedQuality: fixedQuality, PreserveResolution: preserveResolution, PreserveHDR: preserveHDR, StreamSelection: streamSelection, PreserveMetadata: preserveMetadata, HDRPolicy: hdrPolicy, DynamicHDRPolicy: dynamicHDRPolicy}
 	specBytes, err := json.Marshal(spec)
 	if err != nil {
 		return Job{}, false, err
@@ -1174,6 +1182,11 @@ func validateCompressionOptions(config profile.CompressionConfig, requested map[
 		value := option.Default
 		if supplied, ok := requested[option.Key]; ok {
 			value = strings.TrimSpace(supplied)
+		}
+		if option.Optional && value == "" {
+			// An optional option left blank applies no constraint; it is
+			// deliberately absent from the frozen option values.
+			continue
 		}
 		switch option.Type {
 		case "number":

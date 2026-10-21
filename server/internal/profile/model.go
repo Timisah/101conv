@@ -96,6 +96,11 @@ type OptionDefinition struct {
 	Step         *float64 `json:"step,omitempty"`
 	Choices      []string `json:"choices,omitempty"`
 	TargetSizeMB bool     `json:"targetSizeMb,omitempty"`
+	// Optional marks a numeric target-size option whose absence (an empty
+	// value) means "no limit". Its Default must be empty so that a client which
+	// never touches the control cannot impose a cap, and it is only valid on
+	// compression profiles that can run at one fixed quality without a target.
+	Optional bool `json:"optional,omitempty"`
 }
 
 type EngineRequirement struct {
@@ -236,6 +241,11 @@ func (d Definition) Validate() error {
 		}
 		if err := validateOptions(rule.Options); err != nil {
 			return fmt.Errorf("rule %d options: %w", i, err)
+		}
+		for _, option := range rule.Options {
+			if option.Optional {
+				return fmt.Errorf("rule %d option %q: only compression target-size options may be optional", i, option.Key)
+			}
 		}
 		if err := validateOptions(rule.CompressionOptions); err != nil {
 			return fmt.Errorf("rule %d compression options: %w", i, err)
@@ -418,6 +428,12 @@ func validateCompressionConfig(c CompressionConfig, rules []ConversionRule) erro
 			}
 			if option.Step != nil && *option.Step <= 0 {
 				return fmt.Errorf("compression option %q has an invalid step", option.Key)
+			}
+			if option.Optional {
+				if err := validateOptionalTargetSize(option, c.TargetQualityOption != ""); err != nil {
+					return err
+				}
+				break
 			}
 			defaultValue, err := parseOptionNumber(option.Default)
 			if err != nil || defaultValue < *option.Min || defaultValue > *option.Max {
@@ -611,6 +627,15 @@ func validateOptions(options []OptionDefinition) error {
 			if option.Min == nil || option.Max == nil || *option.Min > *option.Max {
 				return fmt.Errorf("option %q requires a valid numeric range", option.Key)
 			}
+			if option.Optional {
+				// Rule-scoped compression options are validated here; the
+				// fixed-quality requirement is enforced with the rule's
+				// effective compression configuration.
+				if err := validateOptionalTargetSize(option, true); err != nil {
+					return err
+				}
+				break
+			}
 			value, err := parseOptionNumber(option.Default)
 			if err != nil || value < *option.Min || value > *option.Max {
 				return fmt.Errorf("option %q has an invalid default", option.Key)
@@ -643,6 +668,26 @@ func validateOptions(options []OptionDefinition) error {
 		default:
 			return fmt.Errorf("option %q uses unsupported type %q", option.Key, option.Type)
 		}
+	}
+	return nil
+}
+
+// validateOptionalTargetSize checks the narrow shape of an optional option: a
+// numeric target-size control with an empty default, usable only when the
+// profile can fall back to one fixed quality setting. Optional is never a
+// general "skip validation" escape hatch.
+func validateOptionalTargetSize(option OptionDefinition, hasFixedQuality bool) error {
+	if !option.TargetSizeMB || option.Type != "number" {
+		return fmt.Errorf("option %q: only numeric target-size options may be optional", option.Key)
+	}
+	if option.Default != "" {
+		return fmt.Errorf("option %q: an optional target size must have an empty default so no limit is applied unless requested", option.Key)
+	}
+	if !hasFixedQuality {
+		return fmt.Errorf("option %q: an optional target size requires a quality option that can run without a target", option.Key)
+	}
+	if option.Step != nil && *option.Step <= 0 {
+		return fmt.Errorf("option %q has an invalid step", option.Key)
 	}
 	return nil
 }

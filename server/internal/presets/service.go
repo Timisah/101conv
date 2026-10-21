@@ -376,6 +376,9 @@ func validateOptions(provider capability.Provider, values map[string]string) err
 		if !ok {
 			return fmt.Errorf("%w: option %q is not declared by the selected provider", ErrIncompatible, key)
 		}
+		if option.Optional && strings.TrimSpace(value) == "" {
+			continue // blank means "not set" (for example, no maximum output size)
+		}
 		if option.Type == "select" {
 			valid := false
 			for _, choice := range option.Choices {

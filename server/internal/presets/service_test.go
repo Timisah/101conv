@@ -40,6 +40,25 @@ func TestValidateOptionsHonorsTypedProviderSchema(t *testing.T) {
 	}
 }
 
+func TestValidateOptionsAllowsBlankOptionalOnly(t *testing.T) {
+	min, max := 1.0, 200.0
+	provider := capability.Provider{Capabilities: []capability.ProviderCapability{{Options: []capability.Option{
+		{Key: "targetSizeMb", Type: "number", Min: &min, Max: &max, TargetSizeMB: true, Optional: true},
+		{Key: "quality", Type: "number", Min: &min, Max: &max},
+	}}}}
+	if err := validateOptions(provider, map[string]string{"targetSizeMb": "", "quality": "80"}); err != nil {
+		t.Fatalf("a blank optional maximum must be accepted: %v", err)
+	}
+	if err := validateOptions(provider, map[string]string{"targetSizeMb": "2"}); err != nil {
+		t.Fatalf("an explicit maximum must be accepted: %v", err)
+	}
+	for _, values := range []map[string]string{{"targetSizeMb": "0"}, {"targetSizeMb": "x"}, {"quality": ""}} {
+		if !errors.Is(validateOptions(provider, values), ErrIncompatible) {
+			t.Errorf("expected options %v to be rejected", values)
+		}
+	}
+}
+
 func TestNewIDIsUUIDShape(t *testing.T) {
 	id, err := newID()
 	if err != nil {

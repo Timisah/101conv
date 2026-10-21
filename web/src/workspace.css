@@ -363,3 +363,6 @@ select option { color: var(--text); background: var(--surface); }
   .document-preview-surface { min-height: 220px; }
   .document-preview-frame { height: 360px; }
 }
+
+.optional-tag { font-weight: 400; color: var(--muted); }
+.compression-number::placeholder { color: var(--muted); opacity: 1; }

@@ -112,6 +112,7 @@ type ExecutionSpec struct {
 	CompressionQualityStep         float64  `json:"compressionQualityStep,omitempty"`
 	CompressionQualityHigherBetter bool     `json:"compressionQualityHigherIsBetter,omitempty"`
 	CompressionQualityAttempts     int      `json:"compressionQualityAttempts,omitempty"`
+	CompressionFixedQuality        string   `json:"compressionFixedQuality,omitempty"` // single frozen quality when no target size is requested
 	PreserveResolution             bool     `json:"preserveResolution,omitempty"`
 	PreserveHDR                    bool     `json:"preserveHDR,omitempty"`
 	StreamSelection                string   `json:"streamSelection,omitempty"`

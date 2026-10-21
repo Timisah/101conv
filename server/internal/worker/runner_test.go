@@ -247,3 +247,67 @@ func TestProcessRunnerUsesBoundedAdaptiveQualitySearch(t *testing.T) {
 		t.Fatalf("quality search did not retain the best fitting quality: output size=%d", result.Size)
 	}
 }
+
+func TestProcessRunnerEncodesOnceAtFixedQualityWithoutTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("container worker is Linux")
+	}
+	root := t.TempDir()
+	engineDir := filepath.Join(root, "engines", "quality", "1.0.0")
+	if err := os.MkdirAll(engineDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(engineDir, "quality")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "../../testdata/quality-converter")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build quality converter: %v\n%s", err, output)
+	}
+	inputRoot := filepath.Join(root, "uploads")
+	if err := os.MkdirAll(inputRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	inputID := "99999999-9999-4999-8999-999999999999"
+	input := make([]byte, 1000)
+	if err := os.WriteFile(filepath.Join(inputRoot, inputID), input, 0600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(input)
+	runner := &ProcessRunner{EngineRoot: filepath.Join(root, "engines"), UploadRoot: inputRoot, ResultRoot: filepath.Join(root, "results"), WorkRoot: filepath.Join(root, "work"), Timeout: 5 * time.Second}
+	base := Invocation{
+		JobID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Attempt: 1, InputID: inputID,
+		EngineID: "quality", EngineVersion: "1.0.0", ExecutableRelativePath: "quality",
+		Arguments:            []string{"{source}", "{compression.args}", "{target}"},
+		CompressionArguments: []string{"--quality={compression.quality}"}, RequireSmaller: true,
+		TargetExtension: "jxl", ExpectedInputSHA256: hex.EncodeToString(digest[:]), ExpectedInputSize: int64(len(input)),
+	}
+
+	// No target size: the frozen quality is used as-is, with no search and no cap.
+	fixed := base
+	fixed.CompressionFixedQuality = "85"
+	result, err := runner.Run(context.Background(), fixed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(20 + 85*4); result.Size != want {
+		t.Fatalf("fixed-quality output size=%d, want %d", result.Size, want)
+	}
+
+	// A quality placeholder with neither a search nor a fixed value must fail
+	// closed rather than encode with an unresolved token.
+	if _, err = runner.Run(context.Background(), base); err == nil {
+		t.Fatal("a quality placeholder without a resolved quality must be rejected")
+	}
+
+	// A fixed quality may not be combined with the adaptive search, and must be numeric.
+	conflicting := fixed
+	conflicting.TargetSizeBytes = 256
+	conflicting.CompressionQualityMin, conflicting.CompressionQualityMax, conflicting.CompressionQualityStep = 1, 100, 1
+	if _, err = runner.Run(context.Background(), conflicting); err == nil {
+		t.Fatal("fixed quality combined with adaptive search must be rejected")
+	}
+	invalid := base
+	invalid.CompressionFixedQuality = "85;rm"
+	if _, err = runner.Run(context.Background(), invalid); err == nil {
+		t.Fatal("non-numeric fixed quality must be rejected")
+	}
+}

@@ -31,6 +31,8 @@ type Option struct {
 	Step         *float64 `json:"step,omitempty"`
 	Choices      []string `json:"choices,omitempty"`
 	TargetSizeMB bool     `json:"targetSizeMb,omitempty"`
+	// Optional means an empty value is valid and applies no limit.
+	Optional bool `json:"optional,omitempty"`
 }
 
 // ProviderCapability describes one operation mapping implemented by a
@@ -370,7 +372,7 @@ func normalizeFormat(value string) string {
 func copyOptions(options []profile.OptionDefinition) []Option {
 	result := make([]Option, 0, len(options))
 	for _, item := range options {
-		result = append(result, Option{Key: item.Key, Label: item.Label, Type: item.Type, Default: item.Default, Min: item.Min, Max: item.Max, Step: item.Step, Choices: append([]string(nil), item.Choices...), TargetSizeMB: item.TargetSizeMB})
+		result = append(result, Option{Key: item.Key, Label: item.Label, Type: item.Type, Default: item.Default, Min: item.Min, Max: item.Max, Step: item.Step, Choices: append([]string(nil), item.Choices...), TargetSizeMB: item.TargetSizeMB, Optional: item.Optional})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Key < result[j].Key })
 	return result

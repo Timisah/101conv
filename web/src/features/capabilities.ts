@@ -1,4 +1,4 @@
-export type CapabilityOption = { key: string; label: string; type: 'number' | 'select' | 'boolean'; default: string; min?: number; max?: number; step?: number; choices?: string[]; targetSizeMb?: boolean };
+export type CapabilityOption = { key: string; label: string; type: 'number' | 'select' | 'boolean'; default: string; min?: number; max?: number; step?: number; choices?: string[]; targetSizeMb?: boolean; optional?: boolean };
 export type CanonicalCapability = { id: string; operation: 'convert' | 'compress'; sourceFormat: string; targetFormat: string; providerIds: string[] };
 export type CanonicalProviderCapability = { capabilityId: string; options?: CapabilityOption[] };
 export type CanonicalProvider = { id: string; profileId: string; version: string; name: string; description?: string; license?: string; engineId: string; engineVersion?: string; enabled: boolean; installed: boolean; available: boolean; capabilities: CanonicalProviderCapability[] };
@@ -78,4 +78,11 @@ export const unavailableCapabilityMessage = (catalog: CapabilityCatalog, operati
   const declared = catalog.capabilities.filter(capability => capability.operation === operation && normalizedSources.every(source => catalog.capabilities.some(candidate => candidate.operation === operation && candidate.sourceFormat === source && candidate.targetFormat === capability.targetFormat)));
   if (!declared.length) return `No verified ${operation} capability is declared for ${normalizedSources.map(source => `.${source}`).join(', ')}.`;
   return `A ${operation} capability is declared for these files, but no enabled installed provider can produce a common output. An administrator can install or enable the required engine and profile.`;
+};
+
+// Optional controls left blank mean "not set". They are omitted from requests
+// and saved presets so an untouched field can never impose a limit.
+export const withoutBlankOptionalValues = (values: Record<string, string>, schema: CapabilityOption[]) => {
+  const optional = new Set(schema.filter(option => option.optional).map(option => option.key));
+  return Object.fromEntries(Object.entries(values).filter(([key, value]) => !optional.has(key) || value.trim() !== ''));
 };

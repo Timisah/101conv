@@ -49,6 +49,7 @@ type Invocation struct {
 	CompressionQualityStep         float64
 	CompressionQualityHigherBetter bool
 	CompressionQualityAttempts     int
+	CompressionFixedQuality        string // single quality to encode with when no target size was requested
 	PreserveResolution             bool
 	PreserveHDR                    bool
 	StreamSelection                string
@@ -102,6 +103,12 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	}
 	if adaptiveQuality && (math.IsNaN(in.CompressionQualityMin) || math.IsNaN(in.CompressionQualityMax) || math.IsNaN(in.CompressionQualityStep) || math.IsInf(in.CompressionQualityMin, 0) || math.IsInf(in.CompressionQualityMax, 0) || math.IsInf(in.CompressionQualityStep, 0) || in.CompressionQualityMin > in.CompressionQualityMax || in.CompressionQualityStep <= 0) {
 		return Result{}, fmt.Errorf("invalid adaptive compression quality settings")
+	}
+	if in.CompressionFixedQuality != "" {
+		fixed, parseErr := strconv.ParseFloat(in.CompressionFixedQuality, 64)
+		if parseErr != nil || math.IsNaN(fixed) || math.IsInf(fixed, 0) || adaptiveQuality {
+			return Result{}, fmt.Errorf("invalid fixed compression quality")
+		}
 	}
 	engineRoot, err := filepath.EvalSymlinks(r.EngineRoot)
 	if err != nil {
@@ -371,7 +378,7 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 			}
 		}
 	} else {
-		selected, err = runConverter(filepath.Join(work, "output."+in.TargetExtension), "")
+		selected, err = runConverter(filepath.Join(work, "output."+in.TargetExtension), in.CompressionFixedQuality)
 		if err != nil {
 			return Result{Stdout: selected.stdout, Stderr: selected.stderr}, err
 		}

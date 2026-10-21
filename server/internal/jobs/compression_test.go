@@ -30,6 +30,51 @@ func TestValidateCompressionOptionsAndArgumentExpansion(t *testing.T) {
 	}
 }
 
+func TestOptionalTargetSizeAppliesNoLimitUnlessRequested(t *testing.T) {
+	qMin, qMax, qStep := 1.0, 100.0, 1.0
+	sMin, sMax, sStep := 1.0, 200.0, 1.0
+	config := profile.CompressionConfig{
+		TargetQualityOption: "quality",
+		Options: []profile.OptionDefinition{
+			{Key: "quality", Label: "Quality", Type: "number", Default: "85", Min: &qMin, Max: &qMax, Step: &qStep},
+			{Key: "targetSizeMb", Label: "Maximum output size (MB)", Type: "number", Default: "", Min: &sMin, Max: &sMax, Step: &sStep, TargetSizeMB: true, Optional: true},
+		},
+	}
+	for name, requested := range map[string]map[string]string{"absent": nil, "blank": {"targetSizeMb": ""}, "whitespace": {"targetSizeMb": "  "}} {
+		values, targetBytes, err := validateCompressionOptions(config, requested)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if targetBytes != 0 {
+			t.Fatalf("%s: an unset optional maximum must not impose a cap, got %d bytes", name, targetBytes)
+		}
+		if _, present := values["targetSizeMb"]; present {
+			t.Fatalf("%s: an unset optional maximum must be absent from the frozen options: %v", name, values)
+		}
+		if values["quality"] != "85" {
+			t.Fatalf("%s: quality default was not preserved: %v", name, values)
+		}
+	}
+	values, targetBytes, err := validateCompressionOptions(config, map[string]string{"targetSizeMb": "2"})
+	if err != nil || targetBytes != 2<<20 || values["targetSizeMb"] != "2" {
+		t.Fatalf("explicit cap values=%v bytes=%d err=%v", values, targetBytes, err)
+	}
+	if _, _, err = validateCompressionOptions(config, map[string]string{"targetSizeMb": "0"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("an out-of-range explicit cap must still be rejected: %v", err)
+	}
+	if _, _, err = validateCompressionOptions(config, map[string]string{"targetSizeMb": "abc"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("a non-numeric explicit cap must still be rejected: %v", err)
+	}
+	// Non-optional options keep rejecting blank values (older profile releases).
+	legacy := profile.CompressionConfig{Options: []profile.OptionDefinition{{Key: "targetSizeMb", Label: "Target", Type: "number", Default: "8", Min: &sMin, Max: &sMax, Step: &sStep, TargetSizeMB: true}}}
+	if _, _, err = validateCompressionOptions(legacy, map[string]string{"targetSizeMb": ""}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("a blank non-optional target must still be rejected: %v", err)
+	}
+	if _, targetBytes, err = validateCompressionOptions(legacy, nil); err != nil || targetBytes != 8<<20 {
+		t.Fatalf("legacy default must be unchanged: bytes=%d err=%v", targetBytes, err)
+	}
+}
+
 func TestAllocateCompressionBudget(t *testing.T) {
 	items := []compressionBudgetItem{
 		{SizeBytes: 100, MinMB: 1, MaxMB: 20},

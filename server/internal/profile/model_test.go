@@ -213,3 +213,55 @@ func TestConversionRuleOptionsAreTypedAndBoundToArgv(t *testing.T) {
 		t.Fatal("undeclared embedded option should be rejected")
 	}
 }
+
+func TestOptionalTargetSizeIsNarrowlyDefined(t *testing.T) {
+	qMin, qMax, qStep := 1.0, 100.0, 1.0
+	sMin, sMax, sStep := 1.0, 200.0, 1.0
+	build := func() Definition {
+		return Definition{
+			SchemaVersion: 1, Type: TypeCompression, ID: "optional-target", Version: "1.0.0", Name: "Optional target",
+			Engines: []EngineRequirement{{EngineID: "jpeg-xl"}},
+			Compression: &CompressionConfig{
+				TargetQualityOption: "quality", TargetQualityHigherBetter: true, TargetSizeAttempts: 8,
+				Options: []OptionDefinition{
+					{Key: "quality", Label: "Quality", Type: "number", Default: "85", Min: &qMin, Max: &qMax, Step: &qStep},
+					{Key: "targetSizeMb", Label: "Maximum output size (MB)", Type: "number", Default: "", Min: &sMin, Max: &sMax, Step: &sStep, TargetSizeMB: true, Optional: true},
+				},
+			},
+			Rules: []ConversionRule{{EngineID: "jpeg-xl", Executable: "cjxl", Sources: []string{"jpg"}, Targets: []string{"jxl"}, Arguments: []string{"{source}", "{compression.args}", "{target}"}, CompressionArguments: []string{"-q", "{compression.quality}"}}},
+		}
+	}
+	definition := build()
+	if err := definition.Validate(); err != nil {
+		t.Fatalf("a blank-by-default optional maximum size must be valid: %v", err)
+	}
+
+	hidden := build()
+	hidden.Compression.Options[1].Default = "8"
+	if err := hidden.Validate(); err == nil {
+		t.Fatal("an optional target size with a non-empty default would silently impose a cap")
+	}
+
+	notTarget := build()
+	notTarget.Compression.Options[0].Optional = true
+	if err := notTarget.Validate(); err == nil {
+		t.Fatal("only target-size options may be optional")
+	}
+
+	noFixedQuality := build()
+	noFixedQuality.Compression.TargetQualityOption = ""
+	noFixedQuality.Compression.ProbeExecutable, noFixedQuality.Compression.AudioBitrateKbps, noFixedQuality.Compression.MinimumVideoKbps = "ffprobe", 128, 100
+	if err := noFixedQuality.Validate(); err == nil {
+		t.Fatal("an optional target size needs a quality option that can run without a target")
+	}
+
+	conversion := Definition{
+		SchemaVersion: 1, Type: TypeConversion, ID: "conv", Version: "1.0.0", Name: "Conversion",
+		Engines: []EngineRequirement{{EngineID: "ffmpeg"}},
+		Rules: []ConversionRule{{EngineID: "ffmpeg", Executable: "ffmpeg", Sources: []string{"png"}, Targets: []string{"webp"}, Arguments: []string{"-i", "{source}", "{target}"},
+			Options: []OptionDefinition{{Key: "size", Label: "Size", Type: "number", Default: "", Min: &sMin, Max: &sMax, TargetSizeMB: true, Optional: true}}}},
+	}
+	if err := conversion.Validate(); err == nil {
+		t.Fatal("conversion options must not be optional")
+	}
+}

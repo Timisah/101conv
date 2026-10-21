@@ -13,6 +13,7 @@ The Go catalog exposes separate conversion and compression profiles:
 - **FFmpeg Audio/Video Conversion** and **FFmpeg Audio/Video Compression** share one FFmpeg engine installation.
 - **JPEG XL Image Conversion** and **JPEG XL Image Compression** share one JPEG XL engine installation.
 - **FFmpeg Image Conversion 1.1.0** uses the same pinned LGPL FFmpeg engine for JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF mappings verified against the selected build. It is published at a new immutable target path while 1.0.0 remains available for older installations and clients. Rules are target-specific: JPEG uses FFmpeg quantizer quality, PNG uses compression level, WebP uses libwebp quality, AVIF uses libaom CRF, and TIFF/BMP/GIF expose no controls that their encoders ignore. Still-image targets select the first frame; WebP and GIF preserve animation; AVIF is encoded as one still image.
+- **FFmpeg Image Compression 1.1.0** (and **JPEG XL Image Compression 1.1.0**) make the per-file maximum output size optional and blank by default: no size limit applies unless the user or a saved preset sets one, and the job encodes once at the chosen quality. When a maximum is set, the bounded search keeps the highest quality that fits. Release 1.0.0 of each profile remains published at its original immutable path with the previous 8 MB default for installations that have not updated, queued jobs and pinned automations.
 - **FFmpeg Image Compression 1.0.0** is a separate compression-only provider backed by that same engine. It declares JPEG→JPEG, JPEG→WebP, and JPEG→AVIF (plus the corresponding verified image inputs) as real compression capabilities, with rule-scoped JPEG/WebP/AVIF quality, PNG compression-level, metadata, and bounded target-size controls. Compression keeps source pixel dimensions and intentionally emits still images. The canonical capability API combines this provider with JPEG XL without exposing competing technical profiles in the novice workspace.
 
 Their engine/profile manifests live under `catalog/targets/`. The package SHA-256 values were checked against the upstream release bytes. FFmpeg is the LGPL BtbN build; JPEG XL is the upstream BSD-3-Clause build. Review the upstream notices and local legal obligations before publishing.
@@ -123,6 +124,8 @@ performs a bounded quality search and hard-checks the final artifact size.
 `targetSizeAttempts` is capped at twelve and defaults to eight. These controls
 do not promise exact sizes for every codec, and unsupported or infeasible
 targets must fail rather than publish an oversized result.
+
+A numeric target-size option may set `"optional": true` with an empty `"default": ""`. Leaving it blank applies no limit and omits it from the frozen job options; Core instead freezes the selected quality value (`compressionFixedQuality`) and the Worker encodes once with it. `optional` is valid only on numeric `targetSizeMb` options of profiles that declare a `targetQualityOption`, never on conversion options, and an explicit value is still range- and step-checked.
 
 Video compression profiles may additionally set `preserveResolution` and
 `preserveHDR`. Either flag requires `probeExecutable`; the Worker uses one

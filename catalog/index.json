@@ -96,11 +96,29 @@
       "maximumAppVersionExclusive": "1.0.0"
     },
     {
+      "id": "jpeg-xl-compression-linux-amd64",
+      "version": "1.1.0",
+      "name": "JPEG XL Image Compression",
+      "description": "JPEG XL Image Compression settings using the shared jpeg-xl engine installation.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/jpeg-xl-compression-linux-amd64-1.1.0.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
       "id": "ffmpeg-image-compression-linux-amd64",
       "version": "1.0.0",
       "name": "FFmpeg Image Compression",
       "description": "Verified JPEG, PNG, WebP, and AVIF image compression through the pinned LGPL FFmpeg build. Output keeps the source pixel dimensions; AVIF is encoded as a still image.",
       "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-image-compression-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
+      "id": "ffmpeg-image-compression-linux-amd64",
+      "version": "1.1.0",
+      "name": "FFmpeg Image Compression",
+      "description": "Verified JPEG, PNG, WebP, and AVIF image compression through the pinned LGPL FFmpeg build. Output keeps the source pixel dimensions; AVIF is encoded as a still image.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-image-compression-linux-amd64-1.1.0.json",
       "minimumAppVersion": "0.1.0",
       "maximumAppVersionExclusive": "1.0.0"
     },
