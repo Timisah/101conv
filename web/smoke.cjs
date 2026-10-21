@@ -421,7 +421,7 @@ const assert = require('node:assert/strict');
     await guestPage.getByRole('heading', { name: 'Sign in' }).waitFor();
     assert.equal(await guestPage.locator('.guest-continue').count(), 0, 'the sign-in page is reached only through the sign-in action');
     await guestPage.goto(base, { waitUntil: 'networkidle' });
-    await guestPage.locator('.guest-mode-indicator').waitFor();
+    await guestPage.locator('.guest-mode-indicator').waitFor({ state: 'attached' });
     await guestPage.locator('input[type=file]').setInputFiles([
       { name: 'guest-one.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm },
       { name: 'guest-two.pnm', mimeType: 'image/x-portable-anymap', buffer: ppm }
