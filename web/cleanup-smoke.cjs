@@ -4,6 +4,15 @@ const assert = require('node:assert/strict');
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   try {
+    async function expectResponse(request, action, label) {
+      const response = await Promise.all([
+        page.waitForResponse(candidate => candidate.url().includes(request.url) && candidate.request().method() === request.method),
+        action(),
+      ]).then(([candidate]) => candidate);
+      const body = await response.text().catch(() => '');
+      assert.equal(response.status(), request.status, `${label}: ${body}`);
+      return body;
+    }
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const page = await context.newPage();
     page.on('pageerror', error => { throw error; });
@@ -18,25 +27,13 @@ const assert = require('node:assert/strict');
     const row = page.locator('.retention-policy-row').filter({ hasText: 'Successful results' });
     await page.getByLabel('Successful results policy').selectOption('after_days');
     await page.getByLabel('Successful results days').fill('1');
-    await Promise.all([
-      page.waitForResponse(response => response.url().includes('/api/v1/storage/cleanup/preview') && response.status() === 200),
-      row.getByRole('button', { name: 'Preview' }).click()
-    ]);
+    await expectResponse({url: '/api/v1/storage/cleanup/preview', method: 'GET', status: 200}, () => row.getByRole('button', { name: 'Preview' }).click(), 'initial cleanup preview');
     await page.getByText(/Preview: [1-9]\d* candidates, about/).waitFor();
-    await Promise.all([
-      page.waitForResponse(response => response.url().includes('/api/v1/storage/retention') && response.request().method() === 'PUT' && response.status() === 200),
-      row.getByRole('button', { name: 'Save' }).click()
-    ]);
-    await Promise.all([
-      page.waitForResponse(response => response.url().includes('/api/v1/storage/cleanup/preview') && response.status() === 200),
-      row.getByRole('button', { name: 'Preview' }).click()
-    ]);
+    await expectResponse({url: '/api/v1/storage/retention', method: 'PUT', status: 200}, () => row.getByRole('button', { name: 'Save' }).click(), 'save retention policy');
+    await expectResponse({url: '/api/v1/storage/cleanup/preview', method: 'GET', status: 200}, () => row.getByRole('button', { name: 'Preview' }).click(), 'post-save cleanup preview');
     await page.getByText(/Preview: [1-9]\d* candidates, about/).waitFor();
     await page.evaluate(() => { window.confirm = () => true; });
-    await Promise.all([
-      page.waitForResponse(response => response.url().includes('/api/v1/storage/cleanup') && response.request().method() === 'POST' && response.status() === 200),
-      row.getByRole('button', { name: 'Clean up' }).click()
-    ]);
+    await expectResponse({url: '/api/v1/storage/cleanup', method: 'POST', status: 200}, () => row.getByRole('button', { name: 'Clean up' }).click(), 'apply cleanup');
     const resultStatus = await page.evaluate(async id => (await fetch('/api/v1/jobs/' + id + '/result')).status, process.env.RETENTION_JOB_ID);
     assert.equal(resultStatus, 410, 'cleanup expires the result endpoint without deleting job history');
     await page.goto(process.env.SMOKE_BASE + '/jobs', { waitUntil: 'networkidle' });

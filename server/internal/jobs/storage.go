@@ -245,6 +245,7 @@ func (s *Service) GetRetentionPolicy(ctx context.Context) (RetentionPolicy, erro
 	if days.Valid {
 		v := int(days.Int64)
 		p.AbandonedUploadDays = &v
+		p.Unsubmitted.Days = &v
 	}
 	if !days.Valid && p.Unsubmitted.Mode == "after_days" {
 		p.Unsubmitted.Mode = "manual"

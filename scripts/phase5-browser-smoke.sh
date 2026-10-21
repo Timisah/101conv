@@ -237,8 +237,18 @@ docker run --rm --network none --user 0:0 \
     chown 65532:65532 /smoke-mounts /smoke-mounts/incoming /smoke-mounts/converted
     chmod 0750 /smoke-mounts /smoke-mounts/incoming /smoke-mounts/converted
   '
+worker_role_init="$tmp_root/01-worker-role.sh"
+cp "$repo_root/db/init/01-worker-role.sh" "$worker_role_init"
+chmod 0755 "$worker_role_init"
 cat >"$tmp_root/compose.override.yaml" <<YAML
 services:
+  postgres:
+    volumes: !override
+      - postgres-data:/var/lib/postgresql/data
+      - type: bind
+        source: ${worker_role_init}
+        target: /docker-entrypoint-initdb.d/01-worker-role.sh
+        read_only: true
   core:
     build: null
     image: ${SMOKE_IMAGE}

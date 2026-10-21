@@ -34,7 +34,23 @@ See [MASTER_PLAN.md](MASTER_PLAN.md), [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md)
 
 ### Automated verification present
 
-CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinned FFmpeg image verification, Docker browser acceptance, isolated restore, and the new `document-conversion` runtime verification stage. A separate reviewer reported local successful checks for frontend, Go, Compose and document runtime, but this ledger has **not independently established latest GitHub Actions run status**. Report the exact run URL/result before marking CI green.
+CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinned FFmpeg image verification, Docker browser acceptance, isolated restore, and the new `document-conversion` runtime verification stage. The current local/container results are recorded below; the latest GitHub Actions run status is still not independently established. Report the exact run URL/result before marking remote CI green.
+
+### 2026-10-21 stabilization verification (local/container)
+
+The current stabilization worktree was independently exercised on 2026-10-21 with disposable containers and no production data:
+
+- `go test -p 1 ./... -count=1` passed with a disposable PostgreSQL 17 database, including automation, HTTP API, jobs, and Worker integration tests. The pinned-toolchain race suite and `go vet -p 1 ./...` also passed; the race/vet pass was run without the integration database environment.
+- The focused PostgreSQL retention regression passed after confirming that an `after_days` unsubmitted-upload policy round-trips with its day count intact.
+- `npm ci --ignore-scripts --strict-ssl=true`, `npm run lint`, `npm run build`, `node web/public-smoke.cjs`, and `node web/ui-smoke.cjs` passed. UI coverage included Document Creator preview/PDF generation, Inspector, upload/submit flows, guest limits, mobile navigation, theme, nested drag targets, and sign-in errors.
+- Compatibility catalog synchronization, Compose security, upload-proxy boundary checks, and the pinned FFmpeg image matrix passed. The FFmpeg matrix covered seven inputs and nine targets, including dimensions, signatures, animated GIF behavior, and corrupt-input failure.
+- `scripts/verify-documents.sh` passed the Office/text/PDF runtime matrix, corrupt/encrypted/no-text cases, concurrency/output limits, and guest/authenticated document jobs.
+- The full browser smoke passed setup, guest mobile isolation/downloads, ownership, fair two-slot scheduling, 20-file mixed batches, retry/cancellation/ZIP, conversion/compression, retention cleanup, restart persistence, mobile layouts, automation recovery after a Core kill, and Worker crash recovery. It exported a verified full backup and image pair.
+- `scripts/test-restore.sh --conversion-smoke` passed against that exported backup and exact tested images: restored 2 users, 1 engine, 5 profiles, 39 jobs, and verified a fixture conversion.
+
+GitHub Actions run URLs and live pull-request state were not independently retrievable from this environment: GitHub API requests returned HTTP 403, although Git refs were fetchable. No remote green CI result is claimed here.
+
+Repository reconciliation: the image capability work is already present on the current main line at `9b74d0c`, so the divergent image pull request was not merged wholesale. The compatible smoke-test synchronization from the follow-up ref was applied to this worktree. Live PR status and closure could not be verified or changed while GitHub API access returned HTTP 403.
 
 ## Confirmed issues at reviewed HEAD — address before general public launch
 
@@ -54,7 +70,7 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 
 ## Planned, not yet implemented as generally available
 
-- P1 capability/provider migration and saved presets: implemented in the completion commit. The remaining release gate is remote CI and browser evidence; the deployment continues to retain legacy profile IDs as a migration boundary.
+- P1 capability/provider migration and saved presets: implemented in the completion commit. Browser evidence is now recorded above; the remaining release gate is remote CI, while the deployment continues to retain legacy profile IDs as a migration boundary.
 - Metadata-based automation conditions, richer media controls, and engine-specific optional GPU execution.
 - Document Creator: the first Build editor now provides non-destructive page ordering, thumbnails, ordered preview, and browser-local PDF generation for raster image pages; server-side PDF/Office expansion and merging, saved/expiring projects, and fidelity-tested exporter output remain planned.
 - Full visual Automation branches and broader blueprint library beyond the supported typed flow.
@@ -123,9 +139,8 @@ Evidence: `server/internal/automation/graph.go`,
 `server/internal/automation/extensions.go`, the additive automation migration,
 `server/internal/httpapi/automation.go`, `web/src/App.tsx`, and
 `docs/architecture/automations-c1.md`. Focused Go and HTTP tests, frontend
-lint/build, theme smoke, and UI smoke pass. The full Go suite currently has one
-environment-sensitive pre-existing Worker media-probe failure; no production or
-remote CI verification is claimed.
+lint/build, theme smoke, UI smoke, and the full disposable-PostgreSQL Go suite
+pass locally. No production or remote CI verification is claimed.
 
 ## P2 progress in the current worktree (not deployment evidence)
 
@@ -175,7 +190,9 @@ The P2 scope is implemented and source-verified in this worktree:
 
 ### Focused image-capability follow-up — 2026-10-21
 
-The current worktree also corrects the image compression capability boundary:
+The current main baseline contains the image compression capability work from
+`9b74d0c`; the stabilization changes below verify and document that baseline
+without duplicating its production implementation:
 
 - A separate pinned-FFmpeg image-compression profile exposes same-format JPEG
   recompression plus PNG, WebP, and AVIF outputs. Its rules publish
@@ -185,15 +202,15 @@ The current worktree also corrects the image compression capability boundary:
   display JPEG quality and a WebP mapping uses its own quality direction.
   Convert and Compress derive formats and automatic-provider summaries from
   the capability catalog; profile selection remains an Advanced override.
-- The pinned FFmpeg verification script now exercises the image encoder
-  arguments, signatures, dimensions, same-format JPEG size reduction, and
-  corrupt-input rejection. Local host FFmpeg smoke output was also produced,
-  but it used the host's 7.1.5 binary rather than the catalog's pinned 9.x
-  artifact.
-- Catalog generation and shell/JSON consistency checks pass in this
-  worktree. Go tests/gofmt and the frontend lint/type/build were not runnable
-  in this environment because no real Go toolchain/gofmt was present and the
-  dependency install did not complete. No remote GitHub Actions result is
+- The pinned FFmpeg verification script exercises the image encoder arguments,
+  signatures, dimensions, same-format JPEG size reduction, and corrupt-input
+  rejection. The pinned matrix passed locally with seven inputs and nine
+  targets. Browser UI coverage used the deterministic PPM fixture; live
+  JPEG/WebP/AVIF/JPEG XL provider conversions were not independently exercised
+  through the UI.
+- Catalog generation and shell/JSON consistency checks pass in this worktree.
+  The Go toolchain and frontend checks were run in pinned containers because
+  the host Go command is not a compiler. No remote GitHub Actions result is
   claimed.
 
 Evidence: `server/internal/worker/runner.go`,
@@ -207,6 +224,6 @@ HDR10+/Dolby Vision compatibility remain unverified release risks.
 
 **Next:** obtain remote CI evidence, tighten the Worker compatibility grants after schema review, and execute the owner-controlled trust-root ceremony when release ownership is ready. Keep the deployment classified as trusted single tenant/small team until those gates and the public-demo threat model are accepted.
 
-The 2026-10-20 local release pass rebuilt the pinned Core, Worker, and Web images, migrated the managed Worker login, passed the Go suite/vet, upload ingress, Compose security, catalog, FFmpeg matrix, and document runtime unit checks. The document HTTP stage stopped on disposable PostgreSQL `ENOSPC`, and browser/restore was deliberately not started below its 8 GiB free-space preflight; both remain remote-CI gates.
+The 2026-10-21 stabilization pass rebuilt the pinned Core, Worker, Web, and browser images, migrated the managed Worker login, passed the full local/container gates listed above, and completed browser plus restore verification. Remote Actions evidence remains unavailable from this environment, and the official trust root remains owner-controlled and unpublished.
 
-The status ledger should be updated whenever a significant task is implemented **and verified**. Record the completion SHA, test URLs, compatibility impacts, completed/requested feature IDs and explicit outstanding risks. P0 release gates remain open: remote CI evidence, the owner-controlled TUF trust-root ceremony/publication, the document HTTP stage that stopped on disposable PostgreSQL `ENOSPC`, and browser/restore gates below their 8 GiB preflight.
+The status ledger should be updated whenever a significant task is implemented **and verified**. Record the completion SHA, test URLs, compatibility impacts, completed/requested feature IDs and explicit outstanding risks. P0 release gates remain open for remote CI evidence and the owner-controlled TUF trust-root ceremony/publication. Keep the deployment classified as trusted single tenant/small team until those gates and the public-demo threat model are accepted.

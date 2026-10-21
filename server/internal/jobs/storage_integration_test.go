@@ -233,9 +233,14 @@ func TestSuccessfulRetentionExpiresFilesButPreservesJobHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	days := 1
-	policy := RetentionPolicy{Unsubmitted: RetentionRule{Mode: "keep"}, SubmittedOriginals: RetentionRule{Mode: "after_success"}, SuccessfulResults: RetentionRule{Mode: "after_days", Days: &days}, FailedOriginals: RetentionRule{Mode: "keep"}, CanceledOriginals: RetentionRule{Mode: "keep"}}
+	unsubmittedDays := 7
+	policy := RetentionPolicy{Unsubmitted: RetentionRule{Mode: "after_days", Days: &unsubmittedDays}, SubmittedOriginals: RetentionRule{Mode: "after_success"}, SuccessfulResults: RetentionRule{Mode: "after_days", Days: &days}, FailedOriginals: RetentionRule{Mode: "keep"}, CanceledOriginals: RetentionRule{Mode: "keep"}}
 	if err = svc.SetRetentionPolicy(ctx, policy); err != nil {
 		t.Fatal(err)
+	}
+	reloadedPolicy, err := svc.GetRetentionPolicy(ctx)
+	if err != nil || reloadedPolicy.Unsubmitted.Mode != "after_days" || reloadedPolicy.Unsubmitted.Days == nil || *reloadedPolicy.Unsubmitted.Days != unsubmittedDays || reloadedPolicy.SuccessfulResults.Mode != "after_days" || reloadedPolicy.SuccessfulResults.Days == nil || *reloadedPolicy.SuccessfulResults.Days != days {
+		t.Fatalf("retention policy did not round-trip: %+v err=%v", reloadedPolicy, err)
 	}
 	originalPreview, err := svc.PreviewCleanupCategory(ctx, "successful_originals", 0)
 	if err != nil || originalPreview.Candidates != 1 {

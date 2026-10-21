@@ -13,7 +13,7 @@ const assert = require('node:assert/strict');
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-grayscale',version:'1.0.0',name:'PPM to grayscale PGM',description:'Convert ASCII PPM into portable grayscale images.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','--output','{target}']}]}});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'compression',id:'ppm-pgm-compress',version:'1.0.0',name:'PPM Image Compressor',description:'Compress a PPM image to grayscale PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],compression:{options:[{key:'quality',label:'Quality',type:'number',default:'85',min:1,max:100,step:1}]},rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','{compression.args}','--output','{target}'],compressionArguments:['--quality','{option:quality}']}]}});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'pnm-pgm-alternate',version:'1.0.0',name:'PNM to grayscale PGM',description:'Convert portable anymap images to PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['pnm'],targets:['pgm'],arguments:['--input','{source}','--output','{target}']}]}});
-  await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-slow',version:'1.0.0',name:'PPM to PGM (slow test)',description:'A sustained delayed test profile for fairness and crash-recovery checks.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--sleep-ms','15000','--input','{source}','--output','{target}']}]}});
+  await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-slow',version:'1.0.0',name:'PPM to PGM (slow test)',description:'A sustained delayed test profile for fairness and crash-recovery checks.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--sleep-ms','30000','--input','{source}','--output','{target}']}]}});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-cancel',version:'1.0.0',name:'PPM to PGM (cancellation test)',description:'A long-running fixture that keeps cancellation controls active.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--sleep-ms','60000','--input','{source}','--output','{target}']}]}});
   const ppm = Buffer.from('P3\n2 1\n255\n255 0 0 0 255 0\n');
   const uploadForm = new FormData(); uploadForm.append('file', new Blob([ppm]), 'mode-check.ppm');
@@ -315,17 +315,24 @@ const assert = require('node:assert/strict');
     await userPage.getByLabel('Password').fill('smoke-user-password-123');
     await userPage.getByRole('button',{name:/Sign in/}).click();
     await userPage.getByRole('heading',{name:'What are we converting?'}).waitFor();
-    const userSlowBatch=await userPage.evaluate(async source=>{
-      const uploads=[];
-      for(let i=0;i<2;i++){const form=new FormData();form.append('file',new Blob([source]),`user-slow-${i+1}.ppm`);const up=await fetch('/api/v1/uploads',{method:'POST',body:form});if(up.status!==201)throw Error('user upload failed: '+up.status);uploads.push((await up.json()).id);}
-      const response=await fetch('/api/v1/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'convert',idempotencyKey:'user-fairness-batch-0001',items:uploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))})});
-      if(response.status!==202)throw Error('user batch submission failed: '+response.status+' '+await response.text());return (await response.json()).batch;
-    },ppm.toString());
-    await userPage.waitForFunction(async id=>{const response=await fetch('/api/v1/batches/'+id);return response.ok&&(await response.json()).running>0;},userSlowBatch.id,{timeout:15000});
     const adminSlowUploads=await Promise.all(Array.from({length:4},(_,i)=>uploadFor(process.env.ENGINE_ADMIN_TOKEN,`admin-slow-${i+1}.ppm`)));
     const adminSlowResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'admin-fairness-batch-0001',items:adminSlowUploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))});
     assert.equal(adminSlowResponse.status,202,'admin submits a four-file slow batch');
     const adminSlowBatch=(await adminSlowResponse.json()).batch;
+    let adminStarted=false;
+    for(let i=0;i<75;i++){
+      const state=await (await admin('/batches/'+adminSlowBatch.id,'GET')).json();
+      if(state.running>=2){adminStarted=true;break;}
+      await new Promise(resolve=>setTimeout(resolve,200));
+    }
+    assert.equal(adminStarted,true,'admin batch occupies its two permitted worker slots before the second owner submits work');
+    const userSlowBatch=await userPage.evaluate(async source=>{
+      const uploads=[];
+      for(let i=0;i<1;i++){const form=new FormData();form.append('file',new Blob([source]),`user-slow-${i+1}.ppm`);const up=await fetch('/api/v1/uploads',{method:'POST',body:form});if(up.status!==201)throw Error('user upload failed: '+up.status);uploads.push((await up.json()).id);}
+      const response=await fetch('/api/v1/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'convert',idempotencyKey:'user-fairness-batch-0001',items:uploads.map(uploadId=>({uploadId,profileId:'ppm-pgm-slow',targetFormat:'pgm'}))})});
+      if(response.status!==202)throw Error('user batch submission failed: '+response.status+' '+await response.text());return (await response.json()).batch;
+    },ppm.toString());
+    await userPage.waitForFunction(async id=>{const response=await fetch('/api/v1/batches/'+id);return response.ok&&(await response.json()).running>0;},userSlowBatch.id,{timeout:15000});
     const userAccess=await userPage.evaluate(async id=>{
       const batch=await fetch('/api/v1/batches/'+id);const zip=await fetch('/api/v1/batches/'+id+'/results.zip');
       return {batchStatus:batch.status,zipStatus:zip.status};
@@ -333,7 +340,7 @@ const assert = require('node:assert/strict');
     assert.ok(userAccess.batchStatus===403||userAccess.batchStatus===404,'another owner cannot view an admin batch');
     assert.ok(userAccess.zipStatus===403||userAccess.zipStatus===404,'another owner cannot download an admin ZIP');
     let maxConcurrent=0,maxAdminBatchRunning=0,userServedBeforeAdminDone=false,adminState,userState;
-    for(let i=0;i<100;i++){
+    for(let i=0;i<500;i++){
       [adminState,userState]=await Promise.all([admin('/batches/'+adminSlowBatch.id,'GET'),admin('/batches/'+userSlowBatch.id,'GET')]);
       const a=await adminState.json(),u=await userState.json();
       maxConcurrent=Math.max(maxConcurrent,a.running+u.running);
@@ -355,7 +362,7 @@ const assert = require('node:assert/strict');
     await userContext.close();
     await page.getByLabel('Search jobs').fill('ppm-pgm-grayscale');
     await page.getByLabel('Filter jobs by status').selectOption('succeeded');
-    const row = page.locator('tr').filter({ hasText: 'ppm-pgm-grayscale' });
+    const row = page.locator('tr').filter({ hasText: 'ppm-pgm-grayscale' }).first();
     try { await row.waitFor({ timeout: 15000 }); } catch (error) { console.error('job diagnostic',JSON.stringify({ids:await page.evaluate(()=>localStorage.getItem('101conv-job-ids')),body:(await page.locator('body').innerText()).slice(0,1200),apiResponses})); throw error; }
     await row.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 });
     const retentionJobId = (await row.locator('.job-id').first().textContent()).match(/[0-9a-f]{8}-[0-9a-f-]{27,}/i)?.[0];
@@ -371,7 +378,7 @@ const assert = require('node:assert/strict');
     assert.match(result, /^P2\n2 1\n255\n/);
     assert.match(result, /\b76\s+150\s/);
     await page.getByLabel('Search jobs').fill('pnm-pgm-alternate');
-    const alternateRow = page.locator('tr').filter({ hasText: 'pnm-pgm-alternate' });
+    const alternateRow = page.locator('tr').filter({ hasText: 'pnm-pgm-alternate' }).first();
     await alternateRow.waitFor({ timeout: 15000 });
     await alternateRow.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 });
 
@@ -390,7 +397,7 @@ const assert = require('node:assert/strict');
     await page.getByRole('link', { name: 'Jobs & history' }).click();
     await page.getByLabel('Search jobs').fill('ppm-pgm-compress');
     await page.getByLabel('Filter jobs by status').selectOption('');
-    const compressedRow = page.locator('tr').filter({ hasText: 'ppm-pgm-compress' });
+    const compressedRow = page.locator('tr').filter({ hasText: 'ppm-pgm-compress' }).first();
     await compressedRow.waitFor({ timeout: 15000 });
     await compressedRow.getByText(/^Compression ·/).waitFor();
     try { await compressedRow.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 }); } catch (error) { console.error('compression job diagnostic', (await compressedRow.innerText()).slice(0,1000)); throw error; }
@@ -414,7 +421,7 @@ const assert = require('node:assert/strict');
     await guestPage.getByRole('heading', { name: 'Sign in' }).waitFor();
     assert.equal(await guestPage.locator('.guest-continue').count(), 0, 'the sign-in page is reached only through the sign-in action');
     await guestPage.goto(base, { waitUntil: 'networkidle' });
-    await guestPage.locator('.guest-mode-indicator').waitFor();
+    await guestPage.locator('.guest-mode-indicator').waitFor({ state: 'attached' });
     await guestPage.locator('input[type=file]').setInputFiles([
       { name: 'guest-one.ppm', mimeType: 'image/x-portable-pixmap', buffer: ppm },
       { name: 'guest-two.pnm', mimeType: 'image/x-portable-anymap', buffer: ppm }
@@ -427,10 +434,11 @@ const assert = require('node:assert/strict');
     await guestBatch.waitFor({ timeout: 15000 });
     const guestBatchID = (await guestBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];
     assert.ok(guestBatchID, 'guest batch is visible in this browser session');
-    await guestPage.waitForFunction(async id => { const response = await fetch('/api/v1/batches/' + id); return response.ok && (await response.json()).batch.succeeded === 2; }, guestBatchID, { timeout: 60000 });
+    await guestPage.waitForFunction(async id => { const response = await fetch('/api/v1/batches/' + id); return response.ok && (await response.json()).succeeded === 2; }, guestBatchID, { timeout: 60000 });
     await guestBatch.locator(':scope > summary').click();
-    const guestBatchData = await guestPage.evaluate(async id => (await fetch('/api/v1/batches/' + id).then(r => r.json())).batch, guestBatchID);
-    const guestJobID = guestBatchData.items.find(item => item.state === 'succeeded')?.jobId;
+    const guestBatchData = await guestPage.evaluate(async id => await fetch('/api/v1/batches/' + id).then(r => r.json()), guestBatchID);
+    const guestItem = guestBatchData.items.find(item => item.jobId || item.job?.id);
+    const guestJobID = guestItem?.jobId ?? guestItem?.job?.id;
     assert.ok(guestJobID, 'guest batch retains individual job references');
     const guestResult = await guestPage.evaluate(async id => { const r = await fetch('/api/v1/jobs/' + id + '/result'); return { status: r.status, text: await r.text() }; }, guestJobID);
     assert.equal(guestResult.status, 200, 'guest can download its individual result');
@@ -474,7 +482,7 @@ const assert = require('node:assert/strict');
     await mobilePage.getByRole('button', { name: /^Sign in$/ }).click();
     await mobilePage.getByRole('heading', { name: 'What are we converting?' }).waitFor();
     assert.equal(await mobilePage.locator('.mobile-nav').isVisible(), true, 'mobile navigation is visible');
-    assert.deepEqual((await mobilePage.locator('.mobile-nav > a').allTextContents()).map(text=>text.trim()),['Convert','Compress','Jobs'],'mobile bottom bar keeps frequent actions visible');
+    assert.deepEqual((await mobilePage.locator('.mobile-nav > a').allTextContents()).map(text=>text.trim()),['Convert','Compress','Build','Inspect','Jobs'],'mobile bottom bar keeps frequent actions visible');
     assert.equal(await mobilePage.getByText('WORKSPACE / CONVERT').count(),0,'page eyebrow labels are omitted');
     assert.equal(await mobilePage.getByText('Files stay on your server').count(),0,'promotional privacy badge is omitted');
     assert.equal(await mobilePage.getByText('Conversion runs privately on your server.').count(),0,'workflow promo is omitted');

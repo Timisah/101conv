@@ -9,7 +9,7 @@ docker image inspect "$SMOKE_IMAGE" >/dev/null
 docker image inspect "$BROWSER_IMAGE" >/dev/null
 backup_dir="$(realpath "$1")"
 "$(dirname "$0")/verify-backup.sh" "$backup_dir"
-restore_init_script="$(realpath "$(dirname "$0")/../db/init/01-worker-role.sh")"
+restore_init_script_source="$(realpath "$(dirname "$0")/../db/init/01-worker-role.sh")"
 original_project="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("project", ""))' "$backup_dir/manifest.json")"
 [[ -n "$original_project" ]] || { echo 'Backup manifest does not record its Compose project identity.' >&2; exit 1; }
 suffix="$(openssl rand -hex 6)"
@@ -17,6 +17,12 @@ project="101conv-restore-test-$suffix"
 volume_prefix="$project"
 check_dir="$(mktemp -d)"
 chmod 0755 "$check_dir"
+# Docker's PostgreSQL entrypoint runs this file as the postgres user. Keep the
+# repository source permissions intact while providing a readable disposable
+# bind-mounted copy for the isolated restore container.
+restore_init_script="$check_dir/01-worker-role.sh"
+cp "$restore_init_script_source" "$restore_init_script"
+chmod 0755 "$restore_init_script"
 if [[ -n "${RESTORE_ARTIFACT_DIR:-}" ]]; then mkdir -p "$RESTORE_ARTIFACT_DIR/checks"; fi
 compose_file="$check_dir/compose.yaml"
 restore_password="$(openssl rand -hex 24)"
@@ -92,7 +98,7 @@ services:
   core:
     image: ${RESTORE_IMAGE:?}
     environment:
-      APP_VERSION: restore-smoke
+      APP_VERSION: 0.1.0
       PORT: 5656
       DATA_PATH: /var/lib/101conv
       UPLOADS_PATH: /var/lib/101conv/uploads
