@@ -481,7 +481,7 @@ const assert = require('node:assert/strict');
     await mobilePage.getByRole('button', { name: /^Sign in$/ }).click();
     await mobilePage.getByRole('heading', { name: 'What are we converting?' }).waitFor();
     assert.equal(await mobilePage.locator('.mobile-nav').isVisible(), true, 'mobile navigation is visible');
-    assert.deepEqual((await mobilePage.locator('.mobile-nav > a').allTextContents()).map(text=>text.trim()),['Convert','Compress','Jobs'],'mobile bottom bar keeps frequent actions visible');
+    assert.deepEqual((await mobilePage.locator('.mobile-nav > a').allTextContents()).map(text=>text.trim()),['Convert','Compress','Build','Inspect','Jobs'],'mobile bottom bar keeps frequent actions visible');
     assert.equal(await mobilePage.getByText('WORKSPACE / CONVERT').count(),0,'page eyebrow labels are omitted');
     assert.equal(await mobilePage.getByText('Files stay on your server').count(),0,'promotional privacy badge is omitted');
     assert.equal(await mobilePage.getByText('Conversion runs privately on your server.').count(),0,'workflow promo is omitted');
