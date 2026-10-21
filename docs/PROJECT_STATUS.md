@@ -256,6 +256,19 @@ Evidence: `server/internal/worker/runner.go`,
 performed in this worktree. Production deployment and broad codec-specific
 HDR10+/Dolby Vision compatibility remain unverified release risks.
 
+## Owner-approved backlog additions — 2026-10-21 (not implemented)
+
+These items document product UX and reporting requests rather than verified deployed functionality:
+
+- **[FR-019](FEATURE_REQUESTS.md#fr-019--clear-profileengine-updates-and-catalog-lifecycle-ux) / [#23](https://github.com/Timisah/101conv/issues/23):** clearly distinguish new converter-profile installation from an available newer version, with admin update discovery, preview/compatibility, safe version retention and rollback. Existing catalog/version APIs are not a complete intuitive update experience; the reported JPG→JXL-only instance required installation of a **separate** FFmpeg Image Compression profile, not an update to JPEG XL.
+- **[FR-020](FEATURE_REQUESTS.md#fr-020--unified-filterable-jobs-and-history) / [#24](https://github.com/Timisah/101conv/issues/24):** a filterable Jobs & history page for independent/grouped-batch Convert/Compress jobs is implemented and CI-verified at [CI #107](https://github.com/Timisah/101conv/actions/runs/39597290879); deployment remains unverified. A visual thumbnail collage/details experience is now requested as FR-023; Batches remains secondary to unified history.
+- **[FR-021](FEATURE_REQUESTS.md#fr-021--admin-only-lifetime-processing-statistics) / [#25](https://github.com/Timisah/101conv/issues/25):** admin-only durable lifetime and per-user processed-data stats with reliable counting, retention-independent storage, privacy and honest legacy backfill.
+- **[FR-023](FEATURE_REQUESTS.md#fr-023--safe-upload-and-jobs-history-file-previews) / [#28](https://github.com/Timisah/101conv/issues/28):** requested image previews upon file selection, a recognizable thumbnail for single jobs, four-tile batch collages (three thumbnails +N) and expandable per-file original/result previews with individual/ZIP downloads. Privacy-safe thumbnail lifecycle and large-batch performance remain design/implementation tasks; **not implemented**.
+- **[FR-022](FEATURE_REQUESTS.md#fr-022--simple-metadata-controls-quiet-helper-copy-and-inline-downloads) / [#27](https://github.com/Timisah/101conv/issues/27):** the Preserve metadata checkbox, reduction of repeated explanatory copy and completed single-file/batch downloads on Convert/Compress are now implemented and CI-verified by [CI #112](https://github.com/Timisah/101conv/actions/runs/39600102181) and [main CI #114](https://github.com/Timisah/101conv/actions/runs/39601103435). Deployment, accessibility and real-file edge-case verification remain distinct.
+- **[FR-009](FEATURE_REQUESTS.md#fr-009--rich-image-compression-and-combined-batch-size-goal) / [#9](https://github.com/Timisah/101conv/issues/9) follow-up:** optional maximum size must be initially blank; when explicitly set, maximize feasible quality under the cap rather than over-compressing. The owner's 5 MB source / 2 MB requested maximum / ~0.5 MB result is a reproduction target; the existing implementation is not accepted as fully meeting this UX.
+
+These additions do not change P0 release gates. Newer [main CI #114](https://github.com/Timisah/101conv/actions/runs/39601103435) has now passed the full ten-job suite at main commit `2d55e2d`; this is code/CI verification, not evidence that the user's own deployed instance has upgraded or is configured with the newest profiles. The visual preview request (FR-023), lifecycle clarity (FR-019), and lifetime stats (FR-021) remain future work.
+
 ## Immediate implementation queue
 
 **Next:** execute the owner-controlled trust-root ceremony when release ownership is ready, then continue the targeted Worker compatibility-grant and public-demo threat-model audits. Keep the deployment classified as trusted single tenant/small team until those gates are accepted.
