@@ -1,6 +1,6 @@
 # Project Status — evidence-based implementation ledger
 
-**Review date:** 2026-10-20.  
+**Review date:** 2026-10-21.
 **Implementation baseline reviewed:** `517eaa1291f9aef7eaf5756d3f8c3100b5cca035` (P1 capability/provider and preset completion plus authorization/matching hardening); the earlier baseline was `3df147e9d1b65a0daf3f4dc5fc245b13a4406dbe`.
 **Maintenance note:** Documentation commits will advance HEAD beyond this baseline; this is *not* an assertion that the later documentation-only HEAD has been deployed or verified.
 
@@ -57,8 +57,8 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 - P1 capability/provider migration and saved presets: implemented in the completion commit. The remaining release gate is remote CI and browser evidence; the deployment continues to retain legacy profile IDs as a migration boundary.
 - Metadata-based automation conditions, richer media controls, and engine-specific optional GPU execution.
 - Document Creator: the first Build editor now provides non-destructive page ordering, thumbnails, ordered preview, and browser-local PDF generation for raster image pages; server-side PDF/Office expansion and merging, saved/expiring projects, and fidelity-tested exporter output remain planned.
-- Visual Automations blocks/branches and broader blueprint system.
-- Versioned extension installation/compatibility/rollback and Immich connector.
+- Full visual Automation branches and broader blueprint library beyond the supported typed flow.
+- Executable/remote extension packages, external application probing, and the Immich connector.
 - New brand/logo, domain-specific SEO/publication and rate-limited public demo.
 
 ## P4 progress in the current worktree (not deployment evidence)
@@ -102,6 +102,30 @@ and the focused acceleration/jobs tests.
 Evidence: `web/public/about/index.html`, `web/public/robots.txt`,
 `web/index.html`, `web/public-smoke.cjs`, and
 `docs/architecture/public-discoverability-p5.md`.
+
+## P6 progress in the current worktree (not deployment evidence)
+
+- Automations now expose a bounded typed graph alongside the existing flat C.1
+  definition. The graph validates node kinds, block pins, configuration limits,
+  acyclic/reachable connections, and rejects executable-looking configuration.
+  New revisions project the graph into the existing safe folder executor, while
+  legacy definitions receive a generated graph view without rewriting history.
+- The Automations screen now has a mobile-friendly visual flow view for trigger,
+  condition, action, and output blocks, with the existing detailed editor,
+  preview, run-now, history, and immutable-revision behavior retained.
+- Declarative extension manifests have a retained version table and admin-only
+  install/activate/rollback APIs. API compatibility is checked before
+  activation; incompatible versions stay retained and visible, and active
+  blocks are added to the typed block catalog. No extension package code is
+  downloaded or executed.
+
+Evidence: `server/internal/automation/graph.go`,
+`server/internal/automation/extensions.go`, the additive automation migration,
+`server/internal/httpapi/automation.go`, `web/src/App.tsx`, and
+`docs/architecture/automations-c1.md`. Focused Go and HTTP tests, frontend
+lint/build, theme smoke, and UI smoke pass. The full Go suite currently has one
+environment-sensitive pre-existing Worker media-probe failure; no production or
+remote CI verification is claimed.
 
 ## P2 progress in the current worktree (not deployment evidence)
 

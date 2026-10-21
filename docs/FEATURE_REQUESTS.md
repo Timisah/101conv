@@ -129,11 +129,24 @@ does not map GPU devices.
 **Acceptance:** typed triggers, conditional branches, Inspect/Convert/Compress/Build/Output blocks, explainable dry-run/history, schedules where safe, revision pinning and dedup; mobile functional version without desktop-only graph demands. Preserve existing automation engine and safe publication guarantees.  
 **Dependencies:** FR-006/010, current C.1 runtime.
 
+**Current worktree status:** The first P6 slice is implemented: bounded typed
+graph nodes/edges are stored alongside the legacy executor definition, the
+mobile-friendly visual flow editor is available, and existing previews,
+history, deduplication, immutable revisions, and safe publication remain in
+place. Full multi-action branching and a larger blueprint library remain open.
+
 ### FR-015 — Extensions marketplace and Immich
 
 **Goal:** install/update compatible connector packages independently of app version; Immich workflows through supported API.  
 **Acceptance:** manifests with app/provider compatibility, old compatible downloads, verified signatures/integrity, constrained permissions, secrets protection, configuration migration/rollback, only affected blocks paused when incompatible. Immich supported API media discovery/export/import only; no guaranteed in-place asset ID replacement or preservation of every tag/face relationship.  
 **Dependencies:** FR-014 and explicit extension security design.
+
+**Current worktree status:** Declarative extension manifest installation,
+API-range compatibility selection, retained releases, activation, rollback,
+and typed block catalog exposure are implemented. Remote package retrieval,
+signatures/permission isolation, migration runners, external application
+health, and Immich are deliberately deferred until the constrained extension
+security design is approved.
 
 ## P5 — identity, discoverability and optional public demo
 
