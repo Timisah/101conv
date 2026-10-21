@@ -40,6 +40,8 @@ This is a lightweight decision log, not a record of every implementation detail.
 
 | A-033 | Accepted product direction; not yet implemented | Simplify metadata and post-processing UX in Convert/Compress | Use a single **Preserve metadata** toggle with backed typed option mapping where supported, eliminate redundant helper copy without obscuring meaningful warnings, and expose authorized downloads inline on the initiating page after completed single/batch work. Keep Jobs & history as the secondary full archive, reuse result APIs, and preserve presets/job compatibility. FR-022; download navigation relates to FR-020. |
 
+| A-034 | Accepted product UX direction; implementation pending | Local upload previews and privacy-bound history thumbnails | Use immediate local previews for compatible images, safe fallbacks for unsupported files, a single thumbnail for one-file jobs and a four-tile batch overview (first three previews plus fourth +N when needed). Detail views list all authorized originals/results and individual/bulk downloads; preview data must be lazy, bounded, permission-scoped and deleted/expired with the underlying file. FR-023; extend FR-020/022 without inventing unsupported file renderers. |
+
 ## Decision-making process
 
 For a consequential design change, record: context/problem, proposed alternatives, backward compatibility, security and privacy consequences, mobile UX consequences, migration/rollback plan, test evidence and owner decision. Change an entry's status only after the choice is accepted. Do not quietly relabel proposals as shipped decisions.
