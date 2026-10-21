@@ -1,0 +1,21 @@
+/* Inline progress and results after submitting on Convert / Compress. */
+.submission-tracker { display: grid; gap: 10px; padding: 14px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); min-width: 0; }
+.submission-tracker.active { border-color: #3578a355; }
+.submission-tracker.error { grid-template-columns: auto 1fr auto; align-items: center; border-color: #bd514b55; }
+.submission-tracker.error > div { display: grid; gap: 2px; font-size: 14px; }
+.submission-tracker > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center; }
+.tracker-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--accent2); color: var(--accent-dark); }
+.tracker-title { display: grid; gap: 2px; min-width: 0; }
+.tracker-title b { font-size: 15px; overflow-wrap: anywhere; }
+.tracker-title span { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.tracker-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.tracker-actions .primary { min-height: 44px; }
+.tracker-size { font-size: 13px; color: var(--sub); }
+.tracker-files > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent); min-height: 36px; display: flex; align-items: center; }
+.tracker-files ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; }
+.tracker-files li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.tracker-files li small { display: block; margin-top: 2px; }
+.tracker-files li b { overflow-wrap: anywhere; }
+.tracker-files .icon-btn { min-width: 44px; min-height: 44px; }
+.submission-tracker > footer { font-size: 13px; }
+@media (max-width: 480px) { .submission-tracker > header { grid-template-columns: auto minmax(0, 1fr) auto; } .submission-tracker > header .state-pill { grid-column: 2; justify-self: start; } .submission-tracker > header .icon-btn { grid-row: 1; grid-column: 3; } }
