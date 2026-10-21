@@ -277,21 +277,26 @@ const assert = require('node:assert/strict');
     const hostileUpload=await hostileUploadResponse.json();
     const hostileBatchResponse=await admin('/batches','POST',{mode:'convert',idempotencyKey:'hostile-zip-test-001',items:[{uploadId:hostileUpload.id,targetFormat:'pgm'}]});
     const hostileBatch=(await hostileBatchResponse.json()).batch;
-    await page.waitForFunction(async id=>{
-      const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());
-      if(b.succeeded!==1||!b.items?.every(item=>item.job?.resultState==='available'))return false;
-      const item=b.items[0];
-      const result=await fetch('/api/v1/jobs/'+item.jobId+'/result');
-      return result.ok;
-    },hostileBatch.id,{timeout:60000});
     const adminHeaders={Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN};
-    const adminBatchResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id,{headers:adminHeaders});
-    const adminBatch=await adminBatchResponse.json();
-    const adminItem=adminBatch.items?.[0];
-    const adminResultResponse=adminItem?.jobId?await fetch(base+'/api/v1/jobs/'+adminItem.jobId+'/result',{headers:adminHeaders}):null;
+    let hostileStatus;
+    let hostileReady=false;
+    const hostileDeadline=Date.now()+60000;
+    while(Date.now()<hostileDeadline){
+      const batchResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id,{headers:adminHeaders});
+      hostileStatus={httpStatus:batchResponse.status,batch:await batchResponse.json()};
+      const item=hostileStatus.batch.items?.[0];
+      if(hostileStatus.batch.failed>0||hostileStatus.batch.cancelled>0)break;
+      if(hostileStatus.batch.succeeded===1&&item?.job?.resultState==='available'&&item.jobId){
+        const resultResponse=await fetch(base+'/api/v1/jobs/'+item.jobId+'/result',{headers:adminHeaders});
+        await resultResponse.arrayBuffer();
+        if(resultResponse.ok){hostileReady=true;break;}
+      }
+      await new Promise(resolve=>setTimeout(resolve,250));
+    }
+    assert.ok(hostileReady,'hostile-name result is downloadable before archive: '+JSON.stringify({httpStatus:hostileStatus?.httpStatus,batchState:{state:hostileStatus?.batch.state,succeeded:hostileStatus?.batch.succeeded,failed:hostileStatus?.batch.failed,cancelled:hostileStatus?.batch.cancelled,items:hostileStatus?.batch.items?.map(item=>({state:item.state,jobId:item.jobId,resultState:item.job?.resultState}))}}));
     const safeZipResponse=await fetch(base+'/api/v1/batches/'+hostileBatch.id+'/results.zip',{headers:adminHeaders});
     const safeZipBody=Buffer.from(await safeZipResponse.arrayBuffer());
-    assert.equal(safeZipResponse.status,200,'hostile-name batch ZIP is downloadable: '+JSON.stringify({batchStatus:adminBatchResponse.status,batchState:{state:adminBatch.state,succeeded:adminBatch.succeeded,items:adminBatch.items?.map(item=>({state:item.state,jobId:item.jobId,resultState:item.job?.resultState}))},resultStatus:adminResultResponse?.status,zipBody:safeZipBody.toString('utf8').slice(0,200)}));
+    assert.equal(safeZipResponse.status,200,'hostile-name batch ZIP is downloadable: '+JSON.stringify({batchState:{state:hostileStatus?.batch.state,succeeded:hostileStatus?.batch.succeeded,items:hostileStatus?.batch.items?.map(item=>({state:item.state,jobId:item.jobId,resultState:item.job?.resultState}))},zipBody:safeZipBody.toString('utf8').slice(0,200)}));
     const safeZip=safeZipBody.toString('latin1');
     assert.match(safeZip,/item-001-[0-9a-f-]{36}\.pgm/,'ZIP uses a generated safe item name');
     assert.equal(safeZip.includes('../escape'),false,'ZIP does not contain a client-controlled path');
