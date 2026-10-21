@@ -84,17 +84,20 @@ and the focused acceleration/jobs tests.
   Convert, Compress, Build, Inspect, and Automate descriptions, repository and
   sign-in links, a compact catalog-backed image/media/document capability
   summary, a copyable Docker quick start, responsive markup, keyboard skip
-  navigation, and no external analytics or scripts.
+  navigation, and no external analytics or scripts. It also ships a concise
+  credential-free `llms.txt` index for crawler and assistant discovery.
 - The README now carries a matching linked catalog matrix for GitHub-first
   discovery, with explicit document, media, animation, metadata, and fidelity
-  caveats.
+  caveats, plus a generated public-page screenshot.
 - The authenticated SPA shell is marked `noindex,nofollow`; `robots.txt`
-  allows only the public information page. No new brand, canonical domain,
-  sitemap publication, or public conversion demo has been selected.
+  allows only the public information page and `llms.txt`. No new brand,
+  canonical domain, sitemap publication, or public conversion demo has been
+  selected.
 - The production frontend build now runs `web/public-smoke.cjs` in CI to
   protect the static route, robots/no-index boundary, Schema.org metadata,
   workspace descriptions, quick-start content, and absence of remote page
-  assets.
+  assets; it also checks the README screenshot and `llms.txt` for unsafe
+  credential strings.
 
 Evidence: `web/public/about/index.html`, `web/public/robots.txt`,
 `web/index.html`, `web/public-smoke.cjs`, and

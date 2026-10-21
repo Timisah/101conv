@@ -154,10 +154,12 @@ static `/about/` page with responsive metadata, semantic Schema.org markup,
 accurate five-workspace descriptions, a compact catalog-backed capability
 summary, a copyable Docker quick start, repository/install links, and a robots
 policy that excludes authenticated/API paths. The README carries a matching
-format matrix with fidelity caveats. A post-build contract test covers the
-public route, no-index boundary, and quick-start content. Canonical and sitemap
-metadata remain deferred until a public domain and publication target are
-approved.
+format matrix with fidelity caveats and a real landing-page screenshot. A
+credential-free `llms.txt` index supports machine-readable discovery without
+claiming ranking or universal assistant support. A post-build contract test
+covers the public route, no-index boundary, quick-start content, README asset,
+and crawler index. Canonical and sitemap metadata remain deferred until a
+public domain and publication target are approved.
 
 ### FR-018 — Resource-limited public demo
 

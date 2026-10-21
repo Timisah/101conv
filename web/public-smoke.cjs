@@ -7,7 +7,9 @@ const read = relative => fs.readFileSync(path.join(dist, relative), 'utf8');
 const about = read('about/index.html');
 const app = read('index.html');
 const robots = read('robots.txt');
+const llms = read('llms.txt');
 const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+const screenshot = path.join(__dirname, '..', 'docs', 'assets', 'landing-page.png');
 
 assert.match(about, /^<!doctype html>/i);
 assert.match(about, /<title>101conv — A private file workspace<\/title>/);
@@ -15,6 +17,7 @@ assert.match(about, /<meta name="robots" content="index,follow" \/>/);
 assert.match(about, /itemtype="https:\/\/schema\.org\/SoftwareApplication"/);
 assert.match(about, /itemprop="applicationCategory" content="MultimediaApplication"/);
 assert.match(about, /itemprop="operatingSystem" content="Linux, Docker"/);
+assert.match(about, /<link rel="alternate" type="text\/plain" href="\/llms\.txt"/);
 assert.match(about, /<a class="skip-link" href="#main-content">Skip to content<\/a>/);
 assert.match(about, /id="main-content"/);
 assert.match(about, /git clone https:\/\/github\.com\/Timisah\/101conv\.git/);
@@ -35,8 +38,17 @@ for (const catalogArea of ['| Images |', '| Audio/video |', '| Documents |']) {
   assert.match(readme, new RegExp(`^${catalogArea.replace(/[|]/g, '\\|')}`, 'm'));
 }
 assert.match(readme, /docs\/profiles\/catalog-format\.md/);
+assert.match(readme, /!\[101conv public landing page\]\(docs\/assets\/landing-page\.png\)/);
+assert.ok(fs.statSync(screenshot).size > 1000, 'README landing screenshot is present');
+
+assert.match(llms, /^# 101conv$/m);
+for (const workspace of ['Convert', 'Compress', 'Build', 'Inspect', 'Automate']) {
+  assert.match(llms, new RegExp(`^- ${workspace}:`, 'm'));
+}
+assert.match(llms, /docs\/PROJECT_STATUS\.md/);
+assert.doesNotMatch(llms, /ENGINE_ADMIN_TOKEN|POSTGRES_PASSWORD|bearer\s+token/i);
 
 assert.match(app, /<meta name="robots" content="noindex,nofollow" \/>/);
-assert.match(robots, /^User-agent: \*\nDisallow: \/\nAllow: \/about\nAllow: \/about\/\n?$/);
+assert.match(robots, /^User-agent: \*\nDisallow: \/\nAllow: \/about\nAllow: \/about\/\nAllow: \/llms\.txt\n?$/);
 
 console.log('Public discovery build contract passed.');

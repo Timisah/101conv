@@ -10,6 +10,10 @@ The long-term product aims to make **Convert, Compress, Build, Inspect, and Auto
 
 The deployment includes a lightweight public information page at `/about/` for accurate project discovery. The authenticated workspace shell is excluded from indexing; no public conversion demo or new brand identity is implied by that page.
 
+![101conv public landing page](docs/assets/landing-page.png)
+
+The public page is also accompanied by a concise [`llms.txt`](web/public/llms.txt) project index for crawlers and assistant tools. It links to the repository's evidence-backed documentation and repeats the same capability limits; it does not expose private deployment data or claim guaranteed search placement.
+
 ### Verified catalog overview
 
 The official catalog is versioned and deployment-dependent: an installation exposes only the engines and profiles its administrator installs. These are the currently verified paths, not a promise that every format pair or fidelity property is universal.
