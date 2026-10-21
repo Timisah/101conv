@@ -362,7 +362,7 @@ const assert = require('node:assert/strict');
     await userContext.close();
     await page.getByLabel('Search jobs').fill('ppm-pgm-grayscale');
     await page.getByLabel('Filter jobs by status').selectOption('succeeded');
-    const row = page.locator('tr').filter({ hasText: 'ppm-pgm-grayscale' });
+    const row = page.locator('tr').filter({ hasText: 'ppm-pgm-grayscale' }).first();
     try { await row.waitFor({ timeout: 15000 }); } catch (error) { console.error('job diagnostic',JSON.stringify({ids:await page.evaluate(()=>localStorage.getItem('101conv-job-ids')),body:(await page.locator('body').innerText()).slice(0,1200),apiResponses})); throw error; }
     await row.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 });
     const retentionJobId = (await row.locator('.job-id').first().textContent()).match(/[0-9a-f]{8}-[0-9a-f-]{27,}/i)?.[0];
@@ -378,7 +378,7 @@ const assert = require('node:assert/strict');
     assert.match(result, /^P2\n2 1\n255\n/);
     assert.match(result, /\b76\s+150\s/);
     await page.getByLabel('Search jobs').fill('pnm-pgm-alternate');
-    const alternateRow = page.locator('tr').filter({ hasText: 'pnm-pgm-alternate' });
+    const alternateRow = page.locator('tr').filter({ hasText: 'pnm-pgm-alternate' }).first();
     await alternateRow.waitFor({ timeout: 15000 });
     await alternateRow.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 });
 
@@ -397,7 +397,7 @@ const assert = require('node:assert/strict');
     await page.getByRole('link', { name: 'Jobs & history' }).click();
     await page.getByLabel('Search jobs').fill('ppm-pgm-compress');
     await page.getByLabel('Filter jobs by status').selectOption('');
-    const compressedRow = page.locator('tr').filter({ hasText: 'ppm-pgm-compress' });
+    const compressedRow = page.locator('tr').filter({ hasText: 'ppm-pgm-compress' }).first();
     await compressedRow.waitFor({ timeout: 15000 });
     await compressedRow.getByText(/^Compression ·/).waitFor();
     try { await compressedRow.getByText('Succeeded', { exact: true }).waitFor({ timeout: 45000 }); } catch (error) { console.error('compression job diagnostic', (await compressedRow.innerText()).slice(0,1000)); throw error; }
