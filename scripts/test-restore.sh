@@ -92,7 +92,7 @@ services:
   core:
     image: ${RESTORE_IMAGE:?}
     environment:
-      APP_VERSION: restore-smoke
+      APP_VERSION: 0.0.0-restore-smoke
       PORT: 5656
       DATA_PATH: /var/lib/101conv
       UPLOADS_PATH: /var/lib/101conv/uploads
@@ -198,7 +198,10 @@ users="$("${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c 'SE
 jobs="$("${compose[@]}" exec -T postgres psql -U postgres -d 101conv -At -c 'SELECT count(*) FROM conv_jobs')"
 expired_uploads="$(wc -l < "$check_dir/expired-uploads.txt")"
 expired_results="$(wc -l < "$check_dir/expired-results.txt")"
-"${compose[@]}" up -d core worker
+if ! "${compose[@]}" up -d core worker; then
+  "${compose[@]}" logs --no-color --tail 120 core worker >&2 || true
+  exit 1
+fi
 wait_health() {
   local service="$1" id status
   id="$("${compose[@]}" ps -q "$service")"

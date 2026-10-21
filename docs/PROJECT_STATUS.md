@@ -1,8 +1,9 @@
 # Project Status — evidence-based implementation ledger
 
 **Review date:** 2026-10-21.
-**Implementation baseline reviewed:** `517eaa1291f9aef7eaf5756d3f8c3100b5cca035` (P1 capability/provider and preset completion plus authorization/matching hardening); the earlier baseline was `3df147e9d1b65a0daf3f4dc5fc245b13a4406dbe`.
-**Maintenance note:** Documentation commits will advance HEAD beyond this baseline; this is *not* an assertion that the later documentation-only HEAD has been deployed or verified.
+**Implementation baseline reviewed:** focused CI follow-up commit `2b62674b90ba166f8667cda1a08aeeae0c6a17fd`, including the retention compatibility fix, browser acceptance synchronization, backup-artifact permission preservation, and restore-fixture compatibility fixes. The preceding feature baseline was `517eaa1291f9aef7eaf5756d3f8c3100b5cca035`.
+**Remote CI evidence:** [CI run #98](https://github.com/Timisah/101conv/actions/runs/39585198155) passed every job, including Docker browser acceptance and isolated backup/restore conversion with a real post-restore conversion.
+**Maintenance note:** Documentation commits will advance HEAD beyond this baseline; this ledger records the verified run above, not an assertion that every later documentation-only HEAD has been deployed.
 
 See [MASTER_PLAN.md](MASTER_PLAN.md), [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md), [DECISIONS.md](DECISIONS.md).
 
@@ -34,13 +35,13 @@ See [MASTER_PLAN.md](MASTER_PLAN.md), [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md)
 
 ### Automated verification present
 
-CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinned FFmpeg image verification, Docker browser acceptance, isolated restore, and the new `document-conversion` runtime verification stage. A separate reviewer reported local successful checks for frontend, Go, Compose and document runtime, but this ledger has **not independently established latest GitHub Actions run status**. Report the exact run URL/result before marking CI green.
+CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinned FFmpeg image verification, Docker browser acceptance, isolated restore, and the `document-conversion` runtime verification stage. CI run #98 passed all of them; the browser job verified mobile guest conversion, ownership isolation, fair scheduling, batches, cancellation, retention, restart recovery and responsive layouts, and the dependent restore job verified private-volume restore plus a real conversion.
 
 ## Confirmed issues at reviewed HEAD — address before general public launch
 
-1. **[P0] Nginx upload size mismatch — fixed and ingress-verified.** The continuation working tree based on `5cfcbac` sets `client_max_body_size 1025m`, matching Core's 1 GiB plus 1 MiB multipart request bound. On 2026-10-20, `bash scripts/verify-upload-proxy.sh` passed Nginx config validation, forwarded an actual 1 GiB multipart file and a 106 MiB chunked file to an isolated byte-counting upstream, and rejected a declared request above 1025 MiB with HTTP 413. The same change was built into and exercised by the managed Docker deployment; request buffering remains disabled, existing proxy send/read timeouts remain 650 seconds, and client-body idle timeout remains Nginx's default 60 seconds. Core quotas/auth/storage behavior is unchanged. The test is added to CI; no remote CI result or outer production proxy configuration is claimed. No data/schema migration; rollback by restoring the previous ingress config (which restores its smaller limit).
-2. **[P0] Static `/readyz` — fixed, unit-verified, and deployment-verified.** `/healthz` is now process liveness. `/readyz` checks PostgreSQL schema access and Core-managed storage, returns HTTP 503 with safe diagnostics when unavailable, and returns HTTP 200 for a fresh unconfigured instance so setup can proceed before a Worker or converter profile exists. On 2026-10-20, the managed Docker deployment reported all four application dependencies healthy; direct in-network checks returned HTTP 200 for `/healthz` and `/readyz`, and `/api/v1/setup/status` returned the expected incomplete-setup response. `/api/v1/operations` remains the authenticated source for Worker/profile `readyToConvert` diagnostics. A live dependency outage/recovery and remote CI run have not been independently verified.
-3. **[P0] Embedded compatibility catalog / documentation drift — fixed and locally verified.** `catalog/targets/catalog/index.json` is now the authoritative release list. `scripts/sync-compatibility-catalog.py` validates all target manifest identities, generates `catalog/index.json` and `server/internal/catalog/official.json`, preserves the legacy `catalog/profiles/` paths, and runs in CI. The derived indexes include the managed LibreOffice/Poppler document profiles and compression profiles; README and catalog-format documentation now describe the same set. Remote CI and signed production publication remain outstanding.
+1. **[P0] Nginx upload size mismatch — fixed and ingress-verified.** The continuation working tree sets `client_max_body_size 1025m`, matching Core's 1 GiB plus 1 MiB multipart request bound. The upload-proxy regression passed config validation, forwarded an actual 1 GiB multipart file and a 106 MiB chunked file to an isolated byte-counting upstream, and rejected a declared request above 1025 MiB with HTTP 413. CI run #98 passed this regression, the Docker browser suite, and the related cancellation/guest-storage paths. Deployment-specific outer proxies and host capacity remain operational checks; GitHub issue #1 stays open for that environment-specific follow-up.
+2. **[P0] Static `/readyz` — fixed, unit-verified, and deployment-verified.** `/healthz` is process liveness. `/readyz` checks PostgreSQL schema access and Core-managed storage, returns HTTP 503 with safe diagnostics when unavailable, and returns HTTP 200 for a fresh unconfigured instance so setup can proceed before a Worker or converter profile exists. CI run #98 passed the complete Go, Compose, document-runtime and browser gates; `/api/v1/operations` remains the authenticated source for Worker/profile `readyToConvert` diagnostics. GitHub issue #2 stays open for an independently exercised live dependency outage/recovery.
+3. **[P0] Embedded compatibility catalog / documentation drift — fixed and CI-verified.** `catalog/targets/catalog/index.json` is now the authoritative release list. `scripts/sync-compatibility-catalog.py` validates all target manifest identities, generates `catalog/index.json` and `server/internal/catalog/official.json`, preserves the legacy `catalog/profiles/` paths, and runs in CI. CI run #98 passed the catalog drift check and document runtime verification; README and catalog-format documentation describe the same managed LibreOffice/Poppler and compression entries. Signed production publication remains the separate owner-controlled #4 trust-root gate. GitHub issue #3 is reconciled as completed.
 4. **[P0 pre-public-release] No pinned official trust root — ceremony prepared, publication outstanding.** `server/internal/repositorymanager/official-root.json` remains empty by design. `docs/security/trust-root-ceremony.md` records offline custody, independent fingerprint verification, rotation, recovery, and publication steps. Production signing keys and root metadata require an owner-controlled release operation; no AI should create or check in signing secrets automatically.
 
 ## Risks/decisions needing targeted audits
@@ -54,7 +55,7 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 
 ## Planned, not yet implemented as generally available
 
-- P1 capability/provider migration and saved presets: implemented in the completion commit. The remaining release gate is remote CI and browser evidence; the deployment continues to retain legacy profile IDs as a migration boundary.
+- P1 capability/provider migration and saved presets: implemented in the completion commit and verified by CI run #98, including browser/mobile acceptance. The deployment continues to retain legacy profile IDs as a migration boundary. GitHub issues #6 and #7 are reconciled as completed; broader modularization remains tracked by #8.
 - Metadata-based automation conditions, richer media controls, and engine-specific optional GPU execution.
 - Document Creator: the first Build editor now provides non-destructive page ordering, thumbnails, ordered preview, and browser-local PDF generation for raster image pages; server-side PDF/Office expansion and merging, saved/expiring projects, and fidelity-tested exporter output remain planned.
 - Full visual Automation branches and broader blueprint library beyond the supported typed flow.
@@ -123,9 +124,9 @@ Evidence: `server/internal/automation/graph.go`,
 `server/internal/automation/extensions.go`, the additive automation migration,
 `server/internal/httpapi/automation.go`, `web/src/App.tsx`, and
 `docs/architecture/automations-c1.md`. Focused Go and HTTP tests, frontend
-lint/build, theme smoke, and UI smoke pass. The full Go suite currently has one
-environment-sensitive pre-existing Worker media-probe failure; no production or
-remote CI verification is claimed.
+lint/build, theme smoke, and UI smoke pass. CI run #98 also passed the full Go
+suite and browser/mobile gates; production deployment verification and the
+remaining extension-security scope are separate release concerns.
 
 ## P2 progress in the current worktree (not deployment evidence)
 
@@ -191,10 +192,10 @@ The current worktree also corrects the image compression capability boundary:
   but it used the host's 7.1.5 binary rather than the catalog's pinned 9.x
   artifact.
 - Catalog generation and shell/JSON consistency checks pass in this
-  worktree. Go tests/gofmt and the frontend lint/type/build were not runnable
-  in this environment because no real Go toolchain/gofmt was present and the
-  dependency install did not complete. No remote GitHub Actions result is
-  claimed.
+  worktree. CI run #98 passed the pinned FFmpeg matrix, full Go suite, browser
+  acceptance and restore conversion. The local host smoke used FFmpeg 7.1.5
+  rather than the pinned catalog artifact; pinned-artifact CI is the release
+  evidence.
 
 Evidence: `server/internal/worker/runner.go`,
 `server/internal/analysis/service.go`, `web/src/features/Inspector.tsx`,
@@ -205,8 +206,8 @@ HDR10+/Dolby Vision compatibility remain unverified release risks.
 
 ## Immediate implementation queue
 
-**Next:** obtain remote CI evidence, tighten the Worker compatibility grants after schema review, and execute the owner-controlled trust-root ceremony when release ownership is ready. Keep the deployment classified as trusted single tenant/small team until those gates and the public-demo threat model are accepted.
+**Next:** execute the owner-controlled trust-root ceremony when release ownership is ready, then continue the targeted Worker compatibility-grant and public-demo threat-model audits. Keep the deployment classified as trusted single tenant/small team until those gates are accepted.
 
-The 2026-10-20 local release pass rebuilt the pinned Core, Worker, and Web images, migrated the managed Worker login, passed the Go suite/vet, upload ingress, Compose security, catalog, FFmpeg matrix, and document runtime unit checks. The document HTTP stage stopped on disposable PostgreSQL `ENOSPC`, and browser/restore was deliberately not started below its 8 GiB free-space preflight; both remain remote-CI gates.
+The 2026-10-20 local release pass rebuilt the pinned Core, Worker, and Web images, migrated the managed Worker login, and passed the local upload ingress, Compose security, catalog, FFmpeg and document checks. Remote CI run #98 subsequently passed the full PostgreSQL/race/vet suite, document runtime, Docker browser acceptance and isolated backup/restore conversion. The earlier disposable PostgreSQL `ENOSPC` and browser/restore preflight blockers are resolved in verified CI; no owner-controlled trust-root ceremony or general public-demo approval is implied.
 
-The status ledger should be updated whenever a significant task is implemented **and verified**. Record the completion SHA, test URLs, compatibility impacts, completed/requested feature IDs and explicit outstanding risks. P0 release gates remain open: remote CI evidence, the owner-controlled TUF trust-root ceremony/publication, the document HTTP stage that stopped on disposable PostgreSQL `ENOSPC`, and browser/restore gates below their 8 GiB preflight.
+The status ledger should be updated whenever a significant task is implemented **and verified**. Record the completion SHA, test URLs, compatibility impacts, completed/requested feature IDs and explicit outstanding risks. Current tracking reconciliation: GitHub issues #3, #6 and #7 are completed; #1 remains open for deployment-specific ingress/quota verification; #2 remains open for a live dependency outage/recovery exercise; #4, #5 and the later milestone issues remain open by design. The remaining P0 release gates are the owner-controlled TUF trust-root ceremony/publication and the public-demo threat-model decision.

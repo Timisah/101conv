@@ -202,6 +202,10 @@ jobs:
         with:
           name: restore-fixture-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/101conv-restore-transfer
+      - name: Restore backup directory permissions
+        run: |
+          chmod 0600 "$RUNNER_TEMP/101conv-restore-transfer/backup.tar"
+          tar -C "$RUNNER_TEMP/101conv-restore-transfer" -xpf "$RUNNER_TEMP/101conv-restore-transfer/backup.tar"
       - name: Load the exact smoke-test images
         run: |
           set -euo pipefail
