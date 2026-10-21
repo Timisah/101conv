@@ -340,7 +340,7 @@ const assert = require('node:assert/strict');
     assert.ok(userAccess.batchStatus===403||userAccess.batchStatus===404,'another owner cannot view an admin batch');
     assert.ok(userAccess.zipStatus===403||userAccess.zipStatus===404,'another owner cannot download an admin ZIP');
     let maxConcurrent=0,maxAdminBatchRunning=0,userServedBeforeAdminDone=false,adminState,userState;
-    for(let i=0;i<300;i++){
+    for(let i=0;i<500;i++){
       [adminState,userState]=await Promise.all([admin('/batches/'+adminSlowBatch.id,'GET'),admin('/batches/'+userSlowBatch.id,'GET')]);
       const a=await adminState.json(),u=await userState.json();
       maxConcurrent=Math.max(maxConcurrent,a.running+u.running);
