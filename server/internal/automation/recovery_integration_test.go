@@ -195,7 +195,17 @@ func (f *automationFixture) queued() Run {
 			return r
 		}
 	}
-	f.t.Fatalf("no queued run: %+v", runs)
+	var revision int
+	var definition []byte
+	if err := f.db.QueryRowContext(f.ctx, `SELECT a.current_revision,r.definition FROM conv_automations a JOIN conv_automation_revisions r ON r.automation_id=a.id AND r.revision=a.current_revision WHERE a.id=$1`, f.a.ID).Scan(&revision, &definition); err != nil {
+		f.t.Fatalf("no queued run: %+v; automation query: %v", runs, err)
+	}
+	var generation, requestRevision int64
+	var processExisting, baselineProcessExisting, inventoryReady bool
+	if err := f.db.QueryRowContext(f.ctx, `SELECT generation,request_revision,process_existing,baseline_process_existing,inventory_ready FROM conv_automation_scans WHERE automation_id=$1`, f.a.ID).Scan(&generation, &requestRevision, &processExisting, &baselineProcessExisting, &inventoryReady); err != nil {
+		f.t.Fatalf("no queued run: %+v; revision=%d definition=%s; scan query: %v", runs, revision, definition, err)
+	}
+	f.t.Fatalf("no queued run: %+v; revision=%d definition=%s; scan={generation:%d requestRevision:%d processExisting:%t baselineProcessExisting:%t inventoryReady:%t}", runs, revision, definition, generation, requestRevision, processExisting, baselineProcessExisting, inventoryReady)
 	return Run{}
 }
 func (f *automationFixture) complete(r Run) {
