@@ -19,6 +19,8 @@ The issue numbers below track implementation work; the FR descriptions remain th
 | FR-007 | [#7](https://github.com/Timisah/101conv/issues/7) | FR-016 | [#16](https://github.com/Timisah/101conv/issues/16) |
 | FR-008 | [#8](https://github.com/Timisah/101conv/issues/8) | FR-017 | [#17](https://github.com/Timisah/101conv/issues/17) |
 | FR-009 | [#9](https://github.com/Timisah/101conv/issues/9) | FR-018 | [#18](https://github.com/Timisah/101conv/issues/18) |
+| FR-019 | [#23](https://github.com/Timisah/101conv/issues/23) | FR-020 | [#24](https://github.com/Timisah/101conv/issues/24) |
+| FR-021 | [#25](https://github.com/Timisah/101conv/issues/25) | — | — |
 
 ## Universal acceptance checks
 
@@ -86,7 +88,7 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 ### FR-009 — Rich image compression and combined batch size goal
 
 **Goal:** compress image(s) to a maximum per-file size, combined total, or both, while keeping original pixel dimensions by default.  
-**Acceptance:** canonical quality/size controls, format/encoder-specific options, bounded iterative quality search, fair batch budget allocation, hard vs best-effort policies, impossible-target errors, real output validation and before/after data. Do not assume every codec provides exact target-size encoding.  
+**Acceptance:** canonical quality/size controls, format/encoder-specific options and bounded iterative quality search. **Maximum size fields are blank/unset by default**, so a user can change the format or compress for general savings without implicitly requesting a numeric cap; an explicitly selected preset may set one. For an optional per-file maximum (e.g. 5 MB JPEG capped at 2 MB), select the **highest-feasible-quality** validated candidate under the ceiling, aiming reasonably near it when the encoder permits, not an avoidably degraded 0.5 MB output. Quality/size relationships vary by codec and need bounded, measured searches; exact sizes are not guaranteed. Honor fair combined-batch allocation, explicit strict vs best-effort semantics, impossible-target errors, no hidden resizing, real output validation and before/after data. Test no-cap defaults, preset caps, quality/size outcomes, near-cap candidates, and non-monotonic/infeasible encoder cases.  
 **Dependencies:** FR-006, FR-010.
 
 **Status:** The current worktree implements the image-capability portion on
@@ -98,6 +100,8 @@ budget remains in the P2 path. CI run #98 passed the pinned FFmpeg matrix,
 browser acceptance, and restore
 conversion; the local host smoke used FFmpeg 7.1.5 rather than the pinned
 catalog artifact.
+
+**Open usability/correctness gap (owner report, 2026-10-21):** The max-size input has been prefilled in normal compression usage, and at least one 5 MB → 2 MB maximum request produced about 0.5 MB. The requested blank default and highest-feasible-quality behavior must be reproduced, implemented and verified before calling this acceptance complete; the existing adaptive Worker search alone is not proof of this UX.
 
 ### FR-010 — Shared file analysis and File Inspector workspace
 
@@ -199,6 +203,31 @@ public domain and publication target are approved.
 **Goal:** visitors try actual conversions and discover self-hosting.  
 **Acceptance:** separate isolated deployment without personal/NAS production data, conservative guest quotas, global compute/storage/output budgets, rate/abuse protection, short retention and privacy disclosures, limited verified engines, clear links to GitHub/installation, aggregate cost/conversion/referral metrics and kill switch. Evaluate benefits empirically; never unlimited free processing.  
 **Dependencies:** P0 security/release gates, verified format capabilities.
+
+## P1 follow-up — converter lifecycle and jobs usability
+
+### FR-019 — Clear profile/engine updates and catalog lifecycle UX
+
+**Goal:** make the existing package/capability system understandable. Users must not assume updating the app automatically updates installed profiles or engines; admins can see what is newly released, installed, disabled, incompatible or updateable without interpreting technical manifest IDs.  
+**Acceptance:** explicitly distinguish **New profile · Install** (a new logical ID such as FFmpeg Image Compression) from **Update available vX → vY** (a higher version of an already installed ID); show friendly version/format/option changes, dependencies, provenance/trust and release notes; show update availability after catalog refresh and application redeployment; preview installation/upgrade with intentional confirmation, retain pinned historical versions and provide safe rollback/version choice. Incompatible/missing packages get actionable explanations in Compress/Convert. Do not auto-install or weaken signed-catalog security. Cover real image-provider and mobile regression tests.  
+**Dependencies:** FR-003/004 catalog/trust, FR-006/007 architecture and presets, FR-008 modularity.  
+**Status:** Requested and approved for planning on 2026-10-21. Version-aware install/update APIs exist, but clear lifecycle discovery/notifications and an understandable update UX are **not verified as implemented**. Tracked in [#23](https://github.com/Timisah/101conv/issues/23).
+
+### FR-020 — Unified filterable Jobs and history
+
+**Goal:** Jobs & history is one primary destination for both **single** and **batch** Convert/Compress processing. Batch-specific screens become contextual details rather than a prominently separate competing page.  
+**Acceptance:** unified chronological searchable/filterable records with operation (Convert/Compress), type (Single/Batch), status, time range, and authorized-admin user filters. Show progress, dates, sizes, savings, outputs and error states; display a batch as one grouped top-level row with expandable child items/aggregate results, without double listing child jobs by default. Preserve deep links, APIs, downloads/cancel/retry actions, authorization, performance/pagination, guest retention and keyboard/touch/mobile usability. Retain a secondary detailed batch view.  
+**Dependencies:** durable jobs/batch model, FR-008 UX and permissions.  
+**Status:** Requested and approved for planning on 2026-10-21, **not implemented**. Tracked in [#24](https://github.com/Timisah/101conv/issues/24).
+
+## P2 follow-up — privacy-conscious administrative reporting
+
+### FR-021 — Admin-only lifetime processing statistics
+
+**Goal:** administrators can see truthful server lifetime usage (e.g. "12 GB processed") and per-user lifetime usage, even after source/result files have expired.  
+**Acceptance:** admin-only server-side authorized global and per-user views of successfully processed input and output bytes, Convert/Compress counts, individual jobs and batch items, failures/cancellations and optional savings/trends. Define processing bytes as one completed processing item per submission (repeat deliberate conversions count again); avoid counting batch parents and children twice, aborted attempts, or ZIP downloads as new processing. Store idempotent durable aggregates or an accounting ledger across retries, cleanup, restarts and backup/restore; do not confuse current storage footprint with lifetime throughput. Accurately label the historical baseline, backfill only verifiable old jobs, and define guest, account-deletion and anonymization/privacy behavior before rollout. Mobile-friendly admin dashboard, verified permission boundaries and consistency tests.  
+**Dependencies:** jobs/retention and privacy model; FR-020 as optional common navigation.  
+**Status:** Requested and approved for planning on 2026-10-21, **not implemented**. Tracked in [#25](https://github.com/Timisah/101conv/issues/25).
 
 ## Workflow
 
