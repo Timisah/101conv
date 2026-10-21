@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'compression',id:'ppm-pgm-compress',version:'1.0.0',name:'PPM Image Compressor',description:'Compress a PPM image to grayscale PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],compression:{options:[{key:'quality',label:'Quality',type:'number',default:'85',min:1,max:100,step:1}]},rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--input','{source}','{compression.args}','--output','{target}'],compressionArguments:['--quality','{option:quality}']}]}});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'pnm-pgm-alternate',version:'1.0.0',name:'PNM to grayscale PGM',description:'Convert portable anymap images to PGM.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['pnm'],targets:['pgm'],arguments:['--input','{source}','--output','{target}']}]}});
   await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-slow',version:'1.0.0',name:'PPM to PGM (slow test)',description:'A delayed test profile for cancellation checks.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--sleep-ms','5000','--input','{source}','--output','{target}']}]}});
+  await admin('/profiles','POST',{definition:{schemaVersion:1,type:'conversion',id:'ppm-pgm-cancel',version:'1.0.0',name:'PPM to PGM (cancellation test)',description:'A long-running fixture that keeps cancellation controls active.',license:'MIT',engines:[{engineId:'ppm-pgm',versions:{minimum:'1.0.0',maximumExclusive:'2.0.0'},capabilities:['image.ppm.decode','image.pgm.encode']}],rules:[{engineId:'ppm-pgm',executable:'ppm-pgm',sources:['ppm'],targets:['pgm'],arguments:['--sleep-ms','30000','--input','{source}','--output','{target}']}]}});
   const ppm = Buffer.from('P3\n2 1\n255\n255 0 0 0 255 0\n');
   const uploadForm = new FormData(); uploadForm.append('file', new Blob([ppm]), 'mode-check.ppm');
   const uploadResponse = await fetch(base+'/api/v1/uploads',{method:'POST',headers:{Authorization:'Bearer '+process.env.ENGINE_ADMIN_TOKEN},body:uploadForm});
@@ -225,22 +226,27 @@ const assert = require('node:assert/strict');
     const afterRetry=await page.evaluate(async id=>fetch('/api/v1/batches/'+id).then(r=>r.json()),partialID);
     assert.equal(afterRetry.items.find(item=>item.state==='succeeded').jobId,successfulJobID,'retry did not rerun successful work');
 
-    // Slow fixture jobs make cancellation controls deterministic without
-    // changing the production worker or its isolation settings.
+    // The cancellation-only fixture stays active while the browser renders
+    // history, without changing the production worker or its isolation settings.
     await page.goto(base + '/convert', { waitUntil: 'networkidle' });
     await page.locator('input[type=file]').setInputFiles([
       {name:'cancel-one.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm},
       {name:'cancel-two.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm}
     ]);
     await page.getByLabel('Convert to').selectOption('pgm');
-    await chooseAdvanced(page, 'ppm-pgm-slow');
+    await chooseAdvanced(page, 'ppm-pgm-cancel');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
     await page.getByRole('link',{name:'Jobs & history'}).click();
-    const itemCancelBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
+    const itemCancelID=await page.evaluate(()=>{
+      const ids=JSON.parse(localStorage.getItem('101conv-batch-ids')||'[]');
+      return ids.at(-1);
+    });
+    assert.match(itemCancelID,/^[0-9a-f-]{36}$/,'item-cancellation batch ID is persisted before cancellation');
+    const itemCancelBatch=page.locator('.batch-history-card').filter({hasText:itemCancelID});
+    await itemCancelBatch.waitFor({timeout:15000});
     await itemCancelBatch.locator(':scope > summary').click();
     await itemCancelBatch.getByText('cancel-one.ppm',{exact:true}).waitFor();
     await itemCancelBatch.getByRole('button',{name:'Cancel this file'}).first().click();
-    const itemCancelID=(await itemCancelBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(itemCancelID);
     await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.cancelled===1&&b.succeeded===1;},itemCancelID,{timeout:60000});
 
     await page.goto(base + '/convert', { waitUntil: 'networkidle' });
@@ -249,7 +255,7 @@ const assert = require('node:assert/strict');
       {name:'batch-cancel-two.ppm',mimeType:'image/x-portable-pixmap',buffer:ppm}
     ]);
     await page.getByLabel('Convert to').selectOption('pgm');
-    await chooseAdvanced(page, 'ppm-pgm-slow');
+    await chooseAdvanced(page, 'ppm-pgm-cancel');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
     await page.getByRole('link',{name:'Jobs & history'}).click();
     const wholeCancelID=await page.evaluate(()=>{
