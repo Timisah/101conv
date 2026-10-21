@@ -252,8 +252,14 @@ const assert = require('node:assert/strict');
     await chooseAdvanced(page, 'ppm-pgm-slow');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
     await page.getByRole('link',{name:'Jobs & history'}).click();
-    const wholeCancelBatch=page.locator('.batch-history-card').filter({hasText:'2 files'}).first();
-    const wholeCancelID=(await wholeCancelBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];assert.ok(wholeCancelID);
+    const wholeCancelID=await page.evaluate(()=>{
+      const ids=JSON.parse(localStorage.getItem('101conv-batch-ids')||'[]');
+      return ids.at(-1);
+    });
+    assert.match(wholeCancelID,/^[0-9a-f-]{36}$/,'new batch ID is persisted before cancellation');
+    const wholeCancelBatch=page.locator('.batch-history-card').filter({hasText:wholeCancelID});
+    await wholeCancelBatch.waitFor({timeout:15000});
+    await wholeCancelBatch.locator(':scope > summary').click();
     await wholeCancelBatch.getByRole('button',{name:'Cancel batch'}).click();
     await page.waitForFunction(async id=>{const b=await fetch('/api/v1/batches/'+id).then(r=>r.json());return b.queued===0&&b.running===0&&b.cancelled===2;},wholeCancelID,{timeout:60000});
 

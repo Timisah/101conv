@@ -238,6 +238,13 @@ func (w *Worker) runClaim(parent context.Context, c claimedJob) {
 			case <-ticker.C:
 				cancelled, err := w.heartbeat(ctx, c.ID)
 				if err != nil {
+					// The runner calls cancel after it returns. If a heartbeat
+					// query is still in flight, database/sql reports that normal
+					// shutdown as context.Canceled. It is not a lost lease and
+					// must not turn a successful conversion into a failed job.
+					if ctx.Err() != nil {
+						return
+					}
 					select {
 					case heartbeatErr <- err:
 					default:
