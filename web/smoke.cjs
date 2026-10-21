@@ -236,6 +236,7 @@ const assert = require('node:assert/strict');
     await page.getByLabel('Convert to').selectOption('pgm');
     await chooseAdvanced(page, 'ppm-pgm-cancel');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
+    await page.getByRole('status').filter({hasText:'Batch created: 2 item(s) submitted.'}).waitFor({timeout:15000});
     await page.getByRole('link',{name:'Jobs & history'}).click();
     const itemCancelID=await page.evaluate(()=>{
       const ids=JSON.parse(localStorage.getItem('101conv-batch-ids')||'[]');
@@ -257,6 +258,7 @@ const assert = require('node:assert/strict');
     await page.getByLabel('Convert to').selectOption('pgm');
     await chooseAdvanced(page, 'ppm-pgm-cancel');
     await page.getByRole('button',{name:/Convert 2 files/}).click();
+    await page.getByRole('status').filter({hasText:'Batch created: 2 item(s) submitted.'}).waitFor({timeout:15000});
     await page.getByRole('link',{name:'Jobs & history'}).click();
     const wholeCancelID=await page.evaluate(()=>{
       const ids=JSON.parse(localStorage.getItem('101conv-batch-ids')||'[]');
