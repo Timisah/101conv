@@ -82,6 +82,10 @@ type InstallPreview struct {
 	Profile        profile.Definition  `json:"profile"`
 	Dependencies   []DependencyPreview `json:"dependencies"`
 	PlannedChanges []string            `json:"plannedChanges"`
+	// InstalledVersion and ProfileChanges are present for an update: the
+	// version currently installed and a readable summary of what differs.
+	InstalledVersion string   `json:"installedVersion,omitempty"`
+	ProfileChanges   []string `json:"profileChanges,omitempty"`
 }
 
 type InstallPlanRequest struct {

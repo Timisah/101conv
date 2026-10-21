@@ -772,10 +772,12 @@ func (m *Manager) CreateInstallPlan(ctx context.Context, repoID, profileID strin
 		return InstallPreview{}, err
 	}
 	profileExists := false
+	var installedDefinition profile.Definition
 	preferred := map[string]string{}
 	for _, current := range installedProfiles {
 		if current.Definition.ID == profileID {
 			profileExists = true
+			installedDefinition = current.Definition
 			preferred = current.State.ResolvedEngines
 			break
 		}
@@ -838,6 +840,10 @@ func (m *Manager) CreateInstallPlan(ctx context.Context, repoID, profileID strin
 			preview.PlannedChanges = append(preview.PlannedChanges, fmt.Sprintf("install engine %s %s", req.EngineID, best))
 		}
 		preview.Dependencies = append(preview.Dependencies, dep)
+	}
+	if profileExists {
+		preview.InstalledVersion = installedDefinition.Version
+		preview.ProfileChanges = DescribeProfileChanges(installedDefinition, p)
 	}
 	installedDigest, err := m.engines.SnapshotDigest()
 	if err != nil {
