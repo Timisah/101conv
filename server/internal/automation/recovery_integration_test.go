@@ -32,6 +32,15 @@ type automationFixture struct {
 	a                          Automation
 }
 
+func legacyDefinition(a Automation) Definition {
+	d := a.Definition
+	// A pre-graph client sends the flat execution definition and omits the
+	// optional visual graph. This keeps the recovery tests representative of
+	// the backwards-compatible API contract when the service returns both.
+	d.Graph = nil
+	return d
+}
+
 func newAutomationFixture(t *testing.T, existing bool) *automationFixture {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -286,7 +295,7 @@ func TestAutomationExplicitExistingRequestAndInputChange(t *testing.T) {
 	if n := f.count(`SELECT count(*) FROM conv_jobs`); n != 0 {
 		t.Fatal("default baseline submitted")
 	}
-	def := f.a.Definition
+	def := legacyDefinition(f.a)
 	def.Trigger.ProcessExistingOnNext = true
 	var err error
 	f.a, err = f.svc.UpdateAutomation(f.ctx, f.a.ID, f.owner, f.a.Name, def)
@@ -338,7 +347,7 @@ func TestAutomationExplicitExistingRequestAndInputChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	def = f.a.Definition
+	def = legacyDefinition(f.a)
 	def.Trigger.InputDriveID = drive.ID
 	def.Trigger.ProcessExistingOnNext = false
 	f.a, err = f.svc.UpdateAutomation(f.ctx, f.a.ID, f.owner, f.a.Name, def)
@@ -371,7 +380,7 @@ func TestAutomationProfilePinningAndLegacyPolicy(t *testing.T) {
 	if err := f.svc.scanAutomation(f.ctx, f.a, true); err == nil {
 		t.Fatal("silently drifted profile version")
 	}
-	def := f.a.Definition
+	def := legacyDefinition(f.a)
 	def.Action.ProfileVersion = ""
 	def.Trigger.ProcessExistingOnNext = false
 	updated, err := f.svc.UpdateAutomation(f.ctx, f.a.ID, f.owner, f.a.Name, def)
@@ -474,7 +483,7 @@ func TestAutomationPublicationRecoveryAllPolicies(t *testing.T) {
 	for _, behavior := range []string{"create", "skip_existing", "unique"} {
 		t.Run(behavior, func(t *testing.T) {
 			f := newAutomationFixture(t, true)
-			def := f.a.Definition
+			def := legacyDefinition(f.a)
 			def.Action.OutputBehavior = behavior
 			var err error
 			f.a, err = f.svc.UpdateAutomation(f.ctx, f.a.ID, f.owner, f.a.Name, def)
@@ -564,7 +573,7 @@ func TestAutomationPublicationNeverAdoptsOrOverwritesExistingFile(t *testing.T) 
 	for _, behavior := range []string{"create", "skip_existing", "unique"} {
 		t.Run(behavior, func(t *testing.T) {
 			f := newAutomationFixture(t, true)
-			def := f.a.Definition
+			def := legacyDefinition(f.a)
 			def.Action.OutputBehavior = behavior
 			var err error
 			f.a, err = f.svc.UpdateAutomation(f.ctx, f.a.ID, f.owner, f.a.Name, def)
@@ -694,7 +703,7 @@ func TestAutomationInputRoundTripEditsInvalidateBeforeNextScan(t *testing.T) {
 	}
 	f.write("arrived-before-input-edit.ppm")
 	for _, inputID := range []string{drive.ID, f.in.ID} {
-		def := f.a.Definition
+		def := legacyDefinition(f.a)
 		def.Trigger.InputDriveID = inputID
 		f.a, err = f.svc.UpdateAutomation(f.ctx, f.a.ID, f.owner, f.a.Name, def)
 		if err != nil {

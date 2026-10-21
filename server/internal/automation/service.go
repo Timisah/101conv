@@ -97,9 +97,11 @@ CREATE TABLE IF NOT EXISTS conv_automation_scans (
  automation_id TEXT PRIMARY KEY REFERENCES conv_automations(id) ON DELETE CASCADE,
  input_drive TEXT NOT NULL, input_path TEXT NOT NULL, generation BIGINT NOT NULL DEFAULT 1,
  cutoff TIMESTAMPTZ NOT NULL DEFAULT now(), baseline_complete BOOLEAN NOT NULL DEFAULT false,
- cursor TEXT NOT NULL DEFAULT '', process_existing BOOLEAN NOT NULL DEFAULT false, request_revision INTEGER NOT NULL
+ cursor TEXT NOT NULL DEFAULT '', process_existing BOOLEAN NOT NULL DEFAULT false,
+ baseline_process_existing BOOLEAN NOT NULL DEFAULT false, request_revision INTEGER NOT NULL
 );
 ALTER TABLE conv_automation_scans ADD COLUMN IF NOT EXISTS inventory_ready BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE conv_automation_scans ADD COLUMN IF NOT EXISTS baseline_process_existing BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS conv_automation_baseline (
  automation_id TEXT NOT NULL REFERENCES conv_automations(id) ON DELETE CASCADE,
  generation BIGINT NOT NULL, source_name TEXT NOT NULL,
@@ -224,7 +226,7 @@ func (s *Service) UpdateDrive(ctx context.Context, id, name, path, access string
 				return Drive{}, err
 			}
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE conv_automation_scans s SET generation=generation+1,input_path=$2,cutoff=now(),cursor='',inventory_ready=false,baseline_complete=false,process_existing=false,request_revision=a.current_revision FROM conv_automations a WHERE s.automation_id=a.id AND s.input_drive=$1`, id, resolved); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE conv_automation_scans s SET generation=generation+1,input_path=$2,cutoff=now(),cursor='',inventory_ready=false,baseline_complete=false,process_existing=false,baseline_process_existing=false,request_revision=a.current_revision FROM conv_automations a WHERE s.automation_id=a.id AND s.input_drive=$1`, id, resolved); err != nil {
 			return Drive{}, err
 		}
 	}
@@ -398,7 +400,7 @@ func (s *Service) UpdateAutomation(ctx context.Context, id, owner, name string, 
 	}
 	revision++
 	if previousInput != def.Trigger.InputDriveID {
-		if _, err = tx.ExecContext(ctx, `UPDATE conv_automation_scans SET generation=generation+1,input_drive=$2,input_path=(SELECT path FROM conv_mounted_drives WHERE id=$2),cutoff=now(),cursor='',inventory_ready=false,baseline_complete=false,process_existing=$3,request_revision=$4 WHERE automation_id=$1`, id, def.Trigger.InputDriveID, def.Trigger.ProcessExistingOnNext, revision); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE conv_automation_scans SET generation=generation+1,input_drive=$2,input_path=(SELECT path FROM conv_mounted_drives WHERE id=$2),cutoff=now(),cursor='',inventory_ready=false,baseline_complete=false,process_existing=$3,baseline_process_existing=$3,request_revision=$4 WHERE automation_id=$1`, id, def.Trigger.InputDriveID, def.Trigger.ProcessExistingOnNext, revision); err != nil {
 			return Automation{}, err
 		}
 	}
