@@ -109,3 +109,11 @@ or production-engine verification.
 - Preserve separate strict/best-effort policies and honest impossible-limit errors. Never silently resize, corrupt or emit an invalid output to meet a cap. Do not expand unbounded CPU/time/batch budget.
 - Add regression cases for empty default, explicit size preset, JPG/JPEG/JXL/WebP/AVIF mappings where supported, targets with a higher-quality candidate nearer the limit than the current chosen result, impossible caps, inputs already smaller than the cap, mixed batches, cancellation/retries and result size/quality comparison.
 - This documents [FR-009](../FEATURE_REQUESTS.md#fr-009--rich-image-compression-and-combined-batch-size-goal) / [#9](https://github.com/Timisah/101conv/issues/9); it does **not** claim the current encoder/UI already satisfy those criteria.
+
+## Metadata and result interaction follow-up (2026-10-21; planned)
+
+- Where a provider has a typed metadata setting, render a compact accessible **Preserve metadata** toggle in Convert/Compress rather than a two-choice select. Map checked/unchecked to the established provider-specific option values (e.g. `metadata=0` for attempted preservation and `metadata=-1` for removal where that mapping is valid); do not change the immutable option schema, promise universal metadata preservation or display a nonfunctional switch for unsupported codecs.
+- Eliminate redundant helper hints such as “The original format is selected when this profile supports it. Choose another format to compress and convert in one job.” Retain concise guidance when output is lossy, fidelity is limited, the size ceiling is infeasible or a safety/privacy consequence exists.
+- Completed single results and successful batch archives belong on the same Convert/Compress page as a visible download action. Reuse existing permission-checked Core result endpoints and validated status states, including expired results and partial batches. Jobs & history remains the full archive. See [FR-022](../FEATURE_REQUESTS.md#fr-022--simple-metadata-controls-quiet-helper-copy-and-inline-downloads) / [#27](https://github.com/Timisah/101conv/issues/27).
+
+This is a future UX requirement; no implementation or deployment proof is claimed here.
