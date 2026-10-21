@@ -118,6 +118,16 @@ used FFmpeg 7.1.5 rather than the pinned catalog artifact.
 **Acceptance:** real thumbnails, accessible reorder + drag, rotation, remove/duplicate, multipage flatten/group, undo/redo, mobile one-column/touch editor, non-destructive manifest, expiring guest and saved logged-in projects, PDF export preserving vector text/images and original bytes where possible; no needless resizing/resampling. Export formats beyond PDF (DOCX/ODT/PPTX/ODP/CBZ/multipage TIFF/ZIP) shipped only with honest fidelity and format-specific tests. Default one input page per output page.  
 **Dependencies:** PDF/Office engines, FR-010 and design of safe project lifecycle.
 
+**Status:** The current worktree extends the first Build slice with a typed,
+bounded layout contract and shared preview/export geometry. Automatic image
+pages follow oriented source ratios; Fit and Fill support A4, Letter, custom
+millimetres, margins, backgrounds, focal position, and per-page mode overrides.
+The browser smoke fixture now checks actual generated PDF MediaBox dimensions
+for rotated, square, panoramic, and fixed-A4 pages. PDF/Office expansion,
+native vector preservation, saved/expiring projects, and remote CI evidence
+remain open; browser-local PDF generation is intentionally limited to raster
+image pages.
+
 ## P4 — GPU, automations and extensions
 
 ### FR-013 — Optional hardware acceleration

@@ -56,7 +56,7 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 
 - P1 capability/provider migration and saved presets: implemented in the completion commit. The remaining release gate is remote CI and browser evidence; the deployment continues to retain legacy profile IDs as a migration boundary.
 - Metadata-based automation conditions, richer media controls, and engine-specific optional GPU execution.
-- Document Creator: the first Build editor now provides non-destructive page ordering, thumbnails, ordered preview, and browser-local PDF generation for raster image pages; server-side PDF/Office expansion and merging, saved/expiring projects, and fidelity-tested exporter output remain planned.
+- Document Creator: the current Build editor provides non-destructive page ordering, thumbnails, ordered preview, responsive controls, and browser-local PDF generation for raster image pages. A shared typed layout resolver now supports automatic per-image page ratios, oriented EXIF-aware previews, Fit/Fill A4/Letter/custom pages, margins/backgrounds, and per-page mode overrides; the browser smoke fixture checks actual generated PDF MediaBox dimensions. Server-side PDF/Office expansion and merging, native vector preservation, saved/expiring projects, and remote CI evidence remain planned/open.
 - Visual Automations blocks/branches and broader blueprint system.
 - Versioned extension installation/compatibility/rollback and Immich connector.
 - New brand/logo, domain-specific SEO/publication and rate-limited public demo.
