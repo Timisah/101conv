@@ -183,7 +183,7 @@ func (s *Service) applyCombinedCompressionBudget(ctx context.Context, req *Batch
 		if !definition.SupportsMode("compress") || definition.Compression == nil || len(rule.CompressionArguments) == 0 {
 			return fmt.Errorf("%w: profile does not provide compression for %s to %s", ErrUnsupported, source, item.TargetFormat)
 		}
-		option, err := combinedTargetOption(*definition.Compression)
+		option, err := combinedTargetOption(definition.CompressionForRule(rule))
 		if err != nil {
 			return err
 		}

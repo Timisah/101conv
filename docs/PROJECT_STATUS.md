@@ -1,6 +1,6 @@
 # Project Status — evidence-based implementation ledger
 
-**Review date:** 2026-10-20.  
+**Review date:** 2026-10-21.
 **Implementation baseline reviewed:** `517eaa1291f9aef7eaf5756d3f8c3100b5cca035` (P1 capability/provider and preset completion plus authorization/matching hardening); the earlier baseline was `3df147e9d1b65a0daf3f4dc5fc245b13a4406dbe`.
 **Maintenance note:** Documentation commits will advance HEAD beyond this baseline; this is *not* an assertion that the later documentation-only HEAD has been deployed or verified.
 
@@ -123,6 +123,29 @@ The P2 scope is implemented and source-verified in this worktree:
   first/last windows so tail Info/XMP properties are not silently missed.
 - Successful jobs expose input/output savings, and batch allocations remain
   independently frozen per item for deterministic retry behavior.
+
+### Focused image-capability follow-up — 2026-10-21
+
+The current worktree also corrects the image compression capability boundary:
+
+- A separate pinned-FFmpeg image-compression profile exposes same-format JPEG
+  recompression plus PNG, WebP, and AVIF outputs. Its rules publish
+  codec-specific quality/level ranges, metadata preservation/removal, and
+  bounded target-size controls where the encoder supports adaptive search.
+- Canonical capability options are now rule-scoped, so a PNG mapping does not
+  display JPEG quality and a WebP mapping uses its own quality direction.
+  Convert and Compress derive formats and automatic-provider summaries from
+  the capability catalog; profile selection remains an Advanced override.
+- The pinned FFmpeg verification script now exercises the image encoder
+  arguments, signatures, dimensions, same-format JPEG size reduction, and
+  corrupt-input rejection. Local host FFmpeg smoke output was also produced,
+  but it used the host's 7.1.5 binary rather than the catalog's pinned 9.x
+  artifact.
+- Catalog generation and shell/JSON consistency checks pass in this
+  worktree. Go tests/gofmt and the frontend lint/type/build were not runnable
+  in this environment because no real Go toolchain/gofmt was present and the
+  dependency install did not complete. No remote GitHub Actions result is
+  claimed.
 
 Evidence: `server/internal/worker/runner.go`,
 `server/internal/analysis/service.go`, `web/src/features/Inspector.tsx`,

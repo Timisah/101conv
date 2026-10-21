@@ -61,6 +61,7 @@ func TestBundledProfilesSeparateConversionAndCompression(t *testing.T) {
 	}
 	conversion := read("ffmpeg-linux-amd64.json")
 	compression := read("ffmpeg-compression-linux-amd64.json")
+	imageCompression := read("ffmpeg-image-compression-linux-amd64.json")
 	if conversion.Type != TypeConversion || conversion.Compression != nil {
 		t.Fatal("FFmpeg conversion profile must not include compression controls")
 	}
@@ -69,6 +70,18 @@ func TestBundledProfilesSeparateConversionAndCompression(t *testing.T) {
 	}
 	if conversion.SupportsMode("compress") || !compression.SupportsMode("compress") || compression.SupportsMode("convert") {
 		t.Fatal("separated profiles must be confined to their selected workflow")
+	}
+	if imageCompression.Type != TypeCompression || !imageCompression.SupportsMode("compress") || imageCompression.SupportsMode("convert") {
+		t.Fatal("FFmpeg image compression profile must be compression-only")
+	}
+	if got := imageCompression.CompressionForRule(imageCompression.Rules[0]); got.TargetQualityHigherBetter {
+		t.Fatal("JPEG compression must treat lower quantizer values as better quality")
+	}
+	if got := imageCompression.CompressionForRule(imageCompression.Rules[2]); !got.TargetQualityHigherBetter {
+		t.Fatal("WebP compression must treat higher quality values as better quality")
+	}
+	if got := imageCompression.CompressionForRule(imageCompression.Rules[1]); got.TargetQualityOption != "compressionLevel" || got.TargetQualityHigherBetter {
+		t.Fatal("PNG compression must use bounded compression-level target sizing")
 	}
 }
 

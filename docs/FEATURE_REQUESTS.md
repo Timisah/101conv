@@ -89,6 +89,15 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 **Acceptance:** canonical quality/size controls, format/encoder-specific options, bounded iterative quality search, fair batch budget allocation, hard vs best-effort policies, impossible-target errors, real output validation and before/after data. Do not assume every codec provides exact target-size encoding.  
 **Dependencies:** FR-006, FR-010.
 
+**Status:** The current worktree implements the image-capability portion on
+2026-10-21. A separate FFmpeg image-compression provider supports same-format
+JPEG plus PNG, WebP, and AVIF targets with rule-scoped codec controls,
+metadata selection, bounded adaptive target sizing where supported, original
+pixel dimensions, and verified output signatures. The existing combined batch
+budget remains in the P2 path. Pinned-artifact CI, browser acceptance, and
+remote GitHub Actions evidence are still release gates; the local host smoke
+used FFmpeg 7.1.5 rather than the pinned catalog artifact.
+
 ### FR-010 — Shared file analysis and File Inspector workspace
 
 **Goal:** upload any supported file and see useful metadata without technical knowledge; data also drives other workspaces.  

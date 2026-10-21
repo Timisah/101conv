@@ -103,6 +103,24 @@ for source in "${sources[@]}"; do
     done
 done
 
+# Exercise the image-compression profile's actual JPEG/PNG/WebP/AVIF encoder
+# arguments, including same-format JPEG recompression and preserved dimensions.
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.jpg" -map_metadata -1 -frames:v 1 -c:v mjpeg -q:v 31 "$fixture_root/compressed.jpg"
+test "$(stat -c '%s' "$fixture_root/compressed.jpg")" -lt "$(stat -c '%s' "$fixture_root/input.jpg")"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.png" -map_metadata -1 -frames:v 1 -c:v png -compression_level 9 "$fixture_root/compressed.png"
+validate_signature "$fixture_root/compressed.png" png
+dimensions="$($ffprobe_bin -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$fixture_root/compressed.png")"
+test "$dimensions" = "160,96"
+for target in webp avif; do
+    case "$target" in
+        webp) "$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.jpg" -map_metadata -1 -frames:v 1 -c:v libwebp -quality 75 "$fixture_root/compressed.$target" ;;
+        avif) "$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.jpg" -map_metadata -1 -frames:v 1 -c:v libaom-av1 -crf 30 -b:v 0 -still-picture 1 "$fixture_root/compressed.$target" ;;
+    esac
+    validate_signature "$fixture_root/compressed.$target" "$target"
+    dimensions="$("$ffprobe_bin" -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$fixture_root/compressed.$target")"
+    test "$dimensions" = "160,96"
+done
+
 printf 'not an image\n' > "$fixture_root/corrupt.jpg"
 if "$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/corrupt.jpg" -frames:v 1 -c:v png "$fixture_root/corrupt.png" 2>/dev/null; then
     echo 'corrupt input unexpectedly converted' >&2
