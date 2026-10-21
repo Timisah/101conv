@@ -20,7 +20,7 @@ The issue numbers below track implementation work; the FR descriptions remain th
 | FR-008 | [#8](https://github.com/Timisah/101conv/issues/8) | FR-017 | [#17](https://github.com/Timisah/101conv/issues/17) |
 | FR-009 | [#9](https://github.com/Timisah/101conv/issues/9) | FR-018 | [#18](https://github.com/Timisah/101conv/issues/18) |
 | FR-019 | [#23](https://github.com/Timisah/101conv/issues/23) | FR-020 | [#24](https://github.com/Timisah/101conv/issues/24) |
-| FR-021 | [#25](https://github.com/Timisah/101conv/issues/25) | — | — |
+| FR-021 | [#25](https://github.com/Timisah/101conv/issues/25) | FR-022 | [#27](https://github.com/Timisah/101conv/issues/27) |
 
 ## Universal acceptance checks
 
@@ -78,7 +78,7 @@ Every feature: (1) simple mobile first path and accessible advanced controls, (2
 ### FR-008 — Modular frontend/backend and mobile UX gates
 
 **Goal:** constant feature development without a monolithic React app or huge backend service.  
-**Acceptance:** incremental extraction of workspace features, shared typed API client, scoped state and reusable controls, clear service boundaries and fast tests; behavioral parity with old app; browser automation at narrow phone viewport, keyboard/touch and accessibility. No unrelated rewrite, no growth of `App.tsx` as feature dumping ground.  
+**Acceptance:** incremental extraction of workspace features, shared typed API client, scoped state and reusable controls, clear service boundaries and fast tests; behavioral parity with old app; browser automation at narrow phone viewport, keyboard/touch and accessibility. Avoid repetitive explanatory subtext where labels/context suffice; retain important errors/privacy/fidelity/security warnings. Prefer accessible simple controls such as a **Preserve metadata** toggle (FR-022) over technical option-choice lists. No unrelated rewrite, no growth of `App.tsx` as feature dumping ground.  
 **Dependencies:** continuous, work alongside FR-006/FR-007.
 
 **Status:** P1 acceptance path implemented on 2026-10-20. Capability and preset API boundaries are separated into dedicated server packages and routes; the conversion workspaces consume the canonical capability catalog, keep legacy profile data only for advanced options, and expose preset controls through a reusable frontend control. Narrow-screen layout and keyboard-accessible advanced disclosure remain part of the browser smoke gate; broader App.tsx extraction remains ongoing product maintenance.
@@ -216,9 +216,18 @@ public domain and publication target are approved.
 ### FR-020 — Unified filterable Jobs and history
 
 **Goal:** Jobs & history is one primary destination for both **single** and **batch** Convert/Compress processing. Batch-specific screens become contextual details rather than a prominently separate competing page.  
-**Acceptance:** unified chronological searchable/filterable records with operation (Convert/Compress), type (Single/Batch), status, time range, and authorized-admin user filters. Show progress, dates, sizes, savings, outputs and error states; display a batch as one grouped top-level row with expandable child items/aggregate results, without double listing child jobs by default. Preserve deep links, APIs, downloads/cancel/retry actions, authorization, performance/pagination, guest retention and keyboard/touch/mobile usability. Retain a secondary detailed batch view.  
+**Acceptance:** unified chronological searchable/filterable records with operation (Convert/Compress), type (Single/Batch), status, time range, and authorized-admin user filters. Show progress, dates, sizes, savings, outputs and error states; display a batch as one grouped top-level row with expandable child items/aggregate results, without double listing child jobs by default. Preserve deep links, APIs, downloads/cancel/retry actions, authorization, performance/pagination, guest retention and keyboard/touch/mobile usability. **Completed singles and batches must also be downloadable directly from their originating Convert/Compress workspace, without navigating to Jobs** (FR-022); Jobs keeps the full historical result/download experience. Retain a secondary detailed batch view.  
 **Dependencies:** durable jobs/batch model, FR-008 UX and permissions.  
 **Status:** Requested and approved for planning on 2026-10-21, **not implemented**. Tracked in [#24](https://github.com/Timisah/101conv/issues/24).
+
+### FR-022 — Simple metadata controls, quiet helper copy and inline downloads
+
+**Goal:** simplify everyday Convert/Compress tasks while keeping result downloads one click away on the page where the user started, rather than forcing a detour through Jobs & history.  
+**Acceptance:** expose **Preserve metadata** as a clearly labeled on/off toggle when a compatible codec/provider supports an explicit metadata policy; checked means request preservation (where technically possible), unchecked means request supported removal. Keep existing typed option values, presets and execution behavior compatible; do not advertise preservation guarantees for unsupported EXIF/ICC fields. Remove the exact redundant output-format hint “The original format is selected when this profile supports it. Choose another format to compress and convert in one job.” and audit similar repetitive subtext; keep short explanations only for non-obvious codec, size-budget, privacy, destructive and error behavior.
+
+After a single Convert or Compress submission, show on-page progress/status and a prominent **Download result** button as soon as the authorized output becomes available. After a multi-file batch, show **Download successful files (.zip)** and optional individual results on the same Convert/Compress page, including partial successes; use existing guarded result endpoints. A link to Jobs & history stays available but is not mandatory. Handle failed, queued, expired and missing results accessibly, avoid download/auth leaks and excessive polling; test keyboard/mobile/screen reader plus real single and batch completions. Do not grow `App.tsx` for this; share typed job/result status components.  
+**Dependencies:** FR-008 reusable UI/module design, FR-020 unified historical Jobs, existing job/batch download APIs.  
+**Status:** Owner-approved requested UX improvement on 2026-10-21, **not yet implemented**. Tracked in [#27](https://github.com/Timisah/101conv/issues/27).
 
 ## P2 follow-up — privacy-conscious administrative reporting
 
