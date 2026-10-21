@@ -66,6 +66,12 @@
       "manifestTarget": "profiles/jpeg-xl-compression-linux-amd64.json"
     },
     {
+      "id": "ffmpeg-image-compression-linux-amd64",
+      "version": "1.0.0",
+      "name": "FFmpeg Image Compression",
+      "manifestTarget": "profiles/ffmpeg-image-compression-linux-amd64.json"
+    },
+    {
       "id": "libreoffice-pdf-linux-amd64",
       "version": "1.0.0",
       "name": "Office Documents to PDF",

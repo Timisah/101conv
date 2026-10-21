@@ -33,8 +33,13 @@ at submission time.
 The JPEG XL compression profile now exposes a quality ceiling and a maximum
 output size. It supports JPEG XL output from its declared JPEG/PNG/APNG/GIF
 sources, with the exact source/target and encoder behavior still limited by the
-pinned `jpeg-xl` engine package. The frontend describes whether a target uses
-adaptive quality or video bitrate estimation from the profile metadata.
+pinned `jpeg-xl` engine package. The pinned FFmpeg engine also has a separate
+image-compression provider for JPEG, PNG, WebP, and AVIF output. Its
+rule-scoped controls distinguish JPEG quantizer quality, WebP quality, AV1 CRF,
+PNG compression level, metadata mapping, and bounded target-size search. The
+provider keeps source pixel dimensions and intentionally encodes still images.
+The frontend describes whether a target uses adaptive quality or video bitrate
+estimation from the capability metadata.
 
 This is not a promise that every codec can meet an exact byte target. The
 target is hard for the artifact that is published, while quality selection is

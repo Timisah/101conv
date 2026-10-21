@@ -159,7 +159,7 @@ func Build(profiles []management.ProfileRecord, engines []management.EngineRecor
 							id := capabilityID(operation, source, target)
 							options := rule.Options
 							if operation == OperationCompress && d.Compression != nil {
-								options = d.Compression.Options
+								options = d.CompressionForRule(rule).Options
 							}
 							provider.Capabilities = append(provider.Capabilities, ProviderCapability{CapabilityID: id, Options: copyOptions(options)})
 						}
@@ -240,7 +240,7 @@ func (c Catalog) Resolve(request Request, preferredProviderID string) (Resolutio
 		}
 	}
 	if found.ID == "" {
-		return Resolution{}, &ResolutionError{Request: normalized, message: fmt.Sprintf("no capability is registered for %s %s to %s", normalized.Operation, normalized.SourceFormat, normalized.TargetFormat)}
+		return Resolution{}, &ResolutionError{Request: normalized, message: fmt.Sprintf("no verified %s capability is registered for %s to %s", normalized.Operation, normalized.SourceFormat, normalized.TargetFormat)}
 	}
 	byID := make(map[string]Provider, len(c.Providers))
 	for _, provider := range c.Providers {
@@ -268,7 +268,7 @@ func (c Catalog) Resolve(request Request, preferredProviderID string) (Resolutio
 		candidates = append(candidates, item)
 	}
 	if len(available) == 0 {
-		return Resolution{}, &ResolutionError{Request: normalized, Candidates: candidates, message: fmt.Sprintf("no available provider is registered for %s %s to %s", normalized.Operation, normalized.SourceFormat, normalized.TargetFormat)}
+		return Resolution{}, &ResolutionError{Request: normalized, Candidates: candidates, message: fmt.Sprintf("no enabled installed provider can %s %s to %s; install or enable a compatible engine and provider", normalized.Operation, normalized.SourceFormat, normalized.TargetFormat)}
 	}
 	strategy := "stable provider order"
 	selected := -1
