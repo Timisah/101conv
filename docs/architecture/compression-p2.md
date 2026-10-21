@@ -12,14 +12,18 @@ Compression profiles may mark one numeric option with `targetSizeMb` and may
 declare a numeric `targetQualityOption`. When both are present, the Core freezes
 the selected quality range and attempt bound into the immutable job execution
 specification. The Worker's adaptive path tries at most twelve converter runs
-(eight by default), tests the best and worst quality endpoints, then uses a
-bounded search for the best known quality that fits.
+(eight by default). Small quality ranges are searched completely; larger
+ranges test the best and worst quality endpoints, use deterministic interior
+probes when the worst endpoint misses, and use bounded refinement for the
+usual monotonic case. This keeps the search bounded without treating one
+failed endpoint as proof that a non-monotonic encoder cannot meet the cap.
 
 The Worker validates every candidate as a regular, non-empty artifact, checks
 the format signature for supported image types, and applies the hard byte cap
-before publishing the result. If even the lowest quality exceeds the cap, the
-job fails with an explicit infeasibility error. `requireSmallerOutput` remains
-an independent constraint. The original upload is never modified.
+before publishing the result. If no tested quality setting fits within the
+bounded attempt budget, the job fails with an explicit diagnostic rather than
+publishing an oversized artifact. `requireSmallerOutput` remains an
+independent constraint. The original upload is never modified.
 
 Profiles that use bitrate placeholders such as `{compression.videoKbps}` retain
 the existing duration-based video path and media probe requirement. Adaptive
@@ -97,7 +101,11 @@ is private because the report may contain that sensitive data.
 ## Verification
 
 The Worker, Core analysis, HTTP API, profile, jobs, and shared media packages
-have focused tests. Frontend lint, type checking, and a Vite production build
-also pass. Catalog preflight validates the profile fields and placeholder
-rules. These checks are source/test evidence; they do not establish deployment
-or production-engine verification.
+have focused tests. Worker tests cover the real FFmpeg image no-cap path, the
+deterministic adaptive path, a deliberately non-monotonic quality curve, and
+candidate signature validation; jobs tests cover mixed-profile budget bounds.
+The full Go suite and `go vet ./...` pass in the pinned Go container.
+Frontend lint, type checking, and a Vite production build also pass. Catalog
+preflight validates the profile fields and placeholder rules. These checks are
+source/test evidence; they do not establish pinned `cjxl` execution or
+production-engine verification.

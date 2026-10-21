@@ -342,40 +342,86 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 			attemptLimit = 12
 		}
 		attempts := 0
-		selected, err = tryQuality(0, attempts)
-		attempts++
-		if err != nil {
-			return Result{Stdout: selected.stdout, Stderr: selected.stderr}, err
-		}
-		if selected.size > selectedTarget {
-			worstIndex := qualityCount - 1
-			if worstIndex == 0 {
-				return Result{Stdout: selected.stdout, Stderr: selected.stderr}, fmt.Errorf("no quality setting produced an output within the requested target size")
-			}
-			worst, worstErr := tryQuality(worstIndex, attempts)
+		bestIndex := -1
+		lastCandidate := candidate{}
+		tryAndSelect := func(index int) error {
+			trial, trialErr := tryQuality(index, attempts)
 			attempts++
-			if worstErr != nil {
-				return Result{Stdout: worst.stdout, Stderr: worst.stderr}, worstErr
+			lastCandidate = trial
+			if trialErr != nil {
+				return trialErr
 			}
-			if worst.size > selectedTarget {
-				return Result{Stdout: worst.stdout, Stderr: worst.stderr}, fmt.Errorf("no quality setting produced an output within the requested target size")
+			// qualityAt orders candidates from best quality to worst quality,
+			// regardless of whether the encoder's numeric quality direction is
+			// ascending or descending. Keep the best fitting candidate seen.
+			if trial.size <= selectedTarget && (bestIndex < 0 || index < bestIndex) {
+				selected = trial
+				bestIndex = index
 			}
-			selected = worst
-			low, high := 1, worstIndex-1
-			for low <= high && attempts < attemptLimit {
-				middle := low + (high-low)/2
-				trial, trialErr := tryQuality(middle, attempts)
-				attempts++
-				if trialErr != nil {
-					return Result{Stdout: trial.stdout, Stderr: trial.stderr}, trialErr
+			return nil
+		}
+
+		if qualityCount <= attemptLimit {
+			// Small ranges are cheap enough to search completely. This avoids
+			// turning an encoder's non-monotonic size curve into a false
+			// infeasibility result, while keeping large production searches
+			// bounded.
+			for index := 0; index < qualityCount && attempts < attemptLimit; index++ {
+				if err = tryAndSelect(index); err != nil {
+					return Result{Stdout: lastCandidate.stdout, Stderr: lastCandidate.stderr}, err
 				}
-				if trial.size <= selectedTarget {
-					selected = trial
-					high = middle - 1
-				} else {
-					low = middle + 1
+				if bestIndex == 0 {
+					break
 				}
 			}
+		} else {
+			// For large ranges, retain the binary search for the normal
+			// monotonic encoder case. If the low-quality endpoint also misses,
+			// probe bounded interior samples instead of declaring the target
+			// impossible: some encoders have non-monotonic size steps.
+			if err = tryAndSelect(0); err != nil {
+				return Result{Stdout: lastCandidate.stdout, Stderr: lastCandidate.stderr}, err
+			}
+			worstIndex := qualityCount - 1
+			worstFits := false
+			if bestIndex != 0 && worstIndex > 0 && attempts < attemptLimit {
+				if err = tryAndSelect(worstIndex); err != nil {
+					return Result{Stdout: lastCandidate.stdout, Stderr: lastCandidate.stderr}, err
+				}
+				worstFits = bestIndex == worstIndex
+			}
+			if !worstFits && bestIndex < 0 && attempts < attemptLimit {
+				// Evenly spaced probes are deliberately deterministic and avoid
+				// claiming that no quality works when only the endpoint failed.
+				probeSlots := attemptLimit - attempts
+				span := qualityCount - 2
+				for slot := 0; slot < probeSlots && span > 0; slot++ {
+					index := 1 + int(math.Round(float64(slot)*float64(span-1)/float64(maxInt(probeSlots-1, 1))))
+					if err = tryAndSelect(index); err != nil {
+						return Result{Stdout: lastCandidate.stdout, Stderr: lastCandidate.stderr}, err
+					}
+				}
+			}
+			if worstFits && bestIndex >= 0 && bestIndex != 0 {
+				// A fitting endpoint gives us a monotonic bracket. Refine it
+				// while the attempt budget allows, retaining any better candidate
+				// found by the bounded probes above.
+				low, high := 1, worstIndex-1
+				for low <= high && attempts < attemptLimit {
+					middle := low + (high-low)/2
+					if err = tryAndSelect(middle); err != nil {
+						return Result{Stdout: lastCandidate.stdout, Stderr: lastCandidate.stderr}, err
+					}
+					if bestIndex >= 0 && bestIndex <= middle {
+						high = middle - 1
+					} else {
+						low = middle + 1
+					}
+				}
+			}
+		}
+		if bestIndex < 0 {
+			return Result{Stdout: lastCandidate.stdout, Stderr: lastCandidate.stderr}, fmt.Errorf("no tested quality setting produced an output within the requested target size")
 		}
 	} else {
 		selected, err = runConverter(filepath.Join(work, "output."+in.TargetExtension), in.CompressionFixedQuality)
@@ -398,6 +444,13 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 		return Result{}, err
 	}
 	return Result{ResultKey: resultKey, Size: selected.size, ExitCode: selected.exitCode, Stdout: selected.stdout, Stderr: selected.stderr}, nil
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // validateImageSignature catches a converter that exits successfully after

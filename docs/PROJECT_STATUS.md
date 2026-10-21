@@ -53,7 +53,15 @@ The repository records the remote result above. GitHub API access in the local v
 - **FFmpeg Image Compression 1.1.0** and **JPEG XL Image Compression 1.1.0** are new immutable catalog releases with the optional blank default. The 1.0.0 manifests, queued jobs and pinned automations are unchanged; existing installations keep the 8 MB behavior until an administrator installs the new release (the update-versus-new-profile presentation is tracked by [#23](https://github.com/Timisah/101conv/issues/23)).
 - The Compress screen shows `No limit` with an "optional" tag and accurate help text, and omits the blank value from requests and saved presets (`web/src/components/CompressionOptionField.tsx`, `withoutBlankOptionalValues`).
 
-Still unverified from #9's regression list: a real FFmpeg/`cjxl` conversion of the new no-cap path (the Worker test uses the deterministic quality-converter fixture), non-monotonic encoder behavior, mixed batches and AVIF/JXL 2 MB output comparisons. The quality search assumes size grows monotonically with quality.
+The #9 follow-up is now source- and test-verified in this worktree: the Worker
+searches small quality ranges completely, probes bounded interior points when
+large-range endpoints are insufficient, and reports when no tested setting
+fits instead of claiming universal infeasibility. A deterministic
+non-monotonic encoder fixture, mixed-profile budget allocation, and a real
+FFmpeg image no-cap invocation pass in the full Go suite; `go vet ./...` also
+passes. The real image test uses the host FFmpeg 7.1.5 binary. Pinned FFmpeg
+target-size Worker execution, `cjxl` no-cap execution, and AVIF/JXL 2 MB
+comparisons remain unverified release checks.
 
 ## Unified Jobs & history ([#24](https://github.com/Timisah/101conv/issues/24)) — implemented, CI-verified
 
@@ -204,7 +212,8 @@ The P2 scope is implemented and source-verified in this worktree:
   JPEG XL compression is the first official catalog consumer; the existing
   duration/bitrate video target-size path remains separate.
 - The UI describes adaptive quality target sizing correctly, and tests cover a
-  real FFmpeg media target, deterministic adaptive-quality behavior, catalog
+  real FFmpeg media target, real FFmpeg image no-cap behavior, deterministic
+  adaptive-quality behavior including a non-monotonic encoder fixture, catalog
   manifest validation, and the frontend typecheck/build.
 - Compression batches can now declare `combinedTargetSizeMb`. Core resolves
   compatible profiles and freezes proportional per-file target allocations in

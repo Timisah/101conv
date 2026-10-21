@@ -203,6 +203,69 @@ func TestProcessRunnerCompressesRealMediaToTargetSize(t *testing.T) {
 	}
 }
 
+func TestProcessRunnerCompressesRealImageWithoutTargetSize(t *testing.T) {
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg is not installed in this test environment")
+	}
+	ffprobePath, err := exec.LookPath("ffprobe")
+	if err != nil {
+		t.Skip("ffprobe is not installed in this test environment")
+	}
+	root := t.TempDir()
+	engineRoot := filepath.Join(root, "engines")
+	engineDir := filepath.Join(engineRoot, "ffmpeg", "9.0.0")
+	if err = os.MkdirAll(engineDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	copyExecutable := func(source, target string) {
+		t.Helper()
+		data, readErr := os.ReadFile(source)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if writeErr := os.WriteFile(target, data, 0700); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	copyExecutable(ffmpegPath, filepath.Join(engineDir, "ffmpeg"))
+	copyExecutable(ffprobePath, filepath.Join(engineDir, "ffprobe"))
+	inputRoot := filepath.Join(root, "uploads")
+	if err = os.MkdirAll(inputRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	inputID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	inputPath := filepath.Join(inputRoot, inputID)
+	fixture := exec.Command(ffmpegPath, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=1", "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "2", "-f", "mjpeg", inputPath)
+	if output, runErr := fixture.CombinedOutput(); runErr != nil {
+		t.Fatalf("create image fixture: %v\n%s", runErr, output)
+	}
+	input, err := os.ReadFile(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(input)
+	runner := &ProcessRunner{EngineRoot: engineRoot, UploadRoot: inputRoot, ResultRoot: filepath.Join(root, "results"), WorkRoot: filepath.Join(root, "work"), Timeout: 30 * time.Second}
+	result, err := runner.Run(context.Background(), Invocation{
+		JobID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", Attempt: 1, InputID: inputID,
+		EngineID: "ffmpeg", EngineVersion: "9.0.0", ExecutableRelativePath: "ffmpeg", ProbeExecutableRelativePath: "ffprobe",
+		Arguments:               []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", "{source}", "{compression.args}", "{target}"},
+		CompressionArguments:    []string{"-map_metadata", "-1", "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "{compression.quality}"},
+		CompressionFixedQuality: "31", RequireSmaller: true, PreserveResolution: true,
+		TargetExtension: "jpg", SourceExtension: "jpg", ExpectedInputSHA256: hex.EncodeToString(digest[:]), ExpectedInputSize: int64(len(input)),
+	})
+	if err != nil {
+		t.Fatalf("compress image without target: %v", err)
+	}
+	if result.Size <= 0 || result.Size >= int64(len(input)) {
+		t.Fatalf("fixed-quality output size=%d, input=%d", result.Size, len(input))
+	}
+	dimensions, err := exec.Command(ffprobePath, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", filepath.Join(runner.ResultRoot, result.ResultKey)).Output()
+	if err != nil || strings.TrimSpace(string(dimensions)) != "320x240" {
+		t.Fatalf("compressed image dimensions=%q err=%v, want 320x240", strings.TrimSpace(string(dimensions)), err)
+	}
+}
+
 func TestProcessRunnerUsesBoundedAdaptiveQualitySearch(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("container worker is Linux")
@@ -245,6 +308,50 @@ func TestProcessRunnerUsesBoundedAdaptiveQualitySearch(t *testing.T) {
 	}
 	if result.Size < 20+56*4 || result.Size > 20+58*4 {
 		t.Fatalf("quality search did not retain the best fitting quality: output size=%d", result.Size)
+	}
+}
+
+func TestProcessRunnerSearchesNonMonotonicQualityCurve(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("container worker is Linux")
+	}
+	root := t.TempDir()
+	engineDir := filepath.Join(root, "engines", "quality", "1.0.0")
+	if err := os.MkdirAll(engineDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(engineDir, "quality")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "../../testdata/quality-converter")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build non-monotonic quality converter: %v\n%s", err, output)
+	}
+	inputRoot := filepath.Join(root, "uploads")
+	if err := os.MkdirAll(inputRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	inputID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	input := make([]byte, 1000)
+	if err := os.WriteFile(filepath.Join(inputRoot, inputID), input, 0600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(input)
+	runner := &ProcessRunner{EngineRoot: filepath.Join(root, "engines"), UploadRoot: inputRoot, ResultRoot: filepath.Join(root, "results"), WorkRoot: filepath.Join(root, "work"), Timeout: 5 * time.Second}
+	result, err := runner.Run(context.Background(), Invocation{
+		JobID: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", Attempt: 1, InputID: inputID,
+		EngineID: "quality", EngineVersion: "1.0.0", ExecutableRelativePath: "quality",
+		Arguments:            []string{"{source}", "--non-monotonic", "{compression.args}", "{target}"},
+		CompressionArguments: []string{"--quality={compression.quality}"}, TargetSizeBytes: 256,
+		CompressionQualityMin: 1, CompressionQualityMax: 8, CompressionQualityStep: 1,
+		CompressionQualityHigherBetter: true, CompressionQualityAttempts: 8, RequireSmaller: true,
+		TargetExtension: "jxl", ExpectedInputSHA256: hex.EncodeToString(digest[:]), ExpectedInputSize: int64(len(input)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Quality 6 is the best fitting setting (200 bytes); quality 2 also fits,
+	// so an endpoint-only or monotonic binary search would choose incorrectly.
+	if result.Size != 200 {
+		t.Fatalf("non-monotonic quality search output size=%d, want 200", result.Size)
 	}
 }
 

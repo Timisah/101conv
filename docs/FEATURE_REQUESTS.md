@@ -97,7 +97,12 @@ pixel dimensions, and verified output signatures. The existing combined batch
 budget remains in the P2 path. CI run #98 passed the pinned FFmpeg matrix,
 browser acceptance, and restore
 conversion; the local host smoke used FFmpeg 7.1.5 rather than the pinned
-catalog artifact.
+catalog artifact. The Worker follow-up now exhaustively checks small quality
+ranges and uses bounded endpoint/interior probing for larger ranges, with a
+regression fixture for non-monotonic encoder sizes. The mixed-profile budget
+path and a real FFmpeg image no-cap invocation are covered by the full Go test
+suite; pinned FFmpeg target-size Worker execution, `cjxl`, and cross-codec 2 MB
+comparisons remain release verification work.
 
 ### FR-010 — Shared file analysis and File Inspector workspace
 

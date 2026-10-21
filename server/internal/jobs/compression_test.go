@@ -115,4 +115,19 @@ func TestAllocateCompressionBudget(t *testing.T) {
 	if want := []int64{2, 3}; !reflect.DeepEqual(allocated, want) {
 		t.Fatalf("best-effort capped allocation=%v want=%v", allocated, want)
 	}
+
+	// Mixed image profiles can have different bounds. The allocation remains
+	// proportional after the small item hits its minimum and the large item
+	// hits its maximum.
+	allocated, err = allocateCompressionBudget([]compressionBudgetItem{
+		{SizeBytes: 900, MinMB: 1, MaxMB: 20, TargetKey: "jpeg.targetSizeMb"},
+		{SizeBytes: 100, MinMB: 2, MaxMB: 5, TargetKey: "jxl.targetSizeMb"},
+		{SizeBytes: 400, MinMB: 1, MaxMB: 3, TargetKey: "avif.targetSizeMb"},
+	}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []int64{15, 2, 3}; !reflect.DeepEqual(allocated, want) {
+		t.Fatalf("mixed-profile allocation=%v want=%v", allocated, want)
+	}
 }
