@@ -457,6 +457,12 @@ if [[ -n "${SMOKE_EXPORT_RESTORE_DIR:-}" ]]; then
   backup_dir="$(find "$tmp_root/backups" -mindepth 1 -maxdepth 1 -type d -name '101conv-backup-*' -print -quit)"
   [[ -n "$backup_dir" ]]
   cp -a "$backup_dir" "$SMOKE_EXPORT_RESTORE_DIR/backup"
+  # GitHub artifact extraction normalizes file modes. Preserve the backup's
+  # restrictive deployment-file permissions across the CI hand-off instead of
+  # weakening verify-backup.sh's sensitive-file check in the restore job.
+  tar -C "$SMOKE_EXPORT_RESTORE_DIR" -cpf "$SMOKE_EXPORT_RESTORE_DIR/backup.tar" backup
+  chmod 0600 "$SMOKE_EXPORT_RESTORE_DIR/backup.tar"
+  rm -rf "$SMOKE_EXPORT_RESTORE_DIR/backup"
   printf '%s\n%s\n' "$SMOKE_IMAGE" "$BROWSER_IMAGE" > "$SMOKE_EXPORT_RESTORE_DIR/images.txt"
   docker image save "$SMOKE_IMAGE" "$BROWSER_IMAGE" | gzip -1 > "$SMOKE_EXPORT_RESTORE_DIR/images.tar.gz"
   chmod 0600 "$SMOKE_EXPORT_RESTORE_DIR/images.txt" "$SMOKE_EXPORT_RESTORE_DIR/images.tar.gz"
