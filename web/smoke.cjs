@@ -434,11 +434,20 @@ const assert = require('node:assert/strict');
     await guestBatch.waitFor({ timeout: 15000 });
     const guestBatchID = (await guestBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];
     assert.ok(guestBatchID, 'guest batch is visible in this browser session');
-    await guestPage.waitForFunction(async id => { const response = await fetch('/api/v1/batches/' + id); return response.ok && (await response.json()).succeeded === 2; }, guestBatchID, { timeout: 60000 });
+    const guestBatchData = await guestPage.evaluate(async id => {
+      const deadline = Date.now() + 60000;
+      while (Date.now() < deadline) {
+        const response = await fetch('/api/v1/batches/' + id);
+        if (response.ok) {
+          const batch = await response.json();
+          if (batch.succeeded === 2 && batch.items?.length === 2 && batch.items.every(item => item.state === 'succeeded' && item.jobId)) return batch;
+        }
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      throw new Error('guest batch did not expose two succeeded items with job references');
+    }, guestBatchID);
     await guestBatch.locator(':scope > summary').click();
-    const guestBatchData = await guestPage.evaluate(async id => await fetch('/api/v1/batches/' + id).then(r => r.json()), guestBatchID);
-    const guestItem = guestBatchData.items.find(item => item.jobId || item.job?.id);
-    const guestJobID = guestItem?.jobId ?? guestItem?.job?.id;
+    const guestJobID = guestBatchData.items.find(item => item.state === 'succeeded')?.jobId;
     assert.ok(guestJobID, 'guest batch retains individual job references');
     const guestResult = await guestPage.evaluate(async id => { const r = await fetch('/api/v1/jobs/' + id + '/result'); return { status: r.status, text: await r.text() }; }, guestJobID);
     assert.equal(guestResult.status, 200, 'guest can download its individual result');
