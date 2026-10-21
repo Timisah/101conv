@@ -434,7 +434,12 @@ const assert = require('node:assert/strict');
     await guestBatch.waitFor({ timeout: 15000 });
     const guestBatchID = (await guestBatch.locator(':scope > summary').innerText()).match(/ID ([0-9a-f-]{36})/)?.[1];
     assert.ok(guestBatchID, 'guest batch is visible in this browser session');
-    await guestPage.waitForFunction(async id => { const response = await fetch('/api/v1/batches/' + id); return response.ok && (await response.json()).succeeded === 2; }, guestBatchID, { timeout: 60000 });
+    await guestPage.waitForFunction(async id => {
+      const response = await fetch('/api/v1/batches/' + id);
+      if (!response.ok) return false;
+      const batch = await response.json();
+      return batch.succeeded === 2 && batch.items?.every(item => item.state === 'succeeded' && item.jobId);
+    }, guestBatchID, { timeout: 60000 });
     await guestBatch.locator(':scope > summary').click();
     const guestBatchData = await guestPage.evaluate(async id => fetch('/api/v1/batches/' + id).then(r => r.json()), guestBatchID);
     const guestJobID = guestBatchData.items.find(item => item.state === 'succeeded')?.jobId;
