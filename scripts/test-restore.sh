@@ -92,7 +92,7 @@ services:
   core:
     image: ${RESTORE_IMAGE:?}
     environment:
-      APP_VERSION: restore-smoke
+      APP_VERSION: 0.0.0-restore-smoke
       PORT: 5656
       DATA_PATH: /var/lib/101conv
       UPLOADS_PATH: /var/lib/101conv/uploads
