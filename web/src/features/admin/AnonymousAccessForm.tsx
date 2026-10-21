@@ -11,20 +11,20 @@ type NumericKey = Exclude<keyof AnonymousSettings, 'enabled' | 'allowConversion'
 type Field = [NumericKey, string, number, number, number, string, string?];
 
 const GROUPS: { title: string; blurb: string; fields: Field[] }[] = [
-  { title: 'Per-guest limits', blurb: 'Applied to each visitor separately.', fields: [
+  { title: 'Per-guest limits', blurb: '', fields: [
     ['maxFileBytes', 'Largest file', 1, 1024, 1024 * 1024, 'MiB'],
     ['maxBatchFiles', 'Files per batch', 1, 20, 1, 'files'],
-    ['maxSimultaneousJobs', 'Jobs at once', 1, 100, 1, 'jobs', 'Queued plus running.'],
+    ['maxSimultaneousJobs', 'Jobs at once', 1, 100, 1, 'jobs'],
     ['uploadsPerMinute', 'Uploads per minute', 1, 120, 1, '/min'],
     ['submissionsPerMinute', 'Submissions per minute', 1, 60, 1, '/min'],
   ] },
-  { title: 'Whole-instance guest capacity', blurb: 'Shared by every guest together. These protect the server when many visitors arrive at once.', fields: [
+  { title: 'Whole-instance guest capacity', blurb: '', fields: [
     ['maxGlobalJobs', 'Jobs at once, all guests', 1, 1000, 1, 'jobs'],
     ['globalUploadsPerMinute', 'Uploads per minute, all guests', 1, 10000, 1, '/min'],
     ['globalSubmissionsPerMinute', 'Submissions per minute, all guests', 1, 10000, 1, '/min'],
-    ['maxGlobalStorageBytes', 'Total guest storage', 1, 1024, 1024 * 1024 * 1024, 'GiB', 'Counts kept originals and results plus space reserved for running jobs. Keep it above one maximum-size file plus one maximum-size result.'],
+    ['maxGlobalStorageBytes', 'Total guest storage', 1, 1024, 1024 * 1024 * 1024, 'GiB', 'Keep above one largest file plus its result.'],
   ] },
-  { title: 'How long guest data is kept', blurb: 'Files expire automatically; the record of a job can outlive its files.', fields: [
+  { title: 'How long guest data is kept', blurb: '', fields: [
     ['sessionExpirationHours', 'Guest session', 1, 720, 1, 'hours'],
     ['resultExpirationHours', 'Results and converted originals', 1, 720, 1, 'hours'],
     ['uploadExpirationHours', 'Uploads never submitted', 1, 720, 1, 'hours'],
@@ -47,7 +47,7 @@ export function AnonymousAccessForm({ settings, onChange, onSubmit, saving }: { 
       {GROUPS.map(group => (
         <fieldset key={group.title} className="guest-group">
           <legend>{group.title}</legend>
-          <p className="guest-blurb">{group.blurb}</p>
+          {group.blurb && <p className="guest-blurb">{group.blurb}</p>}
           <div className="guest-fields">
             {group.fields.map(([key, label, min, max, scale, unit, hint]) => (
               <label className="admin-field" key={key}>
@@ -59,7 +59,7 @@ export function AnonymousAccessForm({ settings, onChange, onSubmit, saving }: { 
           </div>
         </fieldset>
       ))}
-      <p className="muted-copy">{settings.enabled ? 'Changes apply to new requests once saved.' : 'Anonymous access is off: guests cannot start new work, and these settings are paused.'} The Worker’s own concurrency limit is separate and unchanged.</p>
+      {!settings.enabled && <p className="muted-copy">Anonymous access is off, so guests cannot start new work.</p>}
       <button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Save anonymous access'}</button>
     </form>
   );

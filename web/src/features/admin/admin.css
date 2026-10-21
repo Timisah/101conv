@@ -67,3 +67,8 @@ section.access-panel select { appearance: none; -webkit-appearance: none; paddin
 .auto-advanced[open] > summary::after { content: '–'; }
 .auto-advanced > summary small { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 8px; }
 .auto-advanced-body { display: grid; gap: 12px; padding: 0 14px 14px; }
+
+/* Panel headings: no divider under the title; spacing does the separating. */
+.admin-panel .panel-heading { border-bottom: 0; padding-bottom: 2px; margin-bottom: 4px; }
+.admin-panel .panel-heading p:empty { display: none; }
+.limitations .text-link { margin: 8px 18px 0 0; display: inline-flex; }
