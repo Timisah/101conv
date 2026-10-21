@@ -28,7 +28,9 @@ docker run -d --name "$postgres" --network "$network" --network-alias postgres \
  -e POSTGRES_USER=test -e POSTGRES_PASSWORD=document-test-only -e POSTGRES_DB=test postgres:17-alpine >/dev/null
 ready=false
 for ((i=0;i<30;i++)); do
- if docker exec "$postgres" pg_isready -U test -d test >/dev/null 2>&1; then ready=true; break; fi
+ # Probe through the same internal TCP alias used by the integration test;
+ # checking only PostgreSQL's local socket can race network availability.
+ if docker run --rm --network "$network" --entrypoint pg_isready postgres:17-alpine -h postgres -U test -d test >/dev/null 2>&1; then ready=true; break; fi
  sleep 1
 done
 [[ "$ready" == true ]] || { echo 'Document test PostgreSQL failed to become ready' >&2; exit 1; }

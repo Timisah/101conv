@@ -59,7 +59,7 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 - Document Creator: the first Build editor now provides non-destructive page ordering, thumbnails, ordered preview, and browser-local PDF generation for raster image pages; server-side PDF/Office expansion and merging, saved/expiring projects, and fidelity-tested exporter output remain planned.
 - Visual Automations blocks/branches and broader blueprint system.
 - Versioned extension installation/compatibility/rollback and Immich connector.
-- New brand/logo, static public pages/SEO and rate-limited public demo.
+- New brand/logo, domain-specific SEO/publication and rate-limited public demo.
 
 ## P4 progress in the current worktree (not deployment evidence)
 
@@ -77,6 +77,18 @@ CI workflow includes Go/PostgreSQL tests, Go race/vet, React checks/build, pinne
 Evidence: `server/internal/acceleration/`, the Worker heartbeat migration in
 `server/internal/jobs/`, `docs/architecture/hardware-acceleration-p4.md`,
 and the focused acceleration/jobs tests.
+
+## P5 progress in the current worktree (not deployment evidence)
+
+- The Web image includes a static `/about/` discovery page with accurate
+  Convert, Compress, Build, Inspect, and Automate descriptions, repository and
+  sign-in links, responsive markup, and no external analytics or scripts.
+- The authenticated SPA shell is marked `noindex,nofollow`; `robots.txt`
+  allows only the public information page. No new brand, canonical domain,
+  sitemap publication, or public conversion demo has been selected.
+
+Evidence: `web/public/about/index.html`, `web/public/robots.txt`,
+`web/index.html`, and `docs/architecture/public-discoverability-p5.md`.
 
 ## P2 progress in the current worktree (not deployment evidence)
 

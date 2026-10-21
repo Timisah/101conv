@@ -158,6 +158,12 @@ does not map GPU devices.
 **Acceptance:** README screenshots, quick start, format matrix, useful docs, static SEO pages through GitHub Pages or equivalent, proper titles/sitemaps/robots/canonicals/schema when justified, crawler accessibility and privacy. Only verified features; no spammy bulk landing pages or promises of ChatGPT/Google ranking.  
 **Dependencies:** honest catalog FR-003, brand FR-016 for custom domain.
 
+**Current worktree progress:** the Web image now includes an owner-neutral,
+static `/about/` page with responsive metadata, semantic Schema.org markup,
+accurate five-workspace descriptions, repository/install links, and a robots
+policy that excludes authenticated/API paths. Canonical and sitemap metadata
+remain deferred until a public domain and publication target are approved.
+
 ### FR-018 — Resource-limited public demo
 
 **Goal:** visitors try actual conversions and discover self-hosting.  
