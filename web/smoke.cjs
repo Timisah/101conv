@@ -118,6 +118,8 @@ async function searchHistory(page, text) {
     await page.getByLabel('Output folder').selectOption({ label: 'Smoke converted · ' + '/mounts/converted' });
     await page.getByLabel('Installed profile').selectOption('ppm-pgm-grayscale');
     await page.getByLabel('Output format').selectOption('pgm');
+    await page.locator('details.auto-advanced > summary').filter({ hasText: 'Which files to pick up' }).click();
+    await page.locator('details.auto-advanced > summary').filter({ hasText: 'Timing and output behavior' }).click();
     await page.getByLabel('Extensions').fill('ppm');
     await page.getByLabel('Scan interval (seconds)').fill('30');
     await page.getByLabel('Stable for (seconds)').fill('5');
