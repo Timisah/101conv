@@ -16,6 +16,9 @@
       * { box-sizing: border-box; }
       body { margin: 0; line-height: 1.55; }
       a { color: inherit; }
+      :focus-visible { outline: 3px solid #f0a83a; outline-offset: 4px; }
+      .skip-link { position: absolute; z-index: 2; top: 10px; left: 14px; padding: 8px 12px; border-radius: 7px; color: #fff; background: #1c302b; transform: translateY(-150%); transition: transform .15s ease; }
+      .skip-link:focus { transform: translateY(0); }
       .shell { width: min(1120px, calc(100% - 40px)); margin: 0 auto; }
       .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 24px 0; }
       .brand { display: inline-flex; align-items: center; gap: 11px; color: #1c302b; font-weight: 750; font-size: 20px; text-decoration: none; letter-spacing: -.04em; }
@@ -46,6 +49,19 @@
       .feature-number { color: #24745d; font-size: 11px; font-weight: 800; letter-spacing: .12em; }
       .feature h3 { margin: 17px 0 7px; font-size: 17px; letter-spacing: -.02em; }
       .feature p { margin: 0; color: #5f706a; font-size: 12px; }
+      .catalog-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+      .catalog-card { padding: 20px; border: 1px solid #e2e9e5; border-radius: 13px; background: #fff; }
+      .catalog-card h3 { margin: 0 0 9px; font-size: 17px; letter-spacing: -.02em; }
+      .catalog-card p { margin: 0; color: #5f706a; font-size: 12px; }
+      .catalog-card strong { color: #1c302b; }
+      .catalog-card a { display: inline-block; margin-top: 15px; color: #24745d; font-size: 12px; font-weight: 700; text-decoration: none; }
+      .catalog-card a:hover { text-decoration: underline; }
+      .setup { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 28px; align-items: start; padding: 26px; border: 1px solid #e2e9e5; border-radius: 16px; background: #fff; }
+      .setup .section-heading { margin: 0; }
+      .setup pre { margin: 0; padding: 18px; overflow: auto; border-radius: 10px; color: #e7f0eb; background: #1c302b; font: 500 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .setup-list { display: grid; gap: 10px; margin: 17px 0 0; padding: 0 0 0 20px; color: #5f706a; font-size: 13px; }
+      .setup-link { display: inline-block; margin-top: 17px; color: #24745d; font-size: 13px; font-weight: 700; text-decoration: none; }
+      .setup-link:hover { text-decoration: underline; }
       .note { margin-top: 23px; padding: 16px 18px; border-left: 3px solid #24745d; color: #5f706a; background: #eaf4ee; font-size: 13px; }
       .footer { display: flex; justify-content: space-between; gap: 20px; padding: 24px 0 38px; border-top: 1px solid #e2e9e5; color: #6e7d77; font-size: 11px; }
       .footer p { margin: 0; }
@@ -54,7 +70,10 @@
         :root { color-scheme: dark; color: #e7f0eb; background: #111b18; }
         .brand { color: #e7f0eb; }
         .top-links, .hero-copy, .hero-card p, .trust-list li, .section-heading p, .feature p, .footer { color: #b2c3b9; }
-        .hero-card, .feature { border-color: #304338; background: #192620; }
+        .hero-card, .feature, .catalog-card { border-color: #304338; background: #192620; }
+        .catalog-card strong { color: #e7f0eb; }
+        .setup { border-color: #304338; background: #192620; }
+        .setup-list { color: #b2c3b9; }
         .note { color: #b2c3b9; background: #253d30; }
         .footer { border-color: #304338; }
       }
@@ -62,6 +81,8 @@
         .hero { grid-template-columns: 1fr; gap: 32px; padding: 52px 0 64px; }
         .hero-card { max-width: 580px; }
         .features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .catalog-grid { grid-template-columns: 1fr; }
+        .setup { grid-template-columns: 1fr; }
       }
       @media (max-width: 560px) {
         .shell { width: min(100% - 28px, 1120px); }
@@ -77,6 +98,9 @@
   </head>
   <body>
     <div class="shell" itemscope itemtype="https://schema.org/SoftwareApplication">
+      <meta itemprop="applicationCategory" content="MultimediaApplication" />
+      <meta itemprop="operatingSystem" content="Linux, Docker" />
+      <a class="skip-link" href="#main-content">Skip to content</a>
       <header class="topbar">
         <a class="brand" href="/about/" itemprop="url" aria-label="101conv home"><span class="mark" aria-hidden="true">101</span><span itemprop="name">101conv</span></a>
         <nav class="top-links" aria-label="Public navigation">
@@ -85,7 +109,7 @@
         </nav>
       </header>
 
-      <main>
+      <main id="main-content">
         <section class="hero" aria-labelledby="hero-title">
           <div>
             <p class="eyebrow">Private file workspace</p>
@@ -120,7 +144,53 @@
             <article class="feature"><span class="feature-number">04</span><h3>Inspect</h3><p>Review bounded file, stream, document, and metadata details before processing.</p></article>
             <article class="feature"><span class="feature-number">05</span><h3>Automate</h3><p>Use mounted-folder blueprints with stable-file checks, history, and safe output publication.</p></article>
           </div>
-          <p class="note">Supported formats and fidelity depend on the installed catalog and deployment. Review the repository and current project status for verified details.</p>
+        </section>
+
+        <section class="section" aria-labelledby="setup-title">
+          <div class="setup">
+            <div class="section-heading">
+              <p class="eyebrow">Self-hosting quick start</p>
+              <h2 id="setup-title">Run the workspace where your files live.</h2>
+              <p>On a Docker host, the repository installer creates the initial environment and starts the existing Compose stack. Keep the generated secrets private.</p>
+            </div>
+            <div>
+              <pre aria-label="Install 101conv"><code>git clone https://github.com/Timisah/101conv.git
+cd 101conv
+./scripts/install.sh</code></pre>
+              <ul class="setup-list">
+                <li>Open <code>http://&lt;docker-host&gt;:5656</code> and finish first-run setup.</li>
+                <li>Keep <code>.env</code> private; it contains bootstrap and database credentials.</li>
+                <li>Review the catalog and install only the engines and profiles your deployment needs.</li>
+              </ul>
+              <a class="setup-link" href="https://github.com/Timisah/101conv#readme">Read the installation and deployment notes on GitHub</a>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="catalog-title">
+          <div class="section-heading">
+            <p class="eyebrow">Verified catalog</p>
+            <h2 id="catalog-title">Capabilities you can install and review.</h2>
+            <p>The official catalog currently covers these tested paths. A deployment only exposes the engines and profiles its administrator installs.</p>
+          </div>
+          <div class="catalog-grid">
+            <article class="catalog-card">
+              <h3>Images</h3>
+              <p><strong>Sources:</strong> JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF. FFmpeg image profiles target those formats; JPEG XL profiles add JPG/JPEG, PNG/APNG, GIF, and JXL paths.</p>
+              <a href="https://github.com/Timisah/101conv/blob/main/docs/profiles/catalog-format.md">Image profile details</a>
+            </article>
+            <article class="catalog-card">
+              <h3>Audio and video</h3>
+              <p><strong>Sources:</strong> common MP4/MKV/MOV/AVI/WebM-family video and MP3/AAC/M4A/OGG/OPUS/WAV/FLAC/WMA/AMR audio containers, with target-specific conversion and compression profiles.</p>
+              <a href="https://github.com/Timisah/101conv/blob/main/docs/architecture/compression-p2.md">Media fidelity limits</a>
+            </article>
+            <article class="catalog-card">
+              <h3>Documents</h3>
+              <p><strong>Office:</strong> DOCX, DOC, ODT, XLSX, XLS, ODS, PPTX, PPT, ODP, RTF, and TXT to PDF. <strong>PDF:</strong> one selected page to PNG/JPG or bounded text extraction.</p>
+              <a href="https://github.com/Timisah/101conv/blob/main/docs/architecture/documents-d2.md">Document support details</a>
+            </article>
+          </div>
+          <p class="note">Supported formats and fidelity depend on the installed catalog, engine revision, and deployment architecture. The catalog and repository documentation are the source of truth; no universal format or fidelity guarantee is implied.</p>
         </section>
       </main>
 

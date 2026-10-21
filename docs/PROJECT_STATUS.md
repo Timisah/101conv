@@ -82,13 +82,23 @@ and the focused acceleration/jobs tests.
 
 - The Web image includes a static `/about/` discovery page with accurate
   Convert, Compress, Build, Inspect, and Automate descriptions, repository and
-  sign-in links, responsive markup, and no external analytics or scripts.
+  sign-in links, a compact catalog-backed image/media/document capability
+  summary, a copyable Docker quick start, responsive markup, keyboard skip
+  navigation, and no external analytics or scripts.
+- The README now carries a matching linked catalog matrix for GitHub-first
+  discovery, with explicit document, media, animation, metadata, and fidelity
+  caveats.
 - The authenticated SPA shell is marked `noindex,nofollow`; `robots.txt`
   allows only the public information page. No new brand, canonical domain,
   sitemap publication, or public conversion demo has been selected.
+- The production frontend build now runs `web/public-smoke.cjs` in CI to
+  protect the static route, robots/no-index boundary, Schema.org metadata,
+  workspace descriptions, quick-start content, and absence of remote page
+  assets.
 
 Evidence: `web/public/about/index.html`, `web/public/robots.txt`,
-`web/index.html`, and `docs/architecture/public-discoverability-p5.md`.
+`web/index.html`, `web/public-smoke.cjs`, and
+`docs/architecture/public-discoverability-p5.md`.
 
 ## P2 progress in the current worktree (not deployment evidence)
 

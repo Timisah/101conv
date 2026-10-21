@@ -9,7 +9,13 @@ npm ci
 npm run dev
 npm run lint
 npm run build
+npm run test:public
 ```
+
+`test:public` checks the built `/about/` page, the authenticated shell's
+no-index metadata, and the restricted `robots.txt` policy. The public page is
+static and dependency-free; its catalog summary links to the repository for
+the authoritative profile and fidelity details.
 
 The browser verification script `../scripts/phase5-browser-smoke.sh` provisions a temporary PostgreSQL/Core/Worker stack, serves the frontend through Nginx, and uses Chromium to submit and download an actual conversion.
 
