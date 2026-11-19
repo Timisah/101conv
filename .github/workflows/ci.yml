@@ -97,6 +97,9 @@ jobs:
       - name: Lint and type check
         working-directory: web
         run: npm run lint
+      - name: Run frontend module unit tests
+        working-directory: web
+        run: npm run test:unit
       - name: Production build
         working-directory: web
         run: npm run build
