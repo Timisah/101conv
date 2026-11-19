@@ -26,7 +26,7 @@ See [MASTER_PLAN.md](MASTER_PLAN.md), [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md)
 | Guest conversion/compression, rate/storage quotas and expiry | `server/internal/auth/`, `server/internal/httpapi/session.go`; reverse-proxy behavior has had several hardening iterations |
 | Durable job attempts, cancellation, retention, batch results and restore rehearsal | Job API and integration/restore scripts; actual production restore depends on deployment details |
 | Versioned engine/profile repository, SHA-256 validation, TUF-capable manager | `server/internal/repositorymanager/`, `catalog/`; official signing root is still empty |
-| FFmpeg audio/video, JPEG XL and FFmpeg image profile 1.1.0 | Catalog definitions and `scripts/verify-ffmpeg-image.sh`; runtime/encoder-specific limits apply |
+| FFmpeg audio/video, JPEG XL and FFmpeg image profile 1.2.0 | Catalog definitions and `scripts/verify-ffmpeg-image.sh`; runtime/encoder-specific limits apply |
 | Office-to-PDF via managed LibreOffice runtime | Commit `6dc091c`, `docs/architecture/documents-d2.md`, engine/profile manifests; AMD64 first |
 | PDF-to-image (one selected page) and text through managed Poppler | `docs/architecture/documents-d2.md`; not an all-pages PDF editor or OCR |
 | Mounted Drives and bounded folder-scan Automations | `server/internal/automation/`, `docs/architecture/automations-c1.md`; Core-only registered mounts, worker does not mount input NAS paths |
@@ -108,6 +108,16 @@ Not deployment evidence. An administrator can now tell a *new* profile from an *
 - Failures to load the catalog degrade to the existing error state and never block the application.
 
 Verified locally: `go test ./...` against PostgreSQL 16 (new `DescribeProfileChanges` tests use the real 1.0.0/1.1.0 manifests), `go vet`, `tsc`, production build, `ui-smoke.cjs` (new: update tag on an installed profile, nav badge count, one card for two releases, plan content, the approved plan id is what is applied, "New" banner and tag, no overflow at 390 px), `theme-smoke.cjs`, `public-smoke.cjs`. **Not verified:** a real install or update against the live GitHub catalog, and the Docker suite with the new pages. Not done from the issue: missing-engine states beyond "Also installs the X engine", rollback UI, and updating several profiles at once.
+
+## Official profile app-version bound alignment ([#30](https://github.com/Timisah/101conv/issues/30)) — implemented in the working tree, awaiting CI
+
+Not deployment evidence. Three official profile releases (`ffmpeg-image-linux-amd64` `1.1.0`, `libreoffice-pdf-linux-amd64` `1.0.0`, and `poppler-pdf-linux-amd64` `1.0.0`) previously capped `maximumAppVersionExclusive` at `0.2.0` while `catalog/targets/catalog/index.json` and the remaining official profiles declared `1.0.0`:
+
+- **Immutable aligned releases:** published `ffmpeg-image-linux-amd64` `1.2.0`, `libreoffice-pdf-linux-amd64` `1.1.0`, and `poppler-pdf-linux-amd64` `1.1.0` at new immutable paths under `catalog/targets/profiles/` with `maximumAppVersionExclusive: "1.0.0"`, keeping all existing `1.0.0` and `1.1.0` target manifests and catalog entries intact.
+- **Synchronized derived indexes & Marketplace filtering:** regenerated `catalog/index.json` and `server/internal/catalog/official.json` via `python3 scripts/sync-compatibility-catalog.py --write` (4 engines, 14 profile releases), verified `catalog.New("0.2.0")` retains the aligned releases while filtering out the `0.2.0`-capped historical releases, and updated `repositorymanager` (`loadUnsignedView` and `loadViewLocked`) so superseded historical releases with narrower app-version bounds are omitted from `IncompatibleProfiles` whenever a compatible release of the same profile ID exists (and genuinely incompatible multi-version profiles collapse to their highest semver release).
+- **Author preflight ceiling guard:** `catalog-repo validate` (`server/cmd/catalog-repo/main.go`) now validates catalog index app-version bounds and rejects any profile whose latest (highest semver) release sets `maximumAppVersionExclusive` below `index.MaximumAppVersionExclusive` unless an explicit `maximumAppVersionReason` is recorded on the outer target manifest wrapper or catalog index entry; superseded historical releases continue to validate without modification.
+
+Verified locally: `python3 scripts/sync-compatibility-catalog.py --check`, `go run ./cmd/catalog-repo validate --catalog-root ../catalog`, `go test -race -p 1 ./... -count=1`, and `go vet -p 1 ./...`. **Not yet verified in this worktree:** remote GitHub Actions CI run and PostgreSQL-backed integration tests where `TEST_DATABASE_URL` is unset locally; official TUF root signing remains the separate owner-controlled gate ([#4](https://github.com/Timisah/101conv/issues/4)).
 
 ## Confirmed issues at reviewed HEAD — address before general public launch
 

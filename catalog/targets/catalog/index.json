@@ -48,6 +48,12 @@
       "manifestTarget": "profiles/ffmpeg-image-linux-amd64-1.1.0.json"
     },
     {
+      "id": "ffmpeg-image-linux-amd64",
+      "version": "1.2.0",
+      "name": "FFmpeg Image Conversion",
+      "manifestTarget": "profiles/ffmpeg-image-linux-amd64-1.2.0.json"
+    },
+    {
       "id": "jpeg-xl-linux-amd64",
       "version": "1.2.0",
       "name": "JPEG XL Image Conversion",
@@ -90,10 +96,22 @@
       "manifestTarget": "profiles/libreoffice-pdf-linux-amd64.json"
     },
     {
+      "id": "libreoffice-pdf-linux-amd64",
+      "version": "1.1.0",
+      "name": "Office Documents to PDF",
+      "manifestTarget": "profiles/libreoffice-pdf-linux-amd64-1.1.0.json"
+    },
+    {
       "id": "poppler-pdf-linux-amd64",
       "version": "1.0.0",
       "name": "PDF Rendering & Text Extraction",
       "manifestTarget": "profiles/poppler-pdf-linux-amd64.json"
+    },
+    {
+      "id": "poppler-pdf-linux-amd64",
+      "version": "1.1.0",
+      "name": "PDF Rendering & Text Extraction",
+      "manifestTarget": "profiles/poppler-pdf-linux-amd64-1.1.0.json"
     }
   ]
 }
