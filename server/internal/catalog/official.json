@@ -5,7 +5,7 @@
   "engines": [
     {
       "id": "ffmpeg",
-      "version": "9.0.2-28-g669f5ab083+101conv.1",
+      "version": "9.0.2-39-g7adfbe40dc+101conv.1",
       "name": "FFmpeg LGPL (Linux x86-64)",
       "description": "Static BtbN Linux x86-64 build for common audio and video conversion; GPL-only x264 and x265 encoders are excluded.",
       "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/engines/ffmpeg-linux-amd64.json",
@@ -23,7 +23,7 @@
     },
     {
       "id": "libreoffice",
-      "version": "25.2.3+deb13u8.1",
+      "version": "25.2.3+deb13u12.1",
       "name": "LibreOffice document runtime (Linux x86-64)",
       "description": "Managed adapter for the exact Debian runtime in the document Worker image. Requires Dockerfile.worker; installation does not download a system package.",
       "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/engines/libreoffice-linux-amd64.json",

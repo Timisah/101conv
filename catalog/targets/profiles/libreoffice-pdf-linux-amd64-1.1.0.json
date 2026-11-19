@@ -13,7 +13,7 @@
       {
         "engineId": "libreoffice",
         "versions": {
-          "minimum": "25.2.3+deb13u8.1",
+          "minimum": "25.2.3+deb13u12.1",
           "maximumExclusive": "25.2.4"
         },
         "capabilities": [

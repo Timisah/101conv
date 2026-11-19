@@ -357,7 +357,7 @@ func TestPublisherAddsSignedExternalPackageMetadataForOfficialManifests(t *testi
 	if err = root.VerifyDelegate(metadata.TARGETS, targets); err != nil {
 		t.Fatal(err)
 	}
-	for target, expectedSize := range map[string]int64{"packages/ffmpeg-n9.0.2-28-g669f5ab083-linux64-lgpl-9.0.tar.xz": 137920872, "packages/jxl-linux-x86_64-static.tar.lz": 4034223} {
+	for target, expectedSize := range map[string]int64{"packages/ffmpeg-n9.0.2-39-g7adfbe40dc-linux64-lgpl-9.0.tar.xz": 136027168, "packages/jxl-linux-x86_64-static.tar.lz": 4034223} {
 		info := targets.Signed.Targets[target]
 		if info == nil || info.Length != expectedSize || len(info.Hashes["sha256"]) != 32 {
 			t.Fatalf("missing or incorrect TUF package metadata for %s: %#v", target, info)

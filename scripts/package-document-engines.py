@@ -13,7 +13,7 @@ import tarfile
 
 root = Path(__file__).resolve().parents[1]
 for name, version, executable, capability, license_name in [
-    ('libreoffice', '25.2.3+deb13u8.1', 'office-convert', 'document.pdf', 'MPL-2.0; some components LGPL-3.0-or-later'),
+    ('libreoffice', '25.2.3+deb13u12.1', 'office-convert', 'document.pdf', 'MPL-2.0; some components LGPL-3.0-or-later'),
     ('poppler', '25.3.0+deb13u4.1', 'pdf-convert', 'pdf.process', 'GPL-2.0-only OR GPL-3.0-only; contributions GPL-2.0-or-later'),
 ]:
     archive = io.BytesIO()
