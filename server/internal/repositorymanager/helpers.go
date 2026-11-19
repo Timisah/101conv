@@ -81,6 +81,29 @@ func highestProfile(profiles []profile.Definition, id string) (profile.Definitio
 	return selected, found
 }
 
+func filterIncompatibleProfiles(compatible []profile.Definition, incompatible []IncompatibleProfile) []IncompatibleProfile {
+	compatibleIDs := make(map[string]bool, len(compatible))
+	for _, p := range compatible {
+		compatibleIDs[p.ID] = true
+	}
+	filtered := []IncompatibleProfile{}
+	indexByID := make(map[string]int, len(incompatible))
+	for _, candidate := range incompatible {
+		if compatibleIDs[candidate.ID] {
+			continue
+		}
+		if idx, exists := indexByID[candidate.ID]; exists {
+			if newer(candidate.Version, filtered[idx].Version) {
+				filtered[idx] = candidate
+			}
+			continue
+		}
+		indexByID[candidate.ID] = len(filtered)
+		filtered = append(filtered, candidate)
+	}
+	return filtered
+}
+
 func (m *Manager) prunePlansLocked(now time.Time) {
 	for id, plan := range m.plans {
 		if now.After(plan.expires) {

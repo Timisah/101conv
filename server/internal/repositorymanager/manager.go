@@ -566,6 +566,7 @@ func loadUnsignedView(ctx context.Context, source Source, base, appVersion strin
 			out.IncompatibleProfiles = append(out.IncompatibleProfiles, IncompatibleProfile{ID: d.ID, Version: d.Version, Reason: "profile is incompatible with this application version"})
 		}
 	}
+	out.IncompatibleProfiles = filterIncompatibleProfiles(out.Profiles, out.IncompatibleProfiles)
 	return verifiedView{catalog: out, digest: digestCatalogTargets(targets), targets: targets}, nil
 }
 
@@ -723,6 +724,7 @@ func (m *Manager) loadViewLocked(ctx context.Context, s Source) (verifiedView, e
 			out.IncompatibleProfiles = append(out.IncompatibleProfiles, IncompatibleProfile{ID: d.ID, Version: d.Version, Reason: fmt.Sprintf("profile does not support 101conv %s", m.appVersion)})
 		}
 	}
+	out.IncompatibleProfiles = filterIncompatibleProfiles(out.Profiles, out.IncompatibleProfiles)
 	view.catalog = out
 	view.digest = digestCatalogTargets(view.targets)
 	return view, nil

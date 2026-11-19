@@ -46,6 +46,7 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 		{"ffmpeg-linux-amd64", "1.2.0"},
 		{"ffmpeg-image-linux-amd64", "1.0.0"},
 		{"ffmpeg-image-linux-amd64", "1.1.0"},
+		{"ffmpeg-image-linux-amd64", "1.2.0"},
 		{"jpeg-xl-linux-amd64", "1.2.0"},
 		{"ffmpeg-compression-linux-amd64", "1.0.0"},
 		{"jpeg-xl-compression-linux-amd64", "1.0.0"},
@@ -53,7 +54,9 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 		{"ffmpeg-image-compression-linux-amd64", "1.0.0"},
 		{"ffmpeg-image-compression-linux-amd64", "1.1.0"},
 		{"libreoffice-pdf-linux-amd64", "1.0.0"},
+		{"libreoffice-pdf-linux-amd64", "1.1.0"},
 		{"poppler-pdf-linux-amd64", "1.0.0"},
+		{"poppler-pdf-linux-amd64", "1.1.0"},
 	}
 	if len(entries) != len(want) {
 		t.Fatalf("expected %d official profiles, got %d: %+v", len(want), len(entries), entries)
@@ -69,6 +72,37 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 	}
 	if _, err := old.Available(); err == nil {
 		t.Fatal("expected exclusive maximum app version to be rejected")
+	}
+}
+
+func TestOfficialCatalogKeepsAlignedProfilesAvailableAtV0_2_0(t *testing.T) {
+	service, err := New("0.2.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := service.Available()
+	if err != nil {
+		t.Fatalf("catalog should support 0.2.0: %v", err)
+	}
+	want := []struct{ id, version string }{
+		{"ffmpeg-linux-amd64", "1.2.0"},
+		{"ffmpeg-image-linux-amd64", "1.2.0"},
+		{"jpeg-xl-linux-amd64", "1.2.0"},
+		{"ffmpeg-compression-linux-amd64", "1.0.0"},
+		{"jpeg-xl-compression-linux-amd64", "1.0.0"},
+		{"jpeg-xl-compression-linux-amd64", "1.1.0"},
+		{"ffmpeg-image-compression-linux-amd64", "1.0.0"},
+		{"ffmpeg-image-compression-linux-amd64", "1.1.0"},
+		{"libreoffice-pdf-linux-amd64", "1.1.0"},
+		{"poppler-pdf-linux-amd64", "1.1.0"},
+	}
+	if len(entries) != len(want) {
+		t.Fatalf("expected %d official profiles at 0.2.0, got %d: %+v", len(want), len(entries), entries)
+	}
+	for i, expected := range want {
+		if entries[i].ID != expected.id || entries[i].Version != expected.version {
+			t.Fatalf("profile %d at 0.2.0 = %s %s, want %s %s", i, entries[i].ID, entries[i].Version, expected.id, expected.version)
+		}
 	}
 }
 

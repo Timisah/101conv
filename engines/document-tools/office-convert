@@ -26,7 +26,7 @@ set -eu
 fail() { echo "$*" >&2; exit 1; }
 [ "$#" -eq 6 ] || fail 'Invalid Office conversion arguments'
 for package in libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress; do
- [ "$(dpkg-query -W -f='${Version}' "$package")" = '4:25.2.3-2+deb13u8' ] || fail 'LibreOffice runtime mismatch; rebuild the document worker'
+ [ "$(dpkg-query -W -f='${Version}' "$package")" = '4:25.2.3-2+deb13u12' ] || fail 'LibreOffice runtime mismatch; rebuild the document worker'
 done
 source=$1 target=$2 extension=$3 quality=$4 tagged=$5 pdfa=$6
 case "$extension" in docx|doc|odt|rtf|txt) filter=writer_pdf_Export;; xlsx|xls|ods) filter=calc_pdf_Export;; pptx|ppt|odp) filter=impress_pdf_Export;; *) fail 'Unsupported Office source';; esac

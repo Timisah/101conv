@@ -5,7 +5,7 @@
   "engines": [
     {
       "id": "ffmpeg",
-      "version": "9.0.2-28-g669f5ab083+101conv.1",
+      "version": "9.0.2-39-g7adfbe40dc+101conv.1",
       "name": "FFmpeg LGPL (Linux x86-64)",
       "manifestTarget": "engines/ffmpeg-linux-amd64.json"
     },
@@ -17,7 +17,7 @@
     },
     {
       "id": "libreoffice",
-      "version": "25.2.3+deb13u8.1",
+      "version": "25.2.3+deb13u12.1",
       "name": "LibreOffice document runtime (Linux x86-64)",
       "manifestTarget": "engines/libreoffice-linux-amd64.json"
     },
@@ -46,6 +46,12 @@
       "version": "1.1.0",
       "name": "FFmpeg Image Conversion",
       "manifestTarget": "profiles/ffmpeg-image-linux-amd64-1.1.0.json"
+    },
+    {
+      "id": "ffmpeg-image-linux-amd64",
+      "version": "1.2.0",
+      "name": "FFmpeg Image Conversion",
+      "manifestTarget": "profiles/ffmpeg-image-linux-amd64-1.2.0.json"
     },
     {
       "id": "jpeg-xl-linux-amd64",
@@ -90,10 +96,22 @@
       "manifestTarget": "profiles/libreoffice-pdf-linux-amd64.json"
     },
     {
+      "id": "libreoffice-pdf-linux-amd64",
+      "version": "1.1.0",
+      "name": "Office Documents to PDF",
+      "manifestTarget": "profiles/libreoffice-pdf-linux-amd64-1.1.0.json"
+    },
+    {
       "id": "poppler-pdf-linux-amd64",
       "version": "1.0.0",
       "name": "PDF Rendering & Text Extraction",
       "manifestTarget": "profiles/poppler-pdf-linux-amd64.json"
+    },
+    {
+      "id": "poppler-pdf-linux-amd64",
+      "version": "1.1.0",
+      "name": "PDF Rendering & Text Extraction",
+      "manifestTarget": "profiles/poppler-pdf-linux-amd64-1.1.0.json"
     }
   ]
 }

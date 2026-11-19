@@ -30,6 +30,7 @@ import (
 	"github.com/timisah/101conv/server/internal/engine"
 	"github.com/timisah/101conv/server/internal/profile"
 	"github.com/timisah/101conv/server/internal/repositorymanager"
+	"github.com/timisah/101conv/server/internal/version"
 )
 
 const maxArtifactSize = 1 << 30
@@ -43,6 +44,29 @@ type engineManifest struct {
 			SHA256      string `json:"sha256"`
 		} `json:"artifact"`
 	} `json:"engine"`
+}
+
+type catalogIndex struct {
+	SchemaVersion              int                             `json:"schemaVersion"`
+	MinimumAppVersion          string                          `json:"minimumAppVersion,omitempty"`
+	MaximumAppVersionExclusive string                          `json:"maximumAppVersionExclusive,omitempty"`
+	Engines                    []repositorymanager.EngineEntry `json:"engines"`
+	Profiles                   []catalogProfileEntry           `json:"profiles"`
+}
+
+type catalogProfileEntry struct {
+	repositorymanager.ProfileEntry
+	MaximumAppVersionReason string `json:"maximumAppVersionReason,omitempty"`
+}
+
+type catalogProfileManifest struct {
+	Profile                 catalogProfileDefinition `json:"profile"`
+	MaximumAppVersionReason string                   `json:"maximumAppVersionReason,omitempty"`
+}
+
+type catalogProfileDefinition struct {
+	profile.Definition
+	MaximumAppVersionReason string `json:"maximumAppVersionReason,omitempty"`
 }
 
 func main() {
@@ -110,12 +134,28 @@ func validateCatalog(args []string) error {
 		}
 		return nil
 	}
-	var index repositorymanager.CatalogIndex
+	var index catalogIndex
 	if err := readTarget("catalog/index.json", &index); err != nil {
 		return fmt.Errorf("read catalog index: %w", err)
 	}
 	if index.SchemaVersion != 1 {
 		return fmt.Errorf("unsupported catalog schema version %d", index.SchemaVersion)
+	}
+	if index.MinimumAppVersion != "" {
+		if _, err := version.Parse(index.MinimumAppVersion); err != nil {
+			return fmt.Errorf("catalog minimumAppVersion: %w", err)
+		}
+	}
+	if index.MaximumAppVersionExclusive != "" {
+		if _, err := version.Parse(index.MaximumAppVersionExclusive); err != nil {
+			return fmt.Errorf("catalog maximumAppVersionExclusive: %w", err)
+		}
+	}
+	if index.MinimumAppVersion != "" && index.MaximumAppVersionExclusive != "" {
+		cmp, _ := version.Compare(index.MinimumAppVersion, index.MaximumAppVersionExclusive)
+		if cmp >= 0 {
+			return fmt.Errorf("catalog app-version maximum %q must be greater than its minimum %q", index.MaximumAppVersionExclusive, index.MinimumAppVersion)
+		}
 	}
 	if len(index.Engines)+len(index.Profiles) == 0 {
 		return errors.New("catalog must contain an engine or profile")
@@ -140,17 +180,23 @@ func validateCatalog(args []string) error {
 		}
 		engines[entry.ID] = append(engines[entry.ID], manifest.Engine)
 	}
+	type validatedProfile struct {
+		definition profile.Definition
+		reason     string
+	}
+	profiles := make([]validatedProfile, 0, len(index.Profiles))
+	latestVersion := make(map[string]string)
 	for _, entry := range index.Profiles {
 		key := "profile\x00" + entry.ID + "\x00" + entry.Version
 		if entry.ID == "" || entry.Version == "" || seen[key] {
 			return fmt.Errorf("missing or duplicate profile release %q %q", entry.ID, entry.Version)
 		}
 		seen[key] = true
-		var manifest repositorymanager.ProfileManifest
+		var manifest catalogProfileManifest
 		if err := readTarget(entry.ManifestTarget, &manifest); err != nil {
 			return fmt.Errorf("profile %s %s: %w", entry.ID, entry.Version, err)
 		}
-		p := manifest.Profile
+		p := manifest.Profile.Definition
 		if p.ID != entry.ID || p.Version != entry.Version {
 			return fmt.Errorf("profile index entry and manifest disagree for %q %s", entry.ID, entry.Version)
 		}
@@ -189,9 +235,49 @@ func validateCatalog(args []string) error {
 				return fmt.Errorf("profile %q has no catalog engine %q matching its version, capabilities, and executable requirements", p.ID, req.EngineID)
 			}
 		}
+		reason := firstNonBlank(entry.MaximumAppVersionReason, manifest.MaximumAppVersionReason, manifest.Profile.MaximumAppVersionReason)
+		profiles = append(profiles, validatedProfile{definition: p, reason: reason})
+		if current, ok := latestVersion[p.ID]; !ok {
+			latestVersion[p.ID] = p.Version
+		} else if cmp, err := version.Compare(p.Version, current); err != nil {
+			return fmt.Errorf("profile %q version compare: %w", p.ID, err)
+		} else if cmp > 0 {
+			latestVersion[p.ID] = p.Version
+		}
+	}
+	if index.MaximumAppVersionExclusive != "" {
+		for _, item := range profiles {
+			p := item.definition
+			cmpVersion, err := version.Compare(p.Version, latestVersion[p.ID])
+			if err != nil {
+				return fmt.Errorf("profile %q version compare: %w", p.ID, err)
+			}
+			if cmpVersion != 0 || p.MaximumAppVersionExclusive == "" {
+				continue
+			}
+			cmpBound, err := version.Compare(p.MaximumAppVersionExclusive, index.MaximumAppVersionExclusive)
+			if err != nil {
+				return fmt.Errorf("profile %q maximumAppVersionExclusive: %w", p.ID, err)
+			}
+			if cmpBound < 0 && item.reason == "" {
+				return fmt.Errorf(
+					"profile %q latest release %s sets maximumAppVersionExclusive %q below catalog bound %q without maximumAppVersionReason",
+					p.ID, p.Version, p.MaximumAppVersionExclusive, index.MaximumAppVersionExclusive,
+				)
+			}
+		}
 	}
 	fmt.Printf("Catalog valid: %d engine releases, %d profile releases\n", len(index.Engines), len(index.Profiles))
 	return nil
+}
+
+func firstNonBlank(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func initRoot(args []string) error {

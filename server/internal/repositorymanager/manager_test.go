@@ -803,3 +803,190 @@ func TestUnsignedOfficialCatalogCanBeBrowsedButNotInstalled(t *testing.T) {
 		t.Fatalf("unsigned catalog unexpectedly allowed engine install preview: %v", err)
 	}
 }
+
+func TestOfficialUnsignedCatalogAtV0_2_0OmitsSupersededIncompatibleReleases(t *testing.T) {
+	targetsRoot := filepath.Join("..", "..", "..", "catalog", "targets")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/catalog/targets/") {
+			http.NotFound(w, r)
+			return
+		}
+		rel := strings.TrimPrefix(r.URL.Path, "/catalog/targets/")
+		if !safeTarget(rel) {
+			http.NotFound(w, r)
+			return
+		}
+		data, err := os.ReadFile(filepath.Join(targetsRoot, filepath.FromSlash(rel)))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	source := Source{ID: "101conv-official", Name: "101conv Official Catalog", Kind: KindOfficial, Trust: TrustUnavailable, Enabled: true}
+	wantHighest := map[string]string{
+		"ffmpeg-linux-amd64":                   "1.2.0",
+		"ffmpeg-image-linux-amd64":             "1.2.0",
+		"jpeg-xl-linux-amd64":                  "1.2.0",
+		"ffmpeg-compression-linux-amd64":       "1.0.0",
+		"jpeg-xl-compression-linux-amd64":      "1.1.0",
+		"ffmpeg-image-compression-linux-amd64": "1.1.0",
+		"libreoffice-pdf-linux-amd64":          "1.1.0",
+		"poppler-pdf-linux-amd64":              "1.1.0",
+	}
+
+	for _, appVersion := range []string{"0.2.0", "0.9.9"} {
+		t.Run(appVersion, func(t *testing.T) {
+			catalog, err := loadUnsignedCatalog(context.Background(), source, server.URL+"/catalog", appVersion)
+			if err != nil {
+				t.Fatalf("browse official catalog at %s: %v", appVersion, err)
+			}
+			if len(catalog.Profiles) != 10 {
+				t.Fatalf("expected 10 compatible profile releases at %s, got %d: %+v", appVersion, len(catalog.Profiles), catalog.Profiles)
+			}
+			seenIDs := map[string]bool{}
+			for _, p := range catalog.Profiles {
+				seenIDs[p.ID] = true
+			}
+			if len(seenIDs) != len(wantHighest) {
+				t.Fatalf("expected %d logical official profile IDs at %s, got %d: %v", len(wantHighest), appVersion, len(seenIDs), seenIDs)
+			}
+			for id, wantVersion := range wantHighest {
+				got, ok := highestProfile(catalog.Profiles, id)
+				if !ok || got.Version != wantVersion {
+					t.Fatalf("highestProfile(%q) at %s = (%q, %v), want %q", id, appVersion, got.Version, ok, wantVersion)
+				}
+			}
+			if catalog.IncompatibleProfiles == nil || len(catalog.IncompatibleProfiles) != 0 {
+				t.Fatalf("expected empty non-nil IncompatibleProfiles at %s, got %#v", appVersion, catalog.IncompatibleProfiles)
+			}
+			raw, err := json.Marshal(catalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(raw, []byte(`"incompatibleProfiles":[]`)) {
+				t.Fatalf("expected incompatibleProfiles empty JSON array at %s: %s", appVersion, raw)
+			}
+		})
+	}
+}
+
+func TestSignedCatalogFiltersSupersededIncompatibleReleasesAndDeduplicatesTrulyIncompatibleProfiles(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	targets := makeCatalog(t, nil)
+
+	var index CatalogIndex
+	if err := json.Unmarshal(targets["catalog/index.json"], &index); err != nil {
+		t.Fatal(err)
+	}
+	index.MinimumAppVersion = "0.1.0"
+	index.MaximumAppVersionExclusive = "1.0.0"
+
+	var v1Manifest ProfileManifest
+	if err := json.Unmarshal(targets["profiles/video-one.json"], &v1Manifest); err != nil {
+		t.Fatal(err)
+	}
+	// video-one 1.0.0 has a superseded narrow bound (< 0.2.0), while 1.1.0 is compatible (< 1.0.0).
+	v1Old := v1Manifest.Profile
+	v1Old.MinimumAppVersion = "0.1.0"
+	v1Old.MaximumAppVersionExclusive = "0.2.0"
+	targets["profiles/video-one.json"], _ = json.Marshal(ProfileManifest{Profile: v1Old})
+
+	v1New := v1Manifest.Profile
+	v1New.Version = "1.1.0"
+	v1New.MinimumAppVersion = "0.1.0"
+	v1New.MaximumAppVersionExclusive = "1.0.0"
+	targets["profiles/video-one-1.1.0.json"], _ = json.Marshal(ProfileManifest{Profile: v1New})
+
+	index.Profiles = append(index.Profiles, ProfileEntry{
+		ID:             v1New.ID,
+		Version:        v1New.Version,
+		Name:           v1New.Name,
+		ManifestTarget: "profiles/video-one-1.1.0.json",
+	})
+	targets["catalog/index.json"], _ = json.Marshal(index)
+
+	f.write(t, targets, 1, time.Now().UTC().Add(time.Hour))
+	data := t.TempDir()
+	eng, err := management.Open(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	repos, err := Open(data, "0.2.0", eng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repos.Close()
+	addLocal(t, repos, f)
+
+	catalog, err := repos.Browse(ctx, "trusted-test")
+	if err != nil {
+		t.Fatalf("browse signed catalog with superseded release: %v", err)
+	}
+	if catalog.IncompatibleProfiles == nil || len(catalog.IncompatibleProfiles) != 0 {
+		t.Fatalf("superseded narrow-bound release leaked into IncompatibleProfiles: %#v", catalog.IncompatibleProfiles)
+	}
+	preview, err := repos.Preview(ctx, "trusted-test", "video-one")
+	if err != nil {
+		t.Fatalf("preview video-one at 0.2.0: %v", err)
+	}
+	if preview.Profile.Version != "1.1.0" {
+		t.Fatalf("expected video-one 1.1.0 preview, got %s", preview.Profile.Version)
+	}
+
+	// Now publish a genuinely incompatible multi-version profile (1.0.0 and 1.1.0 both require >= 0.3.0).
+	future10 := v1Manifest.Profile
+	future10.ID = "future-video"
+	future10.Name = "Future Video"
+	future10.Version = "1.0.0"
+	future10.MinimumAppVersion = "0.3.0"
+	future10.MaximumAppVersionExclusive = "1.0.0"
+	targets["profiles/future-video-1.0.0.json"], _ = json.Marshal(ProfileManifest{Profile: future10})
+
+	future11 := future10
+	future11.Version = "1.1.0"
+	targets["profiles/future-video-1.1.0.json"], _ = json.Marshal(ProfileManifest{Profile: future11})
+
+	index.Profiles = append(index.Profiles,
+		ProfileEntry{ID: future10.ID, Version: future10.Version, Name: future10.Name, ManifestTarget: "profiles/future-video-1.0.0.json"},
+		ProfileEntry{ID: future11.ID, Version: future11.Version, Name: future11.Name, ManifestTarget: "profiles/future-video-1.1.0.json"},
+	)
+	targets["catalog/index.json"], _ = json.Marshal(index)
+	f.write(t, targets, 2, time.Now().UTC().Add(time.Hour))
+
+	catalog, err = repos.Browse(ctx, "trusted-test")
+	if err != nil {
+		t.Fatalf("browse signed catalog with multi-version incompatible profile: %v", err)
+	}
+	if len(catalog.IncompatibleProfiles) != 1 {
+		t.Fatalf("expected 1 deduplicated IncompatibleProfiles entry, got %#v", catalog.IncompatibleProfiles)
+	}
+	if catalog.IncompatibleProfiles[0].ID != "future-video" || catalog.IncompatibleProfiles[0].Version != "1.1.0" {
+		t.Fatalf("expected future-video 1.1.0 in IncompatibleProfiles, got %+v", catalog.IncompatibleProfiles[0])
+	}
+	if _, err = repos.CreateInstallPlan(ctx, "trusted-test", "future-video", false); !errors.Is(err, ErrIncompatible) {
+		t.Fatalf("expected ErrIncompatible for future-video install plan, got %v", err)
+	}
+}
+
+func TestFilterIncompatibleProfilesEdgeCases(t *testing.T) {
+	got := filterIncompatibleProfiles(nil, nil)
+	if got == nil || len(got) != 0 {
+		t.Fatalf("expected non-nil empty slice, got %#v", got)
+	}
+	compatible := []profile.Definition{{ID: "superseded", Version: "1.2.0"}}
+	incompatible := []IncompatibleProfile{
+		{ID: "superseded", Version: "1.0.0", Reason: "old"},
+		{ID: "superseded", Version: "1.1.0", Reason: "old"},
+		{ID: "descending", Version: "1.10.0", Reason: "newest first"},
+		{ID: "descending", Version: "1.2.0", Reason: "older multi-digit"},
+	}
+	got = filterIncompatibleProfiles(compatible, incompatible)
+	if len(got) != 1 || got[0].ID != "descending" || got[0].Version != "1.10.0" || got[0].Reason != "newest first" {
+		t.Fatalf("unexpected filtered incompatible profiles: %+v", got)
+	}
+}

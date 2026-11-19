@@ -50,7 +50,7 @@ The runtime is therefore an explicit part of the Worker image:
 * Debian `13.1-slim` is pinned by its multi-platform OCI digest in
   `Dockerfile.worker`.
 * LibreOffice Core, Writer, Calc and Impress are all pinned to Debian revision
-  **4:25.2.3-2+deb13u8** (upstream 25.2.3 with Debian security patches).
+  **4:25.2.3-2+deb13u12** (upstream 25.2.3 with Debian security patches).
 * Poppler utilities are pinned to **25.03.0-5+deb13u4**.
 * APT authenticates Debian's signed Release metadata and verifies Packages and
   `.deb` SHA-256 hashes. The build records the installed package versions in
@@ -66,7 +66,7 @@ The runtime is therefore an explicit part of the Worker image:
 
 The marketplace installs **small managed adapter packages**, not a second copy
 of the system runtime. Their engine definitions are explicit about this split:
-`libreoffice` 25.2.3+deb13u8.1 and `poppler` 25.3.0+deb13u4.1. The installed
+`libreoffice` 25.2.3+deb13u12.1 and `poppler` 25.3.0+deb13u4.1. The installed
 package contains an executable adapter and its MIT license. These deterministic
 archives live under `catalog/targets/packages`, with exact sizes/SHA-256 in the
 engine manifests; `scripts/package-document-engines.py` regenerates them.

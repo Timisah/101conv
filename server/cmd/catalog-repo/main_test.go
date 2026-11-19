@@ -152,6 +152,179 @@ func TestValidateCatalogRejectsUnsupportedProfilePlaceholder(t *testing.T) {
 	}
 }
 
+func TestValidateCatalogEnforcesLatestProfileAppVersionCeiling(t *testing.T) {
+	makeProfile := func(version, maxExclusive string) profile.Definition {
+		return profile.Definition{
+			SchemaVersion:              1,
+			Type:                       profile.TypeConversion,
+			ID:                         "sample-profile",
+			Version:                    version,
+			Name:                       "Sample Profile",
+			MinimumAppVersion:          "0.0.1",
+			MaximumAppVersionExclusive: maxExclusive,
+			Engines:                    []profile.EngineRequirement{{EngineID: "manual-engine"}},
+			Rules: []profile.ConversionRule{{
+				EngineID:   "manual-engine",
+				Executable: "tool",
+				Sources:    []string{"png"},
+				Targets:    []string{"webp"},
+				Arguments:  []string{"{source}", "{target}"},
+			}},
+		}
+	}
+	writeCatalogFixture := func(t *testing.T, idx catalogIndex, manifests map[string]catalogProfileManifest) string {
+		t.Helper()
+		root := t.TempDir()
+		targets := filepath.Join(root, "targets")
+		for rel, manifest := range manifests {
+			data, err := json.Marshal(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			full := filepath.Join(targets, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		indexBytes, err := json.Marshal(idx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		indexPath := filepath.Join(targets, "catalog", "index.json")
+		if err := os.MkdirAll(filepath.Dir(indexPath), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(indexPath, indexBytes, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+
+	t.Run("rejects accidental narrow ceiling on latest release", func(t *testing.T) {
+		root := writeCatalogFixture(t, catalogIndex{
+			SchemaVersion:              1,
+			MinimumAppVersion:          "0.1.0",
+			MaximumAppVersionExclusive: "1.0.0",
+			Profiles: []catalogProfileEntry{{
+				ProfileEntry: repositorymanager.ProfileEntry{
+					ID: "sample-profile", Version: "1.0.0", Name: "Sample Profile", ManifestTarget: "profiles/sample-1.0.0.json",
+				},
+			}},
+		}, map[string]catalogProfileManifest{
+			"profiles/sample-1.0.0.json": {Profile: catalogProfileDefinition{Definition: makeProfile("1.0.0", "0.2.0")}},
+		})
+		err := validateCatalog([]string{"--catalog-root", root})
+		if err == nil || !strings.Contains(err.Error(), `sets maximumAppVersionExclusive "0.2.0" below catalog bound "1.0.0"`) {
+			t.Fatalf("expected narrow latest ceiling error, got %v", err)
+		}
+	})
+
+	t.Run("rejects whitespace-only justification on narrow latest release", func(t *testing.T) {
+		root := writeCatalogFixture(t, catalogIndex{
+			SchemaVersion:              1,
+			MinimumAppVersion:          "0.1.0",
+			MaximumAppVersionExclusive: "1.0.0",
+			Profiles: []catalogProfileEntry{{
+				ProfileEntry: repositorymanager.ProfileEntry{
+					ID: "sample-profile", Version: "1.0.0", Name: "Sample Profile", ManifestTarget: "profiles/sample-1.0.0.json",
+				},
+				MaximumAppVersionReason: "   ",
+			}},
+		}, map[string]catalogProfileManifest{
+			"profiles/sample-1.0.0.json": {
+				Profile:                 catalogProfileDefinition{Definition: makeProfile("1.0.0", "0.2.0"), MaximumAppVersionReason: "\t"},
+				MaximumAppVersionReason: " ",
+			},
+		})
+		if err := validateCatalog([]string{"--catalog-root", root}); err == nil {
+			t.Fatal("expected whitespace-only justification to be rejected")
+		}
+	})
+
+	t.Run("allows superseded historical narrow ceiling regardless of index order", func(t *testing.T) {
+		entriesAsc := []catalogProfileEntry{
+			{ProfileEntry: repositorymanager.ProfileEntry{ID: "sample-profile", Version: "1.0.0", Name: "Sample Profile", ManifestTarget: "profiles/sample-1.0.0.json"}},
+			{ProfileEntry: repositorymanager.ProfileEntry{ID: "sample-profile", Version: "1.1.0", Name: "Sample Profile", ManifestTarget: "profiles/sample-1.1.0.json"}},
+		}
+		entriesDesc := []catalogProfileEntry{entriesAsc[1], entriesAsc[0]}
+		for _, entries := range [][]catalogProfileEntry{entriesAsc, entriesDesc} {
+			root := writeCatalogFixture(t, catalogIndex{
+				SchemaVersion:              1,
+				MinimumAppVersion:          "0.1.0",
+				MaximumAppVersionExclusive: "1.0.0",
+				Profiles:                   entries,
+			}, map[string]catalogProfileManifest{
+				"profiles/sample-1.0.0.json": {Profile: catalogProfileDefinition{Definition: makeProfile("1.0.0", "0.2.0")}},
+				"profiles/sample-1.1.0.json": {Profile: catalogProfileDefinition{Definition: makeProfile("1.1.0", "1.0.0")}},
+			})
+			if err := validateCatalog([]string{"--catalog-root", root}); err != nil {
+				t.Fatalf("expected superseded historical ceiling to pass, got %v", err)
+			}
+		}
+	})
+
+	t.Run("allows narrow latest ceiling with explicit justification on profile or index", func(t *testing.T) {
+		rootProfileReason := writeCatalogFixture(t, catalogIndex{
+			SchemaVersion:              1,
+			MinimumAppVersion:          "0.1.0",
+			MaximumAppVersionExclusive: "1.0.0",
+			Profiles: []catalogProfileEntry{{
+				ProfileEntry: repositorymanager.ProfileEntry{
+					ID: "sample-profile", Version: "1.0.0", Name: "Sample Profile", ManifestTarget: "profiles/sample-1.0.0.json",
+				},
+			}},
+		}, map[string]catalogProfileManifest{
+			"profiles/sample-1.0.0.json": {
+				Profile: catalogProfileDefinition{
+					Definition:              makeProfile("1.0.0", "0.2.0"),
+					MaximumAppVersionReason: "Replaced by sample-v2 starting in 0.2.0",
+				},
+			},
+		})
+		if err := validateCatalog([]string{"--catalog-root", rootProfileReason}); err != nil {
+			t.Fatalf("expected profile-level maximumAppVersionReason to pass, got %v", err)
+		}
+
+		rootIndexReason := writeCatalogFixture(t, catalogIndex{
+			SchemaVersion:              1,
+			MinimumAppVersion:          "0.1.0",
+			MaximumAppVersionExclusive: "1.0.0",
+			Profiles: []catalogProfileEntry{{
+				ProfileEntry: repositorymanager.ProfileEntry{
+					ID: "sample-profile", Version: "1.0.0", Name: "Sample Profile", ManifestTarget: "profiles/sample-1.0.0.json",
+				},
+				MaximumAppVersionReason: "Retired in 0.2.0 after runtime removal",
+			}},
+		}, map[string]catalogProfileManifest{
+			"profiles/sample-1.0.0.json": {Profile: catalogProfileDefinition{Definition: makeProfile("1.0.0", "0.2.0")}},
+		})
+		if err := validateCatalog([]string{"--catalog-root", rootIndexReason}); err != nil {
+			t.Fatalf("expected index-level maximumAppVersionReason to pass, got %v", err)
+		}
+	})
+
+	t.Run("rejects invalid catalog app-version bounds", func(t *testing.T) {
+		root := writeCatalogFixture(t, catalogIndex{
+			SchemaVersion:              1,
+			MinimumAppVersion:          "1.0.0",
+			MaximumAppVersionExclusive: "0.2.0",
+			Profiles: []catalogProfileEntry{{
+				ProfileEntry: repositorymanager.ProfileEntry{
+					ID: "sample-profile", Version: "1.0.0", Name: "Sample Profile", ManifestTarget: "profiles/sample-1.0.0.json",
+				},
+			}},
+		}, map[string]catalogProfileManifest{
+			"profiles/sample-1.0.0.json": {Profile: catalogProfileDefinition{Definition: makeProfile("1.0.0", "1.0.0")}},
+		})
+		if err := validateCatalog([]string{"--catalog-root", root}); err == nil || !strings.Contains(err.Error(), "catalog app-version maximum") {
+			t.Fatalf("expected catalog app-version range error, got %v", err)
+		}
+	})
+}
+
 func TestPackageVerifierRejectsNonGitHubReleaseURL(t *testing.T) {
 	if err := verifyExternalPackage("http://127.0.0.1/package", 1, strings.Repeat("0", 64)); err == nil {
 		t.Fatal("accepted non-HTTPS, non-GitHub package source")
@@ -184,7 +357,7 @@ func TestPublisherAddsSignedExternalPackageMetadataForOfficialManifests(t *testi
 	if err = root.VerifyDelegate(metadata.TARGETS, targets); err != nil {
 		t.Fatal(err)
 	}
-	for target, expectedSize := range map[string]int64{"packages/ffmpeg-n9.0.2-28-g669f5ab083-linux64-lgpl-9.0.tar.xz": 137920872, "packages/jxl-linux-x86_64-static.tar.lz": 4034223} {
+	for target, expectedSize := range map[string]int64{"packages/ffmpeg-n9.0.2-39-g7adfbe40dc-linux64-lgpl-9.0.tar.xz": 136027168, "packages/jxl-linux-x86_64-static.tar.lz": 4034223} {
 		info := targets.Signed.Targets[target]
 		if info == nil || info.Length != expectedSize || len(info.Hashes["sha256"]) != 32 {
 			t.Fatalf("missing or incorrect TUF package metadata for %s: %#v", target, info)
