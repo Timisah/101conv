@@ -1,0 +1,85 @@
+.blueprint-wizard {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface2);
+}
+
+.blueprint-wizard-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.blueprint-wizard-head strong {
+  font-size: 13px;
+}
+
+.blueprint-category-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.blueprint-category-pills .chip-btn {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line2);
+  background: var(--surface);
+  color: var(--sub);
+  cursor: pointer;
+}
+
+.blueprint-category-pills .chip-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.blueprint-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.blueprint-card {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--line2);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.blueprint-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.blueprint-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.blueprint-card-title b {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.blueprint-card small {
+  color: var(--sub);
+  font-size: 12px;
+  line-height: 1.4;
+}

@@ -131,6 +131,8 @@ test('automation condition reader unpacks nested NOT/AND/OR trees cleanly', () =
     glob: '',
     min: '',
     max: '',
+    hdr: '',
+    minWidth: '',
   });
   assert.deepEqual(
     readCondition({
@@ -144,6 +146,8 @@ test('automation condition reader unpacks nested NOT/AND/OR trees cleanly', () =
             { operator: 'name_glob', value: 'IMG_*' },
             { operator: 'min_size', bytes: 2 * 1048576 },
             { operator: 'max_size', bytes: 25 * 1048576 },
+            { operator: 'hdr', value: 'false' },
+            { operator: 'min_width', bytes: 1920 },
           ],
         },
       ],
@@ -154,6 +158,8 @@ test('automation condition reader unpacks nested NOT/AND/OR trees cleanly', () =
       glob: 'IMG_*',
       min: '2',
       max: '25',
+      hdr: 'false',
+      minWidth: '1920',
     },
   );
 });

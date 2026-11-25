@@ -66,6 +66,12 @@ export type AutomationView = {
       outputDriveId: string;
       outputBehavior: string;
     };
+    fallbackAction?: {
+      mode: string;
+      profileId?: string;
+      profileVersion?: string;
+      targetFormat?: string;
+    };
     graph?: AutomationGraph;
   };
   createdAt: string;
@@ -77,7 +83,16 @@ export type BlueprintView = {
   version: string;
   name: string;
   description: string;
+  category?: string;
+  tags?: string[];
   mode: 'convert' | 'compress';
+  definition?: {
+    trigger?: { intervalSeconds?: number; stabilitySeconds?: number };
+    filter?: { extensions?: string[]; nameGlob?: string; minBytes?: number; maxBytes?: number };
+    condition?: AutomationCondition;
+    action?: { mode?: 'convert' | 'compress'; targetFormat?: string; outputBehavior?: string };
+    fallbackAction?: { mode?: string };
+  };
 };
 
 export type AutomationRunView = {
@@ -119,6 +134,14 @@ export type AutomationDryRunPreview = {
   files?: AutomationDryRunFile[];
 };
 
+function flattenConditions(node?: AutomationCondition): AutomationCondition[] {
+  if (!node) return [];
+  if (node.operator === 'and' || node.operator === 'or' || node.operator === 'not') {
+    return (node.children || []).flatMap(child => flattenConditions(child));
+  }
+  return [node];
+}
+
 export function readCondition(condition?: AutomationCondition) {
   let root = condition;
   let logic: 'and' | 'or' | 'not' = 'and';
@@ -128,17 +151,20 @@ export function readCondition(condition?: AutomationCondition) {
   } else if (root?.operator === 'or' || root?.operator === 'and') {
     logic = root.operator;
   }
-  const leaves =
-    root && (root.operator === 'and' || root.operator === 'or') ? root.children || [] : root ? [root] : [];
+  const leaves = flattenConditions(root);
   const exts = leaves.filter(item => item.operator === 'extension').map(item => item.value || '');
   const glob = leaves.find(item => item.operator === 'name_glob')?.value || '';
   const min = leaves.find(item => item.operator === 'min_size')?.bytes || 0;
   const max = leaves.find(item => item.operator === 'max_size')?.bytes || 0;
+  const hdr = leaves.find(item => item.operator === 'hdr')?.value || '';
+  const minWidth = leaves.find(item => item.operator === 'min_width')?.bytes || 0;
   return {
     logic,
     extensions: exts.join(', '),
     glob,
     min: min ? String(Math.round(min / 1048576)) : '',
     max: max ? String(Math.round(max / 1048576)) : '',
+    hdr,
+    minWidth: minWidth ? String(minWidth) : '',
   };
 }

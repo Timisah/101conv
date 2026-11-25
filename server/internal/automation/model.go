@@ -22,10 +22,11 @@ type Drive struct {
 }
 
 type Definition struct {
-	Trigger   Trigger    `json:"trigger"`
-	Filter    FileFilter `json:"filter"`
-	Condition *Condition `json:"condition,omitempty"`
-	Action    FileAction `json:"action"`
+	Trigger        Trigger     `json:"trigger"`
+	Filter         FileFilter  `json:"filter"`
+	Condition      *Condition  `json:"condition,omitempty"`
+	Action         FileAction  `json:"action"`
+	FallbackAction *FileAction `json:"fallbackAction,omitempty"`
 	// Graph is the visual, typed representation of the workflow. The flat
 	// fields above remain the execution compatibility boundary for C.1 jobs.
 	// New revisions store both representations so older runners and clients can
@@ -135,6 +136,8 @@ type Blueprint struct {
 	Version     string     `json:"version"`
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
+	Category    string     `json:"category,omitempty"`
+	Tags        []string   `json:"tags,omitempty"`
 	Mode        string     `json:"mode"`
 	Definition  Definition `json:"definition"`
 }
