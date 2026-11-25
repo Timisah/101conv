@@ -320,23 +320,24 @@ func (a *API) automationHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 type blueprintInstallRequest struct {
-	Name             string                `json:"name"`
-	InputDriveID     string                `json:"inputDriveId"`
-	OutputDriveID    string                `json:"outputDriveId"`
-	ProfileID        string                `json:"profileId"`
-	ProfileVersion   string                `json:"profileVersion"`
-	TargetFormat     string                `json:"targetFormat"`
-	Options          map[string]string     `json:"options"`
-	Condition        *automation.Condition `json:"condition"`
-	Extensions       []string              `json:"extensions"`
-	NameGlob         string                `json:"nameGlob"`
-	MinBytes         int64                 `json:"minBytes"`
-	MaxBytes         int64                 `json:"maxBytes"`
-	ProcessExisting  bool                  `json:"processExistingOnNextScan"`
-	OutputBehavior   string                `json:"outputBehavior"`
-	IntervalSeconds  int                   `json:"intervalSeconds"`
-	StabilitySeconds int                   `json:"stabilitySeconds"`
-	MaxConcurrent    int                   `json:"maxConcurrent"`
+	Name             string                 `json:"name"`
+	InputDriveID     string                 `json:"inputDriveId"`
+	OutputDriveID    string                 `json:"outputDriveId"`
+	ProfileID        string                 `json:"profileId"`
+	ProfileVersion   string                 `json:"profileVersion"`
+	TargetFormat     string                 `json:"targetFormat"`
+	Options          map[string]string      `json:"options"`
+	Condition        *automation.Condition  `json:"condition"`
+	FallbackAction   *automation.FileAction `json:"fallbackAction"`
+	Extensions       []string               `json:"extensions"`
+	NameGlob         string                 `json:"nameGlob"`
+	MinBytes         int64                  `json:"minBytes"`
+	MaxBytes         int64                  `json:"maxBytes"`
+	ProcessExisting  bool                   `json:"processExistingOnNextScan"`
+	OutputBehavior   string                 `json:"outputBehavior"`
+	IntervalSeconds  int                    `json:"intervalSeconds"`
+	StabilitySeconds int                    `json:"stabilitySeconds"`
+	MaxConcurrent    int                    `json:"maxConcurrent"`
 }
 
 func (a *API) installBlueprint(w http.ResponseWriter, r *http.Request) {
@@ -372,17 +373,34 @@ func (a *API) installBlueprint(w http.ResponseWriter, r *http.Request) {
 	if req.MaxConcurrent != 0 {
 		d.Trigger.MaxConcurrent = req.MaxConcurrent
 	}
-	d.Filter.Extensions = req.Extensions
-	d.Filter.NameGlob = req.NameGlob
-	d.Filter.MinBytes = req.MinBytes
-	d.Filter.MaxBytes = req.MaxBytes
-	d.Condition = req.Condition
+	if len(req.Extensions) > 0 {
+		d.Filter.Extensions = req.Extensions
+	}
+	if req.NameGlob != "" {
+		d.Filter.NameGlob = req.NameGlob
+	}
+	if req.MinBytes != 0 {
+		d.Filter.MinBytes = req.MinBytes
+	}
+	if req.MaxBytes != 0 {
+		d.Filter.MaxBytes = req.MaxBytes
+	}
+	if req.Condition != nil {
+		d.Condition = req.Condition
+	}
+	if req.FallbackAction != nil {
+		d.FallbackAction = req.FallbackAction
+	}
 	d.Action.OutputDriveID = req.OutputDriveID
 	d.Action.ProfileID = req.ProfileID
 	d.Action.ProfileVersion = req.ProfileVersion
-	d.Action.TargetFormat = req.TargetFormat
+	if req.TargetFormat != "" {
+		d.Action.TargetFormat = req.TargetFormat
+	}
 	d.Action.Options = req.Options
-	d.Action.OutputBehavior = req.OutputBehavior
+	if req.OutputBehavior != "" {
+		d.Action.OutputBehavior = req.OutputBehavior
+	}
 	if d.Action.OutputBehavior == "" {
 		d.Action.OutputBehavior = "unique"
 	}

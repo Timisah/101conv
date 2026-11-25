@@ -4,6 +4,7 @@ import { ErrorState, Loading } from '../../components/common';
 import type { Preset, Profile } from '../converters/types';
 import { bytes, json } from '../format';
 import { apiRequest } from '../session';
+import { BlueprintWizard } from './BlueprintWizard';
 import { ExtensionReleases } from './ExtensionReleases';
 import {
   readCondition,
@@ -56,6 +57,9 @@ export function AutomationsSection({
   const [nameGlob, setNameGlob] = useState('');
   const [minMB, setMinMB] = useState('');
   const [maxMB, setMaxMB] = useState('');
+  const [hdrFilter, setHdrFilter] = useState('');
+  const [minWidth, setMinWidth] = useState('');
+  const [fallbackMode, setFallbackMode] = useState('');
   const [conditionLogic, setConditionLogic] = useState<'and' | 'or' | 'not'>('and');
   const [interval, setIntervalValue] = useState('60');
   const [stability, setStability] = useState('30');
@@ -105,6 +109,9 @@ export function AutomationsSection({
         ? String(Math.round(automation.definition.filter.maxBytes / 1048576))
         : cond.max,
     );
+    setHdrFilter(cond.hdr || '');
+    setMinWidth(cond.minWidth || '');
+    setFallbackMode(automation.definition.fallbackAction?.mode || '');
     setConditionLogic(cond.logic);
     setIntervalValue(String(automation.definition.trigger.intervalSeconds || 60));
     setStability(String(automation.definition.trigger.stabilitySeconds || 30));
@@ -113,6 +120,29 @@ export function AutomationsSection({
     setBehavior(automation.definition.action.outputBehavior || 'unique');
     setPreview(null);
     setHistory([]);
+  }
+
+  function applyBlueprint(bp: BlueprintView) {
+    setBlueprintID(bp.id);
+    setProfileID('');
+    setPresetID('');
+    setActionOptions({});
+    const def = bp.definition;
+    const cond = readCondition(def?.condition);
+    setExtensionsInput((def?.filter?.extensions || []).join(', ') || cond.extensions);
+    setNameGlob(def?.filter?.nameGlob || cond.glob);
+    setMinMB(def?.filter?.minBytes ? String(Math.round(def.filter.minBytes / 1048576)) : cond.min);
+    setMaxMB(def?.filter?.maxBytes ? String(Math.round(def.filter.maxBytes / 1048576)) : cond.max);
+    setHdrFilter(cond.hdr || '');
+    setMinWidth(cond.minWidth || '');
+    setFallbackMode(def?.fallbackAction?.mode || '');
+    setConditionLogic(cond.logic);
+    setTarget(def?.action?.targetFormat || '');
+    setIntervalValue(String(def?.trigger?.intervalSeconds || 60));
+    setStability(String(def?.trigger?.stabilitySeconds || 30));
+    if (!name.trim()) {
+      setName(bp.name);
+    }
   }
 
   function resetEditor() {
@@ -128,6 +158,9 @@ export function AutomationsSection({
     setNameGlob('');
     setMinMB('');
     setMaxMB('');
+    setHdrFilter('');
+    setMinWidth('');
+    setFallbackMode('');
     setConditionLogic('and');
     setPreview(null);
     setHistory([]);
@@ -146,6 +179,8 @@ export function AutomationsSection({
       ...(nameGlob.trim() ? [{ operator: 'name_glob', value: nameGlob.trim() }] : []),
       ...(minMB ? [{ operator: 'min_size', bytes: Number(minMB) * 1048576 }] : []),
       ...(maxMB ? [{ operator: 'max_size', bytes: Number(maxMB) * 1048576 }] : []),
+      ...(hdrFilter ? [{ operator: 'hdr', value: hdrFilter }] : []),
+      ...(minWidth ? [{ operator: 'min_width', bytes: Number(minWidth) }] : []),
     ];
 
     let condition: AutomationCondition | undefined;
@@ -159,6 +194,7 @@ export function AutomationsSection({
     }
 
     const mode = blueprint?.mode || editing?.definition.action.mode || 'convert';
+    const fallbackAction = fallbackMode ? { mode: fallbackMode } : undefined;
     const nodes: AutomationGraphNode[] = [
       {
         id: 'trigger',
@@ -178,7 +214,7 @@ export function AutomationsSection({
     if (leaves.length || condition) {
       nodes.push({
         id: 'conditions',
-        blockId: 'condition.file-filter',
+        blockId: fallbackAction ? 'condition.branch' : hdrFilter || minWidth ? 'condition.inspect-metadata' : 'condition.file-filter',
         version: '1.0.0',
         kind: 'condition',
         config: {
@@ -211,17 +247,28 @@ export function AutomationsSection({
       config: { outputDriveId: outputID, behavior },
     });
 
-    const edges =
-      nodes.length === 4
-        ? [
-            { from: 'trigger', to: 'conditions' },
-            { from: 'conditions', to: 'action' },
-            { from: 'action', to: 'output' },
-          ]
-        : [
-            { from: 'trigger', to: 'action' },
-            { from: 'action', to: 'output' },
-          ];
+    const hasCond = Boolean(leaves.length || condition);
+    const edges: { from: string; to: string; port?: string }[] = hasCond
+      ? [
+          { from: 'trigger', to: 'conditions' },
+          { from: 'conditions', to: 'action', ...(fallbackAction ? { port: 'true' } : {}) },
+          { from: 'action', to: 'output' },
+        ]
+      : [
+          { from: 'trigger', to: 'action' },
+          { from: 'action', to: 'output' },
+        ];
+
+    if (hasCond && fallbackAction) {
+      nodes.push({
+        id: 'fallback',
+        blockId: fallbackAction.mode === 'stop' ? 'action.stop' : 'action.skip',
+        version: '1.0.0',
+        kind: 'action',
+        config: { mode: fallbackAction.mode },
+      });
+      edges.push({ from: 'conditions', to: 'fallback', port: 'false' });
+    }
 
     return {
       trigger: {
@@ -243,6 +290,7 @@ export function AutomationsSection({
         outputDriveId: outputID,
         outputBehavior: behavior,
       },
+      ...(fallbackAction ? { fallbackAction } : {}),
       graph: { nodes, edges },
     };
   }
@@ -270,6 +318,7 @@ export function AutomationsSection({
             targetFormat: target,
             options: actionOptions,
             condition: def.condition,
+            fallbackAction: def.fallbackAction,
             processExistingOnNextScan: processExisting,
             outputBehavior: behavior,
             intervalSeconds: Number(interval),
@@ -503,17 +552,17 @@ export function AutomationsSection({
               ↓
             </span>
             <article>
-              <span className="flow-kind">CONDITION</span>
-              <b>Inspect and match files</b>
+              <span className="flow-kind">{fallbackMode ? 'BRANCH' : 'CONDITION'}</span>
+              <b>{hdrFilter || minWidth ? 'Inspect metadata & match files' : 'Inspect and match files'}</b>
               <small>
-                {extensionsInput || nameGlob || minMB || maxMB
+                {extensionsInput || nameGlob || minMB || maxMB || hdrFilter || minWidth
                   ? 'Configured filters apply'
                   : 'All supported files'}{' '}
                 · optional AND / OR / NOT group
               </small>
             </article>
             <span className="flow-arrow" aria-hidden="true">
-              ↓
+              {fallbackMode ? '↓ true' : '↓'}
             </span>
             <article>
               <span className="flow-kind">ACTION</span>
@@ -538,7 +587,27 @@ export function AutomationsSection({
                 {outputID ? 'Output folder selected' : 'Choose a writable folder below'} · never overwrite originals
               </small>
             </article>
+            {fallbackMode && (
+              <>
+                <span className="flow-arrow" aria-hidden="true">
+                  ↳ false branch
+                </span>
+                <article>
+                  <span className="flow-kind">FALLBACK</span>
+                  <b>{fallbackMode === 'stop' ? 'Stop workflow' : 'Skip file'}</b>
+                  <small>Unmatched files are recorded in history without modifying originals</small>
+                </article>
+              </>
+            )}
           </div>
+        )}
+
+        {!editing && (
+          <BlueprintWizard
+            blueprints={blueprints}
+            selectedId={blueprintID}
+            onSelect={applyBlueprint}
+          />
         )}
 
         <form className="automation-form" onSubmit={saveAutomation}>
@@ -548,12 +617,12 @@ export function AutomationsSection({
               value={blueprintID}
               disabled={Boolean(editing)}
               onChange={event => {
-                setBlueprintID(event.target.value);
-                setProfileID('');
-                setPresetID('');
-                setTarget('');
-                setActionOptions({});
-                setMinMB(event.target.value === 'automatic-compression' ? '10' : '');
+                const chosen = blueprints.find(item => item.id === event.target.value);
+                if (chosen) {
+                  applyBlueprint(chosen);
+                } else {
+                  setBlueprintID(event.target.value);
+                }
               }}
             >
               {blueprints.map(item => (
@@ -727,6 +796,42 @@ export function AutomationsSection({
                   />
                 </label>
               </div>
+              <div className="automation-two-fields">
+                <label className="field-label">
+                  HDR metadata filter
+                  <select
+                    aria-label="HDR metadata filter"
+                    value={hdrFilter}
+                    onChange={event => setHdrFilter(event.target.value)}
+                  >
+                    <option value="">Any (SDR or HDR)</option>
+                    <option value="false">SDR only (skip HDR)</option>
+                    <option value="true">HDR only</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  Minimum width (px)
+                  <input
+                    type="number"
+                    min="0"
+                    value={minWidth}
+                    onChange={event => setMinWidth(event.target.value)}
+                    placeholder="Any width"
+                  />
+                </label>
+              </div>
+              <label className="field-label">
+                Unmatched files (false branch)
+                <select
+                  aria-label="Unmatched files branch"
+                  value={fallbackMode}
+                  onChange={event => setFallbackMode(event.target.value)}
+                >
+                  <option value="">Ignore silently</option>
+                  <option value="skip">Record as skipped in history</option>
+                  <option value="stop">Stop workflow run for file</option>
+                </select>
+              </label>
             </div>
           </details>
 

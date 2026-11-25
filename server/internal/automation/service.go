@@ -896,22 +896,83 @@ func blockVersions() []byte {
 
 var Blocks = []Block{
 	{ID: "trigger.folder-scan", Version: "1.0.0", Kind: "trigger", Name: "Watch a folder", Description: "Periodically check a mounted folder for stable new files.", ConfigSchema: map[string]any{"inputDriveId": "drive-id", "intervalSeconds": "integer", "stabilitySeconds": "integer", "maxConcurrent": "integer", "processExistingOnNextScan": "boolean"}, RequiredPermission: "automations.execute"},
+	{ID: "trigger.schedule", Version: "1.0.0", Kind: "trigger", Name: "Run on schedule", Description: "Scan a mounted folder on a safe bounded schedule (5 min, hourly, or daily).", ConfigSchema: map[string]any{"inputDriveId": "drive-id", "intervalSeconds": "integer", "stabilitySeconds": "integer", "maxConcurrent": "integer"}, RequiredPermission: "automations.execute"},
 	{ID: "trigger.manual", Version: "1.0.0", Kind: "trigger", Name: "Run manually", Description: "Scan the configured input folder when requested.", ConfigSchema: map[string]any{"inputDriveId": "drive-id"}, RequiredPermission: "automations.execute"},
 	{ID: "condition.file-filter", Version: "1.0.0", Kind: "condition", Name: "Match files", Description: "Filter by extension, filename pattern, and size.", ConfigSchema: map[string]any{"extensions": "string[]", "nameGlob": "glob", "minBytes": "integer", "maxBytes": "integer"}, RequiredPermission: "automations.execute"},
+	{ID: "condition.inspect-metadata", Version: "1.0.0", Kind: "condition", Name: "Inspect file metadata", Description: "Filter using bounded file analysis (resolution, HDR, codec, audio stream).", ConfigSchema: map[string]any{"minWidth": "integer", "minHeight": "integer", "hdr": "boolean", "codec": "string", "hasAudio": "boolean"}, RequiredPermission: "automations.execute"},
+	{ID: "condition.branch", Version: "1.0.0", Kind: "condition", Name: "Branch on condition", Description: "Route matched files to the true branch and unmatched files to a safe fallback branch.", ConfigSchema: map[string]any{"tree": "condition"}, RequiredPermission: "automations.execute"},
 	{ID: "condition.and", Version: "1.0.0", Kind: "condition", Name: "All conditions", Description: "Match only when every child condition is true.", ConfigSchema: map[string]any{"children": "condition[]"}, RequiredPermission: "automations.execute"},
 	{ID: "condition.or", Version: "1.0.0", Kind: "condition", Name: "Any condition", Description: "Match when at least one child condition is true.", ConfigSchema: map[string]any{"children": "condition[]"}, RequiredPermission: "automations.execute"},
 	{ID: "condition.not", Version: "1.0.0", Kind: "condition", Name: "Exclude condition", Description: "Invert one child condition.", ConfigSchema: map[string]any{"child": "condition"}, RequiredPermission: "automations.execute"},
 	{ID: "action.convert", Version: "1.0.0", Kind: "action", Name: "Convert file", Description: "Submit a conversion to an installed compatible profile.", ConfigSchema: map[string]any{"profileId": "profile-id", "targetFormat": "extension"}, RequiredPermission: "conversion.use"},
 	{ID: "action.compress", Version: "1.0.0", Kind: "action", Name: "Compress file", Description: "Submit compression to an installed compatible profile.", ConfigSchema: map[string]any{"profileId": "profile-id", "targetFormat": "extension"}, RequiredPermission: "compression.use"},
+	{ID: "action.build", Version: "1.0.0", Kind: "action", Name: "Build document", Description: "Assemble matched files into a single document format (e.g. PDF).", ConfigSchema: map[string]any{"profileId": "profile-id", "targetFormat": "extension"}, RequiredPermission: "conversion.use"},
 	{ID: "action.skip", Version: "1.0.0", Kind: "action", Name: "Skip file", Description: "Record a matched file as intentionally skipped.", ConfigSchema: map[string]any{}, RequiredPermission: "automations.execute"},
 	{ID: "action.stop", Version: "1.0.0", Kind: "action", Name: "Stop workflow", Description: "Stop the current workflow run without changing files.", ConfigSchema: map[string]any{}, RequiredPermission: "automations.execute"},
-	{ID: "action.file-output", Version: "1.0.0", Kind: "action", Name: "Write result", Description: "Publish a validated result into a registered writable destination.", ConfigSchema: map[string]any{"outputDriveId": "drive-id", "behavior": "create|skip_existing|unique"}, RequiredPermission: "drives.manage"},
+	{ID: "action.file-output", Version: "1.0.0", Kind: "output", Name: "Write result", Description: "Publish a validated result into a registered writable destination.", ConfigSchema: map[string]any{"outputDriveId": "drive-id", "behavior": "create|skip_existing|unique"}, RequiredPermission: "drives.manage"},
 }
 
 func BuiltinBlueprints() []Blueprint {
 	return []Blueprint{
-		{ID: "automatic-folder-conversion", Version: "1.0.0", Name: "Automatic Folder Conversion", Description: "Convert stable new files from one mounted folder into another.", Mode: "convert", Definition: Definition{Trigger: Trigger{Type: "folder.scan", IntervalSeconds: 60, StabilitySeconds: 30}, Action: FileAction{Mode: "convert", OutputBehavior: "unique"}}},
-		{ID: "automatic-compression", Version: "1.0.0", Name: "Automatic Compression", Description: "Compress files above a size threshold and save the result separately.", Mode: "compress", Definition: Definition{Trigger: Trigger{Type: "folder.scan", IntervalSeconds: 60, StabilitySeconds: 30}, Filter: FileFilter{MinBytes: 10 << 20}, Action: FileAction{Mode: "compress", OutputBehavior: "unique"}}},
+		{
+			ID: "automatic-folder-conversion", Version: "1.0.0",
+			Name: "Automatic Folder Conversion", Description: "Convert stable new files from one mounted folder into another.",
+			Category: "general", Tags: []string{"convert", "folder"}, Mode: "convert",
+			Definition: Definition{Trigger: Trigger{Type: "folder.scan", IntervalSeconds: 60, StabilitySeconds: 30}, Action: FileAction{Mode: "convert", OutputBehavior: "unique"}},
+		},
+		{
+			ID: "automatic-compression", Version: "1.0.0",
+			Name: "Automatic Compression", Description: "Compress files above a size threshold and save the result separately.",
+			Category: "general", Tags: []string{"compress", "size"}, Mode: "compress",
+			Definition: Definition{Trigger: Trigger{Type: "folder.scan", IntervalSeconds: 60, StabilitySeconds: 30}, Filter: FileFilter{MinBytes: 10 << 20}, Action: FileAction{Mode: "compress", OutputBehavior: "unique"}},
+		},
+		{
+			ID: "photo-to-modern-web", Version: "1.0.0",
+			Name: "Photos to WebP", Description: "Watch a photos folder for JPG/PNG images and publish modern WebP copies without touching originals.",
+			Category: "images", Tags: []string{"images", "webp", "photos"}, Mode: "convert",
+			Definition: Definition{
+				Trigger: Trigger{Type: "folder.scan", IntervalSeconds: 60, StabilitySeconds: 20},
+				Filter:  FileFilter{Extensions: []string{"jpg", "jpeg", "png"}},
+				Action:  FileAction{Mode: "convert", TargetFormat: "webp", OutputBehavior: "unique"},
+			},
+		},
+		{
+			ID: "large-video-shrinker", Version: "1.0.0",
+			Name: "Compress Large Videos", Description: "Automatically compress MP4/MOV/MKV recordings larger than 50 MB while preserving originals.",
+			Category: "video", Tags: []string{"video", "compress", "storage"}, Mode: "compress",
+			Definition: Definition{
+				Trigger: Trigger{Type: "folder.scan", IntervalSeconds: 300, StabilitySeconds: 60},
+				Filter:  FileFilter{Extensions: []string{"mp4", "mov", "mkv"}, MinBytes: 50 << 20},
+				Action:  FileAction{Mode: "compress", TargetFormat: "mp4", OutputBehavior: "unique"},
+			},
+		},
+		{
+			ID: "office-to-pdf-archive", Version: "1.0.0",
+			Name: "Office Documents to PDF", Description: "Archive incoming DOCX, XLSX, PPTX, and ODT documents as read-only PDFs.",
+			Category: "documents", Tags: []string{"office", "pdf", "archive"}, Mode: "convert",
+			Definition: Definition{
+				Trigger: Trigger{Type: "folder.scan", IntervalSeconds: 120, StabilitySeconds: 30},
+				Filter:  FileFilter{Extensions: []string{"docx", "xlsx", "pptx", "odt"}},
+				Action:  FileAction{Mode: "convert", TargetFormat: "pdf", OutputBehavior: "unique"},
+			},
+		},
+		{
+			ID: "hdr-safe-media-router", Version: "1.0.0",
+			Name: "HDR-Safe Video Router", Description: "Inspect video metadata: compress standard SDR videos and safely skip HDR videos so HDR is never silently downgraded.",
+			Category: "video", Tags: []string{"video", "hdr", "inspect", "branch"}, Mode: "compress",
+			Definition: Definition{
+				Trigger: Trigger{Type: "folder.scan", IntervalSeconds: 300, StabilitySeconds: 60},
+				Condition: &Condition{
+					Operator: "and",
+					Children: []Condition{
+						{Operator: "or", Children: []Condition{{Operator: "extension", Value: "mp4"}, {Operator: "extension", Value: "mkv"}, {Operator: "extension", Value: "mov"}}},
+						{Operator: "hdr", Value: "false"},
+					},
+				},
+				Action:         FileAction{Mode: "compress", TargetFormat: "mp4", OutputBehavior: "unique"},
+				FallbackAction: &FileAction{Mode: "skip"},
+			},
+		},
 	}
 }
 
