@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/timisah/101conv/server/internal/acceleration"
 	"github.com/timisah/101conv/server/internal/document"
 	"github.com/timisah/101conv/server/internal/limits"
 )
@@ -57,6 +58,8 @@ type Invocation struct {
 	PreserveMetadata               bool
 	HDRPolicy                      string
 	DynamicHDRPolicy               string
+	HardwareAcceleration           string
+	WorkerAcceleration             acceleration.Report
 	TargetExtension                string
 	SourceExtension                string
 	ExpectedInputSHA256            string
@@ -65,11 +68,12 @@ type Invocation struct {
 }
 
 type Result struct {
-	ResultKey string
-	Size      int64
-	ExitCode  int
-	Stdout    string
-	Stderr    string
+	ResultKey    string
+	Size         int64
+	ExitCode     int
+	Stdout       string
+	Stderr       string
+	Acceleration *acceleration.ExecutionSummary
 }
 
 type Runner interface {
@@ -203,6 +207,7 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 		size           int64
 		exitCode       int
 		stdout, stderr string
+		accel          *acceleration.ExecutionSummary
 	}
 	buildArguments := func(outputPath, quality string) ([]string, error) {
 		args := make([]string, 0, len(in.Arguments)+len(compressionArgs))
@@ -252,12 +257,8 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 		}
 		return args, nil
 	}
-	runConverter := func(outputPath, quality string) (candidate, error) {
-		args, buildErr := buildArguments(outputPath, quality)
-		if buildErr != nil {
-			return candidate{}, buildErr
-		}
-		cmd := exec.CommandContext(ctx, executable, args...)
+	execOnce := func(execArgs []string) (int, string, string, error) {
+		cmd := exec.CommandContext(ctx, executable, execArgs...)
 		cmd.Dir = work
 		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work, "LANG=C.UTF-8"}
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -276,34 +277,128 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 		cmd.Stdout, cmd.Stderr = stdout, stderr
 		if runErr := cmd.Run(); runErr != nil {
 			if ctx.Err() != nil {
-				return candidate{stdout: stdout.String(), stderr: stderr.String()}, ctx.Err()
+				return 0, stdout.String(), stderr.String(), ctx.Err()
 			}
 			var exit *exec.ExitError
 			if errors.As(runErr, &exit) {
-				return candidate{exitCode: exit.ExitCode(), stdout: stdout.String(), stderr: stderr.String()}, fmt.Errorf("converter exited with code %d: %w", exit.ExitCode(), runErr)
+				return exit.ExitCode(), stdout.String(), stderr.String(), fmt.Errorf("converter exited with code %d: %w", exit.ExitCode(), runErr)
 			}
-			return candidate{stdout: stdout.String(), stderr: stderr.String()}, runErr
+			return 0, stdout.String(), stderr.String(), runErr
+		}
+		return 0, stdout.String(), stderr.String(), nil
+	}
+	runConverter := func(outputPath, quality string) (candidate, error) {
+		args, buildErr := buildArguments(outputPath, quality)
+		if buildErr != nil {
+			return candidate{}, buildErr
+		}
+		execArgs := args
+		var accelSummary *acceleration.ExecutionSummary
+		usedHardware := false
+		policy := in.HardwareAcceleration
+		if policy == "" {
+			policy = acceleration.PolicyAuto
+		}
+		if in.EngineID == "ffmpeg" {
+			if codec, isVideo := acceleration.DetectVideoCodecFromArgs(args); isVideo {
+				report := in.WorkerAcceleration
+				if len(report.Accelerators) == 0 {
+					report = acceleration.Report{
+						SchemaVersion: 1,
+						CPUFallback:   true,
+						Accelerators: []acceleration.Accelerator{
+							{ID: "cpu", Vendor: acceleration.VendorCPU, API: "software", Available: true, Encode: true, Decode: true, HDRPreserving: true, Verification: "software", Reason: "deterministic CPU fallback"},
+						},
+					}
+				}
+				sel, resolveErr := report.Resolve(acceleration.Request{
+					Encode:      true,
+					PreserveHDR: in.PreserveHDR,
+					Codec:       codec,
+					Policy:      policy,
+				})
+				if resolveErr != nil {
+					return candidate{
+						accel: &acceleration.ExecutionSummary{
+							Policy:        policy,
+							AcceleratorID: "none",
+							Vendor:        "none",
+							API:           "none",
+							Codec:         codec,
+							Strategy:      resolveErr.Error(),
+						},
+					}, resolveErr
+				}
+				accelSummary = &acceleration.ExecutionSummary{
+					Policy:        policy,
+					AcceleratorID: sel.Accelerator.ID,
+					Vendor:        sel.Accelerator.Vendor,
+					API:           sel.Accelerator.API,
+					Codec:         codec,
+					Strategy:      sel.Strategy,
+					Fallback:      sel.Accelerator.Vendor == acceleration.VendorCPU && (policy == acceleration.PolicyPreferHardware || (policy == acceleration.PolicyAuto && report.HardwareConfigured)),
+				}
+				if sel.Accelerator.Vendor != acceleration.VendorCPU {
+					hwArgs, translated, txErr := acceleration.BuildFFmpegArgs(args, sel, codec)
+					if txErr != nil {
+						if policy == acceleration.PolicyRequireHardware {
+							accelSummary.DeviceError = txErr.Error()
+							return candidate{accel: accelSummary}, txErr
+						}
+						accelSummary.AcceleratorID = "cpu"
+						accelSummary.Vendor = acceleration.VendorCPU
+						accelSummary.API = "software"
+						accelSummary.Fallback = true
+						accelSummary.DeviceError = txErr.Error()
+						accelSummary.Strategy = "CPU fallback; hardware argument translation failed"
+					} else if translated {
+						execArgs = hwArgs
+						usedHardware = true
+					}
+				}
+			}
+		}
+
+		exitCode, stdoutStr, stderrStr, runErr := execOnce(execArgs)
+		if runErr != nil && usedHardware && policy != acceleration.PolicyRequireHardware && !in.PreserveHDR && acceleration.IsHardwareDeviceError(stderrStr) {
+			_ = os.Remove(outputPath)
+			deviceErr := strings.TrimSpace(runErr.Error())
+			exitCode, stdoutStr, stderrStr, runErr = execOnce(args)
+			if accelSummary != nil {
+				accelSummary.AcceleratorID = "cpu"
+				accelSummary.Vendor = acceleration.VendorCPU
+				accelSummary.API = "software"
+				accelSummary.Fallback = true
+				accelSummary.DeviceError = deviceErr
+				accelSummary.Strategy = "CPU fallback after hardware device error"
+			}
+		}
+		if runErr != nil {
+			if usedHardware && accelSummary != nil && acceleration.IsHardwareDeviceError(stderrStr) {
+				accelSummary.DeviceError = strings.TrimSpace(runErr.Error())
+			}
+			return candidate{exitCode: exitCode, stdout: stdoutStr, stderr: stderrStr, accel: accelSummary}, runErr
 		}
 		outputInfo, statErr := os.Lstat(outputPath)
 		if statErr != nil {
-			return candidate{stdout: stdout.String(), stderr: stderr.String()}, fmt.Errorf("converter produced no output: %w", statErr)
+			return candidate{stdout: stdoutStr, stderr: stderrStr, accel: accelSummary}, fmt.Errorf("converter produced no output: %w", statErr)
 		}
 		if !outputInfo.Mode().IsRegular() || outputInfo.Mode()&os.ModeSymlink != 0 || outputInfo.Size() <= 0 || outputInfo.Size() > maxOutput {
-			return candidate{stdout: stdout.String(), stderr: stderr.String()}, fmt.Errorf("converter output failed type or size validation")
+			return candidate{stdout: stdoutStr, stderr: stderrStr, accel: accelSummary}, fmt.Errorf("converter output failed type or size validation")
 		}
 		if signatureErr := validateImageSignature(outputPath, in.TargetExtension); signatureErr != nil {
-			return candidate{exitCode: 0, stdout: stdout.String(), stderr: stderr.String()}, signatureErr
+			return candidate{exitCode: 0, stdout: stdoutStr, stderr: stderrStr, accel: accelSummary}, signatureErr
 		}
 		if inputMedia != nil && (in.PreserveResolution || in.PreserveHDR) {
 			outputMedia, probeErr := probeMedia(ctx, engineRoot, work, outputPath, in)
 			if probeErr != nil {
-				return candidate{stdout: stdout.String(), stderr: stderr.String()}, fmt.Errorf("validate output media: %w", probeErr)
+				return candidate{stdout: stdoutStr, stderr: stderrStr, accel: accelSummary}, fmt.Errorf("validate output media: %w", probeErr)
 			}
 			if fidelityErr := validateMediaFidelity(*inputMedia, *outputMedia, in); fidelityErr != nil {
-				return candidate{stdout: stdout.String(), stderr: stderr.String()}, fidelityErr
+				return candidate{stdout: stdoutStr, stderr: stderrStr, accel: accelSummary}, fidelityErr
 			}
 		}
-		return candidate{path: outputPath, size: outputInfo.Size(), stdout: stdout.String(), stderr: stderr.String()}, nil
+		return candidate{path: outputPath, size: outputInfo.Size(), stdout: stdoutStr, stderr: stderrStr, accel: accelSummary}, nil
 	}
 
 	selectedTarget := in.TargetSizeBytes
@@ -426,19 +521,19 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 			}
 		}
 		if bestIndex < 0 {
-			return Result{Stdout: lastCandidate.stdout, Stderr: lastCandidate.stderr}, fmt.Errorf("no tested quality setting produced an output within the requested target size")
+			return Result{Stdout: lastCandidate.stdout, Stderr: lastCandidate.stderr, Acceleration: lastCandidate.accel}, fmt.Errorf("no tested quality setting produced an output within the requested target size")
 		}
 	} else {
 		selected, err = runConverter(filepath.Join(work, "output."+in.TargetExtension), in.CompressionFixedQuality)
 		if err != nil {
-			return Result{Stdout: selected.stdout, Stderr: selected.stderr}, err
+			return Result{Stdout: selected.stdout, Stderr: selected.stderr, Acceleration: selected.accel}, err
 		}
 		if in.TargetSizeBytes > 0 && selected.size > selectedTarget {
-			return Result{ExitCode: selected.exitCode, Stdout: selected.stdout, Stderr: selected.stderr}, fmt.Errorf("converter output exceeded the requested target size")
+			return Result{ExitCode: selected.exitCode, Stdout: selected.stdout, Stderr: selected.stderr, Acceleration: selected.accel}, fmt.Errorf("converter output exceeded the requested target size")
 		}
 	}
 	if in.RequireSmaller && selected.size >= inputInfo.Size() {
-		return Result{ExitCode: selected.exitCode, Stdout: selected.stdout, Stderr: selected.stderr}, fmt.Errorf("compression did not reduce the input size")
+		return Result{ExitCode: selected.exitCode, Stdout: selected.stdout, Stderr: selected.stderr, Acceleration: selected.accel}, fmt.Errorf("compression did not reduce the input size")
 	}
 	resultKey := fmt.Sprintf("%s-%d.bin", in.JobID, in.Attempt)
 	resultPath := filepath.Join(r.ResultRoot, resultKey)
@@ -448,7 +543,7 @@ func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, 
 	if err = copyAtomic(selected.path, resultPath, maxOutput); err != nil {
 		return Result{}, err
 	}
-	return Result{ResultKey: resultKey, Size: selected.size, ExitCode: selected.exitCode, Stdout: selected.stdout, Stderr: selected.stderr}, nil
+	return Result{ResultKey: resultKey, Size: selected.size, ExitCode: selected.exitCode, Stdout: selected.stdout, Stderr: selected.stderr, Acceleration: selected.accel}, nil
 }
 
 func maxInt(a, b int) int {

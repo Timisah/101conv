@@ -61,6 +61,8 @@ require(volume("worker", "/var/lib/101conv/uploads").get("read_only") is True, "
 require(volume("worker", "/var/lib/101conv/results").get("read_only") is not True, "Worker results must remain writable for outputs")
 require(not any(value.get("target") == "/mounts" for value in services["worker"].get("volumes", [])), "Worker must not mount automation folders")
 
+require(not services["worker"].get("devices"), "Base Compose worker must remain CPU-only with no mapped GPU devices")
+
 limits = {
     "core": (128, 805306368, 1.5),
     "web": (64, 134217728, 0.5),
@@ -72,5 +74,46 @@ for name, (pids, memory, cpus) in limits.items():
     require(int(service.get("mem_limit", 0)) == memory, f"{name} mem_limit changed from the reviewed bound")
     require(float(service.get("cpus")) == cpus, f"{name} cpus changed from the reviewed bound")
 
-print("Compose security contract passed: non-root app services, dropped capabilities, internal Worker network, restricted mounts, no host Worker/Core ports, and resource bounds verified.")
+print("Compose security contract passed: non-root app services, dropped capabilities, internal Worker network, restricted mounts, no host Worker/Core ports, CPU-only base Worker, and resource bounds verified.")
 PY
+
+for override in deploy/compose.gpu-vaapi.yaml deploy/compose.gpu-nvidia.yaml; do
+  gpu_config="$(mktemp)"
+  POSTGRES_PASSWORD=p0-audit-only \
+  ENGINE_ADMIN_TOKEN=e0-audit-only \
+  DATA_PATH=/tmp/101conv-security-audit \
+  PORT=5656 \
+  docker compose -f "$repo_root/compose.yaml" -f "$repo_root/$override" config --format json >"$gpu_config"
+  python3 - "$gpu_config" "$override" <<'PY'
+import json
+import re
+import sys
+
+config = json.load(open(sys.argv[1], encoding="utf-8"))
+override = sys.argv[2]
+worker = config["services"]["worker"]
+
+def require(condition, message):
+    if not condition:
+        raise SystemExit(f"GPU override audit failed ({override}): {message}")
+
+require(worker.get("read_only") is True, "GPU worker must keep read-only root filesystem")
+require("ALL" in worker.get("cap_drop", []), "GPU worker must drop all Linux capabilities")
+require(worker.get("privileged") is not True, "GPU worker must never run privileged")
+require(worker.get("user") == "65532:65532", "GPU worker must remain unprivileged UID 65532:65532")
+require(set(worker.get("networks", {})) == {"worker-db"}, "GPU worker must remain on internal worker-db network only")
+require(not any("docker.sock" in str(v) for v in worker.get("volumes", [])), "GPU worker must not mount Docker socket")
+
+devices = worker.get("devices", [])
+require(len(devices) > 0, "GPU override must map explicit allowlisted device(s)")
+allowed = re.compile(r"^(/dev/dri/renderD[0-9]+|/dev/nvidia[0-9]+|/dev/nvidiactl|/dev/nvidia-uvm)$")
+for dev in devices:
+    src = dev.get("source") if isinstance(dev, dict) else str(dev).split(":")[0]
+    tgt = dev.get("target") if isinstance(dev, dict) else str(dev).split(":")[1]
+    require(bool(allowed.match(src)) and src == tgt, f"non-allowlisted device mapping {dev!r}")
+
+print(f"GPU override isolation passed ({override}): {len(devices)} allowlisted device(s), non-privileged, read-only root, dropped capabilities.")
+PY
+  rm -f "$gpu_config"
+done
+

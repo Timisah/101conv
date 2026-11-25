@@ -259,7 +259,7 @@ func (w *Worker) runClaim(parent context.Context, c claimedJob) {
 			}
 		}
 	}()
-	inv := worker.Invocation{JobID: c.ID, Attempt: c.Attempt, InputID: c.UploadID, EngineID: c.Spec.EngineID, EngineVersion: c.Spec.EngineVersion, ExecutableRelativePath: c.Spec.ExecutableRelativePath, Arguments: c.Spec.Arguments, CompressionArguments: c.Spec.CompressionArguments, TargetSizeBytes: c.Spec.TargetSizeBytes, ProbeExecutableRelativePath: c.Spec.ProbeExecutableRelativePath, AudioBitrateKbps: c.Spec.AudioBitrateKbps, MinimumVideoKbps: c.Spec.MinimumVideoKbps, RequireSmaller: c.Spec.RequireSmaller, CompressionQualityMin: c.Spec.CompressionQualityMin, CompressionQualityMax: c.Spec.CompressionQualityMax, CompressionQualityStep: c.Spec.CompressionQualityStep, CompressionQualityHigherBetter: c.Spec.CompressionQualityHigherBetter, CompressionQualityAttempts: c.Spec.CompressionQualityAttempts, CompressionFixedQuality: c.Spec.CompressionFixedQuality, PreserveResolution: c.Spec.PreserveResolution, PreserveHDR: c.Spec.PreserveHDR, StreamSelection: c.Spec.StreamSelection, PreserveMetadata: c.Spec.PreserveMetadata, HDRPolicy: c.Spec.HDRPolicy, DynamicHDRPolicy: c.Spec.DynamicHDRPolicy, TargetExtension: c.Spec.TargetExtension, SourceExtension: c.Spec.SourceExtension, ExpectedInputSHA256: c.InputSHA256, ExpectedInputSize: c.InputSize, DocumentBuild: c.Spec.DocumentBuild}
+	inv := worker.Invocation{JobID: c.ID, Attempt: c.Attempt, InputID: c.UploadID, EngineID: c.Spec.EngineID, EngineVersion: c.Spec.EngineVersion, ExecutableRelativePath: c.Spec.ExecutableRelativePath, Arguments: c.Spec.Arguments, CompressionArguments: c.Spec.CompressionArguments, TargetSizeBytes: c.Spec.TargetSizeBytes, ProbeExecutableRelativePath: c.Spec.ProbeExecutableRelativePath, AudioBitrateKbps: c.Spec.AudioBitrateKbps, MinimumVideoKbps: c.Spec.MinimumVideoKbps, RequireSmaller: c.Spec.RequireSmaller, CompressionQualityMin: c.Spec.CompressionQualityMin, CompressionQualityMax: c.Spec.CompressionQualityMax, CompressionQualityStep: c.Spec.CompressionQualityStep, CompressionQualityHigherBetter: c.Spec.CompressionQualityHigherBetter, CompressionQualityAttempts: c.Spec.CompressionQualityAttempts, CompressionFixedQuality: c.Spec.CompressionFixedQuality, PreserveResolution: c.Spec.PreserveResolution, PreserveHDR: c.Spec.PreserveHDR, StreamSelection: c.Spec.StreamSelection, PreserveMetadata: c.Spec.PreserveMetadata, HDRPolicy: c.Spec.HDRPolicy, DynamicHDRPolicy: c.Spec.DynamicHDRPolicy, HardwareAcceleration: c.Spec.HardwareAcceleration, WorkerAcceleration: w.config.Acceleration, TargetExtension: c.Spec.TargetExtension, SourceExtension: c.Spec.SourceExtension, ExpectedInputSHA256: c.InputSHA256, ExpectedInputSize: c.InputSize, DocumentBuild: c.Spec.DocumentBuild}
 	result, runErr := w.runner.Run(ctx, inv)
 	cancel()
 	<-done
@@ -343,10 +343,16 @@ func (w *Worker) finish(ctx context.Context, c claimedJob, result worker.Result,
 	if _, err = tx.ExecContext(ctx, `UPDATE conv_job_attempts SET state=$3,finished_at=now(),exit_code=$4,stdout=$5,stderr=$6,error=$7 WHERE job_id=$1 AND attempt_number=$2`, c.ID, c.Attempt, attemptState, exit, bound(result.Stdout), bound(result.Stderr), jobErr); err != nil {
 		return err
 	}
+	var accelJSON any
+	if result.Acceleration != nil {
+		if raw, mErr := json.Marshal(result.Acceleration); mErr == nil {
+			accelJSON = raw
+		}
+	}
 	if strings.ToLower(state) == string(Queued) {
-		_, err = tx.ExecContext(ctx, `UPDATE conv_jobs SET state='queued',progress=0,lease_owner=NULL,lease_until=NULL,error=$2,updated_at=now() WHERE id=$1`, c.ID, jobErr)
+		_, err = tx.ExecContext(ctx, `UPDATE conv_jobs SET state='queued',progress=0,lease_owner=NULL,lease_until=NULL,error=$2,acceleration_info=COALESCE($3,acceleration_info),updated_at=now() WHERE id=$1`, c.ID, jobErr, accelJSON)
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE conv_jobs SET state=$2,progress=$3,error=$4,result_key=$5,result_size=$6,lease_owner=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`, c.ID, state, progress, jobErr, key, size)
+		_, err = tx.ExecContext(ctx, `UPDATE conv_jobs SET state=$2,progress=$3,error=$4,result_key=$5,result_size=$6,acceleration_info=COALESCE($7,acceleration_info),lease_owner=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`, c.ID, state, progress, jobErr, key, size, accelJSON)
 	}
 	if err != nil {
 		return err

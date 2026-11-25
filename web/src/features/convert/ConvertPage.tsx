@@ -78,6 +78,7 @@ export function ConvertPage({
   const [target, setTarget] = useState('');
   const [selected, setSelected] = useState('');
   const [options, setOptions] = useState<Record<string, string>>({});
+  const [hardwareAcceleration, setHardwareAcceleration] = useState('auto');
   const [busy, setBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{
     index: number;
@@ -171,6 +172,7 @@ export function ConvertPage({
       targetFormat: string;
       profileId?: string;
       options?: Record<string, string>;
+      hardwareAcceleration?: string;
     }[] = [];
     const failures: string[] = [];
 
@@ -188,6 +190,7 @@ export function ConvertPage({
           targetFormat: string;
           profileId?: string;
           options?: Record<string, string>;
+          hardwareAcceleration?: string;
         } = { uploadId: upload.id, targetFormat: target };
         if (profile) {
           item.profileId = profile.definition.id;
@@ -195,6 +198,9 @@ export function ConvertPage({
         } else if (visibleOptions.length && effectiveAutomaticProfile) {
           item.profileId = effectiveAutomaticProfile;
           item.options = options;
+        }
+        if (['mp4', 'mkv', 'webm', 'mov', 'avi'].includes(target.toLowerCase()) && hardwareAcceleration !== 'auto') {
+          item.hardwareAcceleration = hardwareAcceleration;
         }
         items.push(item);
       } catch (err) {
@@ -484,6 +490,30 @@ export function ConvertPage({
               <ChevronDown size={16} />
             </div>
             <small className="field-hint">Only needed to force a specific installed implementation.</small>
+            {['mp4', 'mkv', 'webm', 'mov', 'avi'].includes(target.toLowerCase()) && (
+              <>
+                <label className="field-label" htmlFor="convert-hw-accel">
+                  Hardware video acceleration
+                </label>
+                <div className="select-wrap">
+                  <select
+                    id="convert-hw-accel"
+                    value={hardwareAcceleration}
+                    onChange={event => setHardwareAcceleration(event.target.value)}
+                    disabled={accessLocked || busy}
+                  >
+                    <option value="auto">Automatic (use verified GPU when compatible, else CPU)</option>
+                    <option value="cpu">CPU only (deterministic software encoder)</option>
+                    <option value="prefer_hardware">Prefer hardware (fall back to CPU if unsupported)</option>
+                    <option value="require_hardware">Require hardware (fail if no compatible GPU)</option>
+                  </select>
+                  <ChevronDown size={16} />
+                </div>
+                <small className="field-hint">
+                  Hardware encoding is opt-in and faster on supported GPUs, though quality can differ from CPU. HDR-preserving jobs automatically use CPU unless hardware HDR is verified.
+                </small>
+              </>
+            )}
           </details>
 
           {!files.length && <p className="field-hint">Add files to see compatible profiles and formats.</p>}

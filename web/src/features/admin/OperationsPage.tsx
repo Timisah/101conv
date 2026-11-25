@@ -6,7 +6,7 @@ import { bytes, explain, pretty } from '../format';
 import { apiRequest } from '../session';
 import './admin.css';
 
-type WorkerAcceleration = { schemaVersion: number; hardwareConfigured: boolean; cpuFallback: boolean; accelerators: { id: string; vendor: string; api: string; device?: string; driver?: string; available: boolean; encode: boolean; decode: boolean; hdrPreserving: boolean; verification: string; reason: string }[] };
+type WorkerAcceleration = { schemaVersion: number; hardwareConfigured: boolean; cpuFallback: boolean; accelerators: { id: string; vendor: string; api: string; device?: string; driver?: string; available: boolean; encode: boolean; decode: boolean; hdrPreserving: boolean; codecs?: string[]; hwaccels?: string[]; verification: string; reason: string }[] };
 export type OperationsResponse = {
   core: string; readyToConvert: boolean; databaseConnected: boolean;
   workers: { id: string; lastSeen: string; lastActivity?: string; online: boolean; activeJobs: number; configuredConcurrency: number; batchConcurrency: number; acceleration?: WorkerAcceleration }[];
@@ -100,7 +100,17 @@ export function OperationsPage() {
                   <span><StatusPill tone={worker.online ? 'ok' : 'bad'}>{worker.online ? 'Online' : 'Offline'}</StatusPill></span>
                   <small>{worker.activeJobs} active job{worker.activeJobs === 1 ? '' : 's'} of {worker.configuredConcurrency} slot{worker.configuredConcurrency === 1 ? '' : 's'} · at most {worker.batchConcurrency} from one batch</small>
                   <small>Last heartbeat {new Date(worker.lastSeen).toLocaleString()}{worker.lastActivity ? ' · last activity ' + new Date(worker.lastActivity).toLocaleString() : ''}</small>
-                  {worker.acceleration && <small>Acceleration: {worker.acceleration.accelerators.filter(item => item.available && item.vendor !== 'cpu').map(item => item.id).join(', ') || 'CPU only'}{worker.acceleration.hardwareConfigured ? ' · allowlisted hardware checked' : ' · no hardware allowlist configured'}</small>}
+                  {worker.acceleration && (
+                    <>
+                      <small>Acceleration: {worker.acceleration.accelerators.filter(item => item.available && item.vendor !== 'cpu').map(item => item.id).join(', ') || 'CPU only'}{worker.acceleration.hardwareConfigured ? ' · allowlisted hardware checked' : ' · no hardware allowlist configured'}</small>
+                      {worker.acceleration.accelerators.filter(item => item.vendor !== 'cpu').map(acc => (
+                        <small key={acc.id}>
+                          {acc.id} ({acc.available ? (acc.codecs?.length ? `codecs: ${acc.codecs.join(', ')}` : 'device verified') : 'unavailable'}
+                          {acc.driver ? ` · ${acc.driver}` : ''}): {acc.reason}
+                        </small>
+                      ))}
+                    </>
+                  )}
                 </div>
               ))}</div>
             ) : <p className="muted-copy">No Worker has reported yet. Check the Worker container logs and its database connection.</p>}

@@ -18,7 +18,25 @@ const (
 	VendorAMD    = "amd"
 	VendorNVIDIA = "nvidia"
 	VendorCPU    = "cpu"
+
+	PolicyAuto            = "auto"
+	PolicyCPU             = "cpu"
+	PolicyPreferHardware  = "prefer_hardware"
+	PolicyRequireHardware = "require_hardware"
 )
+
+// ValidatePolicy normalizes and validates a job hardware acceleration policy.
+func ValidatePolicy(raw string) (string, error) {
+	p := strings.ToLower(strings.TrimSpace(raw))
+	switch p {
+	case "", PolicyAuto:
+		return PolicyAuto, nil
+	case PolicyCPU, PolicyPreferHardware, PolicyRequireHardware:
+		return p, nil
+	default:
+		return "", fmt.Errorf("unsupported hardware acceleration policy %q", raw)
+	}
+}
 
 // Config is the only device-access input accepted by the probe. Paths must be
 // explicitly supplied by the deployment; the probe never scans /dev.
@@ -35,17 +53,20 @@ func (c Config) HardwareConfigured() bool {
 // Accelerator is a public diagnostic record. Device is a basename rather
 // than a host path so the Operations API does not disclose arbitrary mounts.
 type Accelerator struct {
-	ID            string `json:"id"`
-	Vendor        string `json:"vendor"`
-	API           string `json:"api"`
-	Device        string `json:"device,omitempty"`
-	Driver        string `json:"driver,omitempty"`
-	Available     bool   `json:"available"`
-	Encode        bool   `json:"encode"`
-	Decode        bool   `json:"decode"`
-	HDRPreserving bool   `json:"hdrPreserving"`
-	Verification  string `json:"verification"`
-	Reason        string `json:"reason"`
+	ID            string   `json:"id"`
+	Vendor        string   `json:"vendor"`
+	API           string   `json:"api"`
+	Device        string   `json:"device,omitempty"`
+	DevicePath    string   `json:"-"`
+	Driver        string   `json:"driver,omitempty"`
+	Available     bool     `json:"available"`
+	Encode        bool     `json:"encode"`
+	Decode        bool     `json:"decode"`
+	HDRPreserving bool     `json:"hdrPreserving"`
+	Codecs        []string `json:"codecs,omitempty"`
+	HWAccels      []string `json:"hwaccels,omitempty"`
+	Verification  string   `json:"verification"`
+	Reason        string   `json:"reason"`
 }
 
 // Report is persisted in the Worker heartbeat and is safe to expose to an
@@ -62,11 +83,26 @@ type Request struct {
 	Decode          bool
 	PreserveHDR     bool
 	RequireHardware bool
+	Codec           string
+	Policy          string
 }
 
 type Selection struct {
 	Accelerator Accelerator `json:"accelerator"`
 	Strategy    string      `json:"strategy"`
+}
+
+// ExecutionSummary is persisted on a completed job to transparently report
+// which accelerator ran and whether a CPU fallback or device error occurred.
+type ExecutionSummary struct {
+	Policy        string `json:"policy,omitempty"`
+	AcceleratorID string `json:"acceleratorId"`
+	Vendor        string `json:"vendor"`
+	API           string `json:"api"`
+	Codec         string `json:"codec,omitempty"`
+	Strategy      string `json:"strategy"`
+	Fallback      bool   `json:"fallback,omitempty"`
+	DeviceError   string `json:"deviceError,omitempty"`
 }
 
 // Probe abstracts host inspection so discovery remains unit-testable without
@@ -144,7 +180,7 @@ func Detect(ctx context.Context, config Config, probe Probe) (Report, error) {
 
 func inspectRenderNode(node, sysfsRoot string, probe Probe) Accelerator {
 	device := filepath.Base(node)
-	base := Accelerator{ID: "render-node/" + device, Device: device, Verification: "device-and-driver", Reason: "configured render node is unavailable"}
+	base := Accelerator{ID: "render-node/" + device, Device: device, DevicePath: node, Verification: "device-and-driver", Reason: "configured render node is unavailable"}
 	if _, err := probe.Stat(node); err != nil {
 		return base
 	}
@@ -189,7 +225,7 @@ func inspectRenderNode(node, sysfsRoot string, probe Probe) Accelerator {
 
 func inspectNVIDIA(ctx context.Context, node string, probe Probe) Accelerator {
 	device := filepath.Base(node)
-	base := Accelerator{ID: "nvidia/" + device, Vendor: VendorNVIDIA, API: "nvenc-nvdec", Device: device, Verification: "device-and-driver", Reason: "configured NVIDIA device is unavailable"}
+	base := Accelerator{ID: "nvidia/" + device, Vendor: VendorNVIDIA, API: "nvenc-nvdec", Device: device, DevicePath: node, Verification: "device-and-driver", Reason: "configured NVIDIA device is unavailable"}
 	if _, err := probe.Stat(node); err != nil {
 		return base
 	}
@@ -212,29 +248,84 @@ func inspectNVIDIA(ctx context.Context, node string, probe Probe) Accelerator {
 	return base
 }
 
+func acceleratorSupportsCodec(item Accelerator, codec string) bool {
+	if codec == "" {
+		return true
+	}
+	for _, supported := range item.Codecs {
+		if strings.EqualFold(supported, codec) {
+			return true
+		}
+	}
+	return false
+}
+
 // Resolve chooses hardware only when its verified properties satisfy the
 // request. A non-HDR request may use the first stable hardware record; an HDR
 // preserving request intentionally falls back to CPU until the engine proves
 // that the selected codec path preserves the source metadata.
 func (r Report) Resolve(request Request) (Selection, error) {
+	policy := strings.ToLower(strings.TrimSpace(request.Policy))
+	if policy == "" {
+		policy = PolicyAuto
+	}
+	requireHardware := request.RequireHardware || policy == PolicyRequireHardware
+	codec := strings.ToLower(strings.TrimSpace(request.Codec))
+
 	items := append([]Accelerator(nil), r.Accelerators...)
 	sort.SliceStable(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+
+	if policy == PolicyCPU && !requireHardware {
+		for _, item := range items {
+			if item.Vendor == VendorCPU && item.Available {
+				return Selection{Accelerator: item, Strategy: "CPU explicitly selected"}, nil
+			}
+		}
+		return Selection{
+			Accelerator: Accelerator{ID: "cpu", Vendor: VendorCPU, API: "software", Available: true, Encode: true, Decode: true, HDRPreserving: true, Verification: "software", Reason: "deterministic CPU fallback"},
+			Strategy:    "CPU explicitly selected",
+		}, nil
+	}
+
+	codecMismatch := false
+	hdrMismatch := false
 	for _, item := range items {
-		if item.Vendor == VendorCPU || !item.Available || (request.Encode && !item.Encode) || (request.Decode && !item.Decode) || request.PreserveHDR && !item.HDRPreserving {
+		if item.Vendor == VendorCPU || !item.Available {
+			continue
+		}
+		if (request.Encode && !item.Encode) || (request.Decode && !item.Decode) {
+			continue
+		}
+		if request.PreserveHDR && !item.HDRPreserving {
+			hdrMismatch = true
+			continue
+		}
+		if codec != "" && !acceleratorSupportsCodec(item, codec) {
+			codecMismatch = true
 			continue
 		}
 		return Selection{Accelerator: item, Strategy: "verified hardware capability"}, nil
 	}
-	if !request.RequireHardware && r.CPUFallback {
+	if !requireHardware && r.CPUFallback {
 		for _, item := range items {
 			if item.Vendor == VendorCPU && item.Available {
 				strategy := "CPU fallback; no compatible hardware capability"
-				if request.PreserveHDR {
+				if request.PreserveHDR && hdrMismatch {
 					strategy = "CPU fallback; HDR preservation is not verified for hardware encoders"
+				} else if request.PreserveHDR {
+					strategy = "CPU fallback; HDR preservation is not verified for hardware encoders"
+				} else if codec != "" && codecMismatch {
+					strategy = fmt.Sprintf("CPU fallback; no configured hardware encoder verified for codec %s", codec)
 				}
 				return Selection{Accelerator: item, Strategy: strategy}, nil
 			}
 		}
+	}
+	if request.PreserveHDR {
+		return Selection{}, fmt.Errorf("hardware acceleration required, but HDR preservation is not verified for configured hardware encoders")
+	}
+	if codec != "" && codecMismatch {
+		return Selection{}, fmt.Errorf("hardware acceleration required, but no configured hardware encoder supports codec %s", codec)
 	}
 	return Selection{}, fmt.Errorf("no acceleration capability satisfies the requested encode/decode and fidelity constraints")
 }

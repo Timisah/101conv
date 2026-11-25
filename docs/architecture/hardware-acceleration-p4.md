@@ -1,58 +1,65 @@
-# Optional hardware acceleration (P4 slice)
+# Optional hardware acceleration (P4 — FR-013)
 
-The Worker now reports explicitly configured acceleration devices in its
-heartbeat. This is a discovery and policy foundation, not a claim that every
-codec/driver combination is production-ready.
+Hardware video acceleration is strictly opt-in and preserves the Worker's
+least-privilege isolation boundary. The base Compose deployment remains
+CPU-only by default.
 
-## Trust boundary
+## Trust boundary and reviewed Compose overrides
 
-The base Compose deployment remains CPU-only. A Worker sees a GPU only when an
-administrator supplies both:
+A Worker sees a GPU only when an administrator opts in with both an explicit
+device allowlist environment variable and a reviewed Compose override:
 
-- `GPU_RENDER_NODES`, a comma- or path-list-separated allowlist of Intel/AMD
-  `/dev/dri/renderD*` nodes; or
-- `GPU_NVIDIA_DEVICES`, an allowlist of `/dev/nvidiaN` nodes.
+- **Intel VAAPI / Quick Sync or AMD VAAPI:** `deploy/compose.gpu-vaapi.yaml`
+  maps only `${GPU_RENDER_NODE:-/dev/dri/renderD128}` and sets `GPU_RENDER_NODES`.
+- **NVIDIA NVENC / NVDEC:** `deploy/compose.gpu-nvidia.yaml` maps only
+  `${GPU_NVIDIA_DEVICE:-/dev/nvidia0}`, `/dev/nvidiactl`, and `/dev/nvidia-uvm`,
+  and sets `GPU_NVIDIA_DEVICES`.
 
-The deployment must map those exact devices in a reviewed Compose override.
-There is no automatic `/dev` scan, Docker socket, `privileged` mode, or
-unrestricted device mapping. The probe verifies the render-node vendor and
-driver through read-only sysfs and verifies NVIDIA through `nvidia-smi`.
+Both overrides keep `read_only: true`, `cap_drop: [ALL]`, non-root UID
+`65532:65532`, internal-only `worker-db` network, and zero Docker socket or
+unrestricted `/dev` access. `scripts/verify-compose-security.sh` enforces these
+invariants in CI for both the CPU-only base stack and both GPU overrides.
 
-Example for a reviewed Intel/AMD override:
+## Discovery and FFmpeg capability probe
 
-```yaml
-services:
-  worker:
-    environment:
-      GPU_RENDER_NODES: /dev/dri/renderD128
-    devices:
-      - /dev/dri/renderD128:/dev/dri/renderD128
-```
+1. `acceleration.Detect` verifies each allowlisted render node via read-only
+   sysfs vendor/driver checks (`i915`/`xe` for Intel `0x8086`, `amdgpu` for AMD
+   `0x1002`) and NVIDIA devices via `/dev/nvidiactl` + `nvidia-smi`.
+2. When hardware is configured, Worker startup also runs
+   `acceleration.ProbeFFmpegCapabilities` against the installed FFmpeg engine
+   (`-hide_banner -hwaccels` and `-hide_banner -encoders`) to discover the
+   actual verified hardware encoders (`h264`, `hevc`, `vp9`, `av1`) and
+   `hwaccels` (`vaapi`, `qsv`, `cuda`).
+3. Host device paths (`DevicePath`) are never serialized to the Operations API
+   or job responses; only safe basenames, driver names, verified codecs, and
+   diagnostic reasons are exposed to administrators on **Admin → Operations**.
 
-The exact render node and driver mapping are host-specific. NVIDIA mappings
-must include the selected `/dev/nvidiaN`, `/dev/nvidiactl`, and the driver
-runtime devices required by the host. Do not copy an override without checking
-the host's device ACLs and driver package.
+## Deterministic selection, HDR safety, and CPU fallback
 
-## Capability and fallback contract
+Jobs freeze an explicit `hardwareAcceleration` policy (`auto`, `cpu`,
+`prefer_hardware`, `require_hardware`) into their immutable `ExecutionSpec`:
 
-`server/internal/acceleration` emits a bounded report containing the vendor,
-API, driver, encode/decode flags, verification level, and a safe diagnostic.
-The report never includes arbitrary host paths in the Operations response.
-CPU is always a selectable fallback. Hardware is selected only when the
-requested encode/decode properties are available. A request that requires HDR
-preservation currently selects CPU because hardware HDR preservation has not
-yet been verified for the selected engine and codec. A future job-spec field
-must freeze the resolved accelerator alongside the engine/provider before
-enabling hardware execution.
+- **Allowlisted translation only:** `acceleration.BuildFFmpegArgs` rewrites only
+  validated software video encoders (`libx264`, `libx265`, `libvpx-vp9`,
+  `libaom-av1`, `libsvtav1`) to their allowlisted hardware counterparts
+  (`*_vaapi`, `*_qsv`, `*_nvenc`) and injects only allowlisted device/filter
+  flags. Arbitrary user-supplied FFmpeg flags are never accepted.
+- **HDR preservation invariant:** hardware encoders do not claim verified HDR
+  preservation. When `preserveHDR` is enabled, `auto` and `prefer_hardware`
+  deterministically select CPU (`CPU fallback; HDR preservation is not verified
+  for hardware encoders`), and `require_hardware` fails explicitly.
+- **Transparent runtime fallback:** if a hardware-accelerated FFmpeg run fails
+  due to a device/driver initialization error (classified by
+  `acceleration.IsHardwareDeviceError`, never misclassifying corrupt input) and
+  the policy is not `require_hardware` and `preserveHDR` is false, the Worker
+  re-runs the job on CPU and records `fallback: true` and `deviceError` in
+  `conv_jobs.acceleration_info` (returned as `job.acceleration`).
 
-The administrator-only `GET /api/v1/operations` response exposes each online
-Worker's report. This makes unavailable devices and failed driver probes
-visible without treating a green heartbeat as proof of codec fidelity.
+## Quality and performance considerations
 
-## Remaining P4/P5 work
-
-The probe does not yet select FFmpeg hardware arguments, benchmark codecs, or
-publish per-codec HDR fidelity results. Those require engine-specific profiles,
-actual device mappings, and output verification before hardware acceleration
-can be advertised as generally available.
+Hardware encoders prioritize throughput and power efficiency, not universally
+higher compression efficiency or visual fidelity than CPU software encoders.
+Use `go test -v ./internal/acceleration/... ./internal/worker/...` to run the
+deterministic capability, fallback, and selection benchmark harness, and
+compare output sizes and visual quality on target hardware before enabling
+`prefer_hardware` or `require_hardware` in production.

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/timisah/101conv/server/internal/acceleration"
 	"github.com/timisah/101conv/server/internal/capability"
 	"github.com/timisah/101conv/server/internal/document"
 	"github.com/timisah/101conv/server/internal/limits"
@@ -150,6 +151,7 @@ CREATE INDEX IF NOT EXISTS conv_jobs_upload_idx ON conv_jobs(upload_id);
 ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_id TEXT;
 ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_item_index INTEGER;
 ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS batch_submission_pending BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE conv_jobs ADD COLUMN IF NOT EXISTS acceleration_info JSONB;
 CREATE INDEX IF NOT EXISTS conv_jobs_standalone_history_idx ON conv_jobs(owner_id, created_at DESC) WHERE batch_id IS NULL;
 CREATE TABLE IF NOT EXISTS conv_batches (
  id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('convert','compress')),
@@ -1035,7 +1037,11 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			return Job{}, false, err
 		}
 	}
-	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && compressionConfig.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts, CompressionFixedQuality: fixedQuality, PreserveResolution: preserveResolution, PreserveHDR: preserveHDR, StreamSelection: streamSelection, PreserveMetadata: preserveMetadata, HDRPolicy: hdrPolicy, DynamicHDRPolicy: dynamicHDRPolicy}
+	hwPolicy, err := acceleration.ValidatePolicy(req.HardwareAcceleration)
+	if err != nil {
+		return Job{}, false, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	spec := ExecutionSpec{EngineID: installation.EngineID, EngineVersion: installation.Version, ExecutableName: rule.Executable, ExecutableRelativePath: rel, Arguments: args, SourceExtension: upload.Extension, TargetExtension: target, CompressionArguments: compressionArguments, TargetSizeBytes: targetSizeBytes, ProbeExecutableRelativePath: probeRelative, AudioBitrateKbps: audioBitrateKbps, MinimumVideoKbps: minimumVideoKbps, RequireSmaller: mode == "compress" && compressionConfig.RequireSmaller, CompressionQualityMin: qualityMin, CompressionQualityMax: qualityMax, CompressionQualityStep: qualityStep, CompressionQualityHigherBetter: qualityHigherBetter, CompressionQualityAttempts: qualityAttempts, CompressionFixedQuality: fixedQuality, PreserveResolution: preserveResolution, PreserveHDR: preserveHDR, StreamSelection: streamSelection, PreserveMetadata: preserveMetadata, HDRPolicy: hdrPolicy, DynamicHDRPolicy: dynamicHDRPolicy, HardwareAcceleration: hwPolicy}
 	specBytes, err := json.Marshal(spec)
 	if err != nil {
 		return Job{}, false, err
@@ -1362,15 +1368,23 @@ func (s *Service) getByIdempotency(ctx context.Context, key, ownerID string) (id
 
 const jobColumns = `id,profile_id,profile_version,source_format,target_format,mode,state,progress,attempt_count,max_attempts,COALESCE(error,''),COALESCE((SELECT size_bytes FROM conv_uploads u WHERE u.id=conv_jobs.upload_id),0),result_size,created_at,updated_at,
 CASE WHEN EXISTS(SELECT 1 FROM conv_uploads u WHERE u.id=conv_jobs.upload_id AND u.original_deleted_at IS NOT NULL) THEN 'expired' WHEN EXISTS(SELECT 1 FROM conv_uploads u WHERE u.id=conv_jobs.upload_id AND u.original_missing_at IS NOT NULL) THEN 'missing' WHEN EXISTS(SELECT 1 FROM conv_uploads u WHERE u.id=conv_jobs.upload_id AND u.cleanup_pending) THEN 'scheduled' ELSE 'available' END,
-CASE WHEN result_deleted_at IS NOT NULL THEN 'expired' WHEN result_missing_at IS NOT NULL THEN 'missing' WHEN result_cleanup_pending THEN 'scheduled' WHEN result_key IS NOT NULL THEN 'available' ELSE 'not_ready' END`
+CASE WHEN result_deleted_at IS NOT NULL THEN 'expired' WHEN result_missing_at IS NOT NULL THEN 'missing' WHEN result_cleanup_pending THEN 'scheduled' WHEN result_key IS NOT NULL THEN 'available' ELSE 'not_ready' END,
+acceleration_info`
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanJob(row rowScanner, job *Job, extra ...any) error {
-	args := []any{&job.ID, &job.ProfileID, &job.ProfileVer, &job.SourceFormat, &job.TargetFormat, &job.Mode, &job.State, &job.Progress, &job.Attempt, &job.MaxAttempts, &job.Error, &job.InputSize, &job.OutputSize, &job.CreatedAt, &job.UpdatedAt, &job.OriginalState, &job.ResultState}
+	var rawAccel []byte
+	args := []any{&job.ID, &job.ProfileID, &job.ProfileVer, &job.SourceFormat, &job.TargetFormat, &job.Mode, &job.State, &job.Progress, &job.Attempt, &job.MaxAttempts, &job.Error, &job.InputSize, &job.OutputSize, &job.CreatedAt, &job.UpdatedAt, &job.OriginalState, &job.ResultState, &rawAccel}
 	args = append(args, extra...)
 	if err := row.Scan(args...); err != nil {
 		return err
+	}
+	if len(rawAccel) > 0 && string(rawAccel) != "null" {
+		var summary acceleration.ExecutionSummary
+		if err := json.Unmarshal(rawAccel, &summary); err == nil && summary.AcceleratorID != "" {
+			job.Acceleration = &summary
+		}
 	}
 	finalizeJob(job)
 	return nil

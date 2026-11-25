@@ -1,0 +1,14 @@
+# Reviewed opt-in NVIDIA NVENC/NVDEC Worker override.
+# Usage: docker compose -f compose.yaml -f deploy/compose.gpu-nvidia.yaml up -d
+#
+# Preserves Worker least privilege: read-only root filesystem, dropped Linux
+# capabilities, non-root user, internal-only DB network, no Docker socket, and
+# only the explicitly allowlisted NVIDIA device nodes.
+services:
+  worker:
+    environment:
+      GPU_NVIDIA_DEVICES: ${GPU_NVIDIA_DEVICE:-/dev/nvidia0}
+    devices:
+      - ${GPU_NVIDIA_DEVICE:-/dev/nvidia0}:${GPU_NVIDIA_DEVICE:-/dev/nvidia0}
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
