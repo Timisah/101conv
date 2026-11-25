@@ -44,11 +44,14 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 	}
 	want := []struct{ id, version string }{
 		{"ffmpeg-linux-amd64", "1.2.0"},
+		{"ffmpeg-linux-amd64", "1.3.0"},
 		{"ffmpeg-image-linux-amd64", "1.0.0"},
 		{"ffmpeg-image-linux-amd64", "1.1.0"},
 		{"ffmpeg-image-linux-amd64", "1.2.0"},
 		{"jpeg-xl-linux-amd64", "1.2.0"},
+		{"jpeg-xl-linux-amd64", "1.3.0"},
 		{"ffmpeg-compression-linux-amd64", "1.0.0"},
+		{"ffmpeg-compression-linux-amd64", "1.1.0"},
 		{"jpeg-xl-compression-linux-amd64", "1.0.0"},
 		{"jpeg-xl-compression-linux-amd64", "1.1.0"},
 		{"ffmpeg-image-compression-linux-amd64", "1.0.0"},
@@ -57,6 +60,8 @@ func TestOfficialCatalogIsPreconfiguredAndVersionSensitive(t *testing.T) {
 		{"libreoffice-pdf-linux-amd64", "1.1.0"},
 		{"poppler-pdf-linux-amd64", "1.0.0"},
 		{"poppler-pdf-linux-amd64", "1.1.0"},
+		{"ffmpeg-audio-mastering-linux-amd64", "1.0.0"},
+		{"ffmpeg-animated-web-linux-amd64", "1.0.0"},
 	}
 	if len(entries) != len(want) {
 		t.Fatalf("expected %d official profiles, got %d: %+v", len(want), len(entries), entries)
@@ -86,15 +91,20 @@ func TestOfficialCatalogKeepsAlignedProfilesAvailableAtV0_2_0(t *testing.T) {
 	}
 	want := []struct{ id, version string }{
 		{"ffmpeg-linux-amd64", "1.2.0"},
+		{"ffmpeg-linux-amd64", "1.3.0"},
 		{"ffmpeg-image-linux-amd64", "1.2.0"},
 		{"jpeg-xl-linux-amd64", "1.2.0"},
+		{"jpeg-xl-linux-amd64", "1.3.0"},
 		{"ffmpeg-compression-linux-amd64", "1.0.0"},
+		{"ffmpeg-compression-linux-amd64", "1.1.0"},
 		{"jpeg-xl-compression-linux-amd64", "1.0.0"},
 		{"jpeg-xl-compression-linux-amd64", "1.1.0"},
 		{"ffmpeg-image-compression-linux-amd64", "1.0.0"},
 		{"ffmpeg-image-compression-linux-amd64", "1.1.0"},
 		{"libreoffice-pdf-linux-amd64", "1.1.0"},
 		{"poppler-pdf-linux-amd64", "1.1.0"},
+		{"ffmpeg-audio-mastering-linux-amd64", "1.0.0"},
+		{"ffmpeg-animated-web-linux-amd64", "1.0.0"},
 	}
 	if len(entries) != len(want) {
 		t.Fatalf("expected %d official profiles at 0.2.0, got %d: %+v", len(want), len(entries), entries)
