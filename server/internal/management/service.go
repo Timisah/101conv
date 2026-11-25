@@ -164,6 +164,7 @@ func OpenWithPolicy(root string, allowedRoots []string) (*Service, error) {
 	if s.data.Profiles == nil {
 		s.data.Profiles = []ProfileRecord{}
 	}
+	s.data.Profiles = normalizeProfiles(s.data.Profiles)
 	if s.data.SessionTimeoutMinutes == 0 {
 		s.data.SessionTimeoutMinutes = DefaultSessionTimeoutMinutes
 	}
@@ -378,7 +379,39 @@ func (s *Service) ListEngines(context.Context) ([]EngineRecord, error) {
 func (s *Service) ListProfiles(context.Context) ([]ProfileRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	out := make([]ProfileRecord, 0, len(s.data.Profiles))
+	for _, r := range s.data.Profiles {
+		if r.State.Active {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// ListAllProfiles returns all installed profile versions (both active and retained).
+func (s *Service) ListAllProfiles(context.Context) ([]ProfileRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	out := append([]ProfileRecord{}, s.data.Profiles...)
+	sortProfileRecords(out)
+	return out, nil
+}
+
+// ListProfileVersions returns all installed versions for one profile ID,
+// with the active version first followed by retained versions newest-first.
+func (s *Service) ListProfileVersions(_ context.Context, id string) ([]ProfileRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ProfileRecord, 0, 2)
+	for _, r := range s.data.Profiles {
+		if r.Definition.ID == id {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return nil, ErrNotFound
+	}
+	sortProfileRecords(out)
 	return out, nil
 }
 
@@ -632,19 +665,29 @@ func (s *Service) InstallVerifiedProfile(d profile.Definition, repositoryID stri
 	for _, item := range staged {
 		next.Engines = append(next.Engines, item.rec)
 	}
-	profileState := profile.Installation{ProfileID: d.ID, Version: d.Version, Enabled: true, RepositoryID: repositoryID, ResolvedEngines: pins}
+	profileState := profile.Installation{ProfileID: d.ID, Version: d.Version, Enabled: true, Active: true, RepositoryID: repositoryID, ResolvedEngines: pins}
+	next.Profiles = append([]ProfileRecord(nil), s.data.Profiles...)
 	if update {
 		profileState.Enabled = s.data.Profiles[profileIdx].State.Enabled
-		next.Profiles = append([]ProfileRecord(nil), s.data.Profiles...)
-		next.Profiles[profileIdx] = ProfileRecord{Definition: d, State: profileState}
+		verIdx := profileVersionIndex(next.Profiles, d.ID, d.Version)
+		for i := range next.Profiles {
+			if next.Profiles[i].Definition.ID == d.ID {
+				next.Profiles[i].State.Active = false
+			}
+		}
+		if verIdx >= 0 {
+			next.Profiles[verIdx] = ProfileRecord{Definition: d, State: profileState}
+		} else {
+			next.Profiles = append(next.Profiles, ProfileRecord{Definition: d, State: profileState})
+		}
 	} else {
-		next.Profiles = append(append([]ProfileRecord(nil), s.data.Profiles...), ProfileRecord{Definition: d, State: profileState})
+		next.Profiles = append(next.Profiles, ProfileRecord{Definition: d, State: profileState})
 	}
 	if err = s.persist(next); err != nil {
 		return ProfileRecord{}, rollback(err)
 	}
 	s.data = next
-	return next.Profiles[profileIndex(next.Profiles, d.ID)], nil
+	return next.Profiles[activeProfileIndex(next.Profiles, d.ID)], nil
 }
 
 func (s *Service) CreateVerifiedStaging() (string, func() error, error) {
@@ -901,7 +944,7 @@ func (s *Service) InstallProfile(_ context.Context, d profile.Definition, reposi
 	if err != nil {
 		return ProfileRecord{}, err
 	}
-	rec := ProfileRecord{Definition: d, State: profile.Installation{ProfileID: d.ID, Version: d.Version, Enabled: true, RepositoryID: repositoryID, ResolvedEngines: pins}}
+	rec := ProfileRecord{Definition: d, State: profile.Installation{ProfileID: d.ID, Version: d.Version, Enabled: true, Active: true, RepositoryID: repositoryID, ResolvedEngines: pins}}
 	next := s.data
 	next.Profiles = append(append([]ProfileRecord(nil), s.data.Profiles...), rec)
 	if err := s.persist(next); err != nil {
@@ -918,33 +961,105 @@ func (s *Service) UpdateProfile(_ context.Context, d profile.Definition, reposit
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	idx := -1
-	for i, p := range s.data.Profiles {
-		if p.Definition.ID == d.ID {
-			idx = i
-			break
-		}
-	}
+	idx := activeProfileIndex(s.data.Profiles, d.ID)
 	if idx < 0 {
 		return ProfileRecord{}, ErrNotFound
 	}
-	_, pins, err := resolveWithPins(d, s.data.Engines, s.data.Profiles[idx].State.ResolvedEngines)
+	prevActive := s.data.Profiles[idx]
+	_, pins, err := resolveWithPins(d, s.data.Engines, prevActive.State.ResolvedEngines)
 	if err != nil {
 		return ProfileRecord{}, err
 	}
-	rec := s.data.Profiles[idx]
-	rec.Definition = d
-	rec.State.Version = d.Version
-	rec.State.RepositoryID = repositoryID
-	rec.State.ResolvedEngines = pins
+	rec := ProfileRecord{
+		Definition: d,
+		State: profile.Installation{
+			ProfileID:       d.ID,
+			Version:         d.Version,
+			Enabled:         prevActive.State.Enabled,
+			Active:          true,
+			RepositoryID:    repositoryID,
+			Customized:      prevActive.State.Customized,
+			ResolvedEngines: pins,
+		},
+	}
 	next := s.data
 	next.Profiles = append([]ProfileRecord(nil), s.data.Profiles...)
-	next.Profiles[idx] = rec
+	verIdx := profileVersionIndex(next.Profiles, d.ID, d.Version)
+	for i := range next.Profiles {
+		if next.Profiles[i].Definition.ID == d.ID {
+			next.Profiles[i].State.Active = false
+		}
+	}
+	if verIdx >= 0 {
+		next.Profiles[verIdx] = rec
+	} else {
+		next.Profiles = append(next.Profiles, rec)
+	}
 	if err := s.persist(next); err != nil {
 		return ProfileRecord{}, err
 	}
 	s.data = next
 	return rec, nil
+}
+
+// ActivateProfileVersion switches the active/default version for a profile to
+// an already-installed version (for explicit rollback or re-activation).
+func (s *Service) ActivateProfileVersion(_ context.Context, profileID, targetVersion string) (ProfileRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	verIdx := profileVersionIndex(s.data.Profiles, profileID, targetVersion)
+	if verIdx < 0 {
+		return ProfileRecord{}, ErrNotFound
+	}
+	target := s.data.Profiles[verIdx]
+	if err := target.Definition.Validate(); err != nil {
+		return ProfileRecord{}, fmt.Errorf("installed profile version is invalid: %w", err)
+	}
+	_, pins, err := resolveWithPins(target.Definition, s.data.Engines, target.State.ResolvedEngines)
+	if err != nil {
+		return ProfileRecord{}, err
+	}
+	enabled := target.State.Enabled
+	if activeIdx := activeProfileIndex(s.data.Profiles, profileID); activeIdx >= 0 {
+		enabled = s.data.Profiles[activeIdx].State.Enabled
+	}
+	next := s.data
+	next.Profiles = append([]ProfileRecord(nil), s.data.Profiles...)
+	for i := range next.Profiles {
+		if next.Profiles[i].Definition.ID == profileID {
+			next.Profiles[i].State.Active = false
+		}
+	}
+	target.State.Active = true
+	target.State.Enabled = enabled
+	target.State.ResolvedEngines = pins
+	next.Profiles[verIdx] = target
+	if err := s.persist(next); err != nil {
+		return ProfileRecord{}, err
+	}
+	s.data = next
+	return target, nil
+}
+
+// RemoveProfileVersion removes one non-active retained version of a profile.
+func (s *Service) RemoveProfileVersion(_ context.Context, profileID, targetVersion string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	verIdx := profileVersionIndex(s.data.Profiles, profileID, targetVersion)
+	if verIdx < 0 {
+		return ErrNotFound
+	}
+	if s.data.Profiles[verIdx].State.Active {
+		return fmt.Errorf("cannot remove active profile version %s; switch active version or remove the profile: %w", targetVersion, ErrConflict)
+	}
+	next := s.data
+	next.Profiles = append([]ProfileRecord(nil), s.data.Profiles[:verIdx]...)
+	next.Profiles = append(next.Profiles, s.data.Profiles[verIdx+1:]...)
+	if err := s.persist(next); err != nil {
+		return err
+	}
+	s.data = next
+	return nil
 }
 
 // SelectProfileEngine explicitly upgrades or rolls back one profile's engine pin.
@@ -1020,13 +1135,20 @@ func (s *Service) SetProfileEnabled(_ context.Context, id string, enabled bool) 
 func (s *Service) RemoveProfile(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	idx := profileIndex(s.data.Profiles, id)
-	if idx < 0 {
+	kept := make([]ProfileRecord, 0, len(s.data.Profiles))
+	removed := 0
+	for _, r := range s.data.Profiles {
+		if r.Definition.ID == id {
+			removed++
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if removed == 0 {
 		return ErrNotFound
 	}
 	next := s.data
-	next.Profiles = append([]ProfileRecord(nil), s.data.Profiles[:idx]...)
-	next.Profiles = append(next.Profiles, s.data.Profiles[idx+1:]...)
+	next.Profiles = kept
 	if err := s.persist(next); err != nil {
 		return err
 	}
@@ -1150,14 +1272,32 @@ func (s *Service) ResolveProfile(id string) ([]engine.Installation, error) {
 	return resolved, err
 }
 
-// ResolveConversion selects an enabled profile rule and its currently pinned
-// engine installation. Clients supply formats, never executable paths or argv.
+// ResolveConversion selects the active enabled profile rule and its currently
+// pinned engine installation. Clients supply formats, never executable paths or argv.
 func (s *Service) ResolveConversion(profileID, sourceFormat, targetFormat string) (profile.Definition, profile.ConversionRule, engine.Definition, engine.Installation, error) {
+	return s.ResolveConversionVersion(profileID, "", sourceFormat, targetFormat)
+}
+
+// ResolveConversionVersion selects an exact installed profile version (active
+// when profileVersion is empty, or an active/retained version when pinned) and
+// its pinned engine installation.
+func (s *Service) ResolveConversionVersion(profileID, profileVersion, sourceFormat, targetFormat string) (profile.Definition, profile.ConversionRule, engine.Definition, engine.Installation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	idx := profileIndex(s.data.Profiles, profileID)
-	if idx < 0 {
-		return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, ErrNotFound
+	idx := -1
+	if profileVersion != "" {
+		idx = profileVersionIndex(s.data.Profiles, profileID, profileVersion)
+		if idx < 0 {
+			if activeIdx := activeProfileIndex(s.data.Profiles, profileID); activeIdx >= 0 {
+				return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, fmt.Errorf("profile %q version %s is not installed (active version is %s): %w", profileID, profileVersion, s.data.Profiles[activeIdx].Definition.Version, ErrNotFound)
+			}
+			return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, ErrNotFound
+		}
+	} else {
+		idx = activeProfileIndex(s.data.Profiles, profileID)
+		if idx < 0 {
+			return profile.Definition{}, profile.ConversionRule{}, engine.Definition{}, engine.Installation{}, ErrNotFound
+		}
 	}
 	p := s.data.Profiles[idx]
 	if !p.State.Enabled {
@@ -1417,12 +1557,89 @@ func safeFilePath(v string) bool {
 	return true
 }
 func profileIndex(v []ProfileRecord, id string) int {
+	return activeProfileIndex(v, id)
+}
+
+func activeProfileIndex(v []ProfileRecord, id string) int {
+	fallback := -1
 	for i, r := range v {
-		if r.Definition.ID == id {
+		if r.Definition.ID != id {
+			continue
+		}
+		if r.State.Active {
+			return i
+		}
+		if fallback < 0 {
+			fallback = i
+		}
+	}
+	return fallback
+}
+
+func profileVersionIndex(v []ProfileRecord, id, ver string) int {
+	for i, r := range v {
+		if r.Definition.ID == id && r.Definition.Version == ver {
 			return i
 		}
 	}
 	return -1
+}
+
+// normalizeProfiles upgrades legacy management.json records (which predate
+// State.Active) so every installed profile ID has exactly one active version.
+func normalizeProfiles(records []ProfileRecord) []ProfileRecord {
+	out := append([]ProfileRecord(nil), records...)
+	hasActive := map[string]bool{}
+	for i := range out {
+		if out[i].State.ProfileID == "" {
+			out[i].State.ProfileID = out[i].Definition.ID
+		}
+		if out[i].State.Version == "" {
+			out[i].State.Version = out[i].Definition.Version
+		}
+		if out[i].State.Active {
+			if hasActive[out[i].Definition.ID] {
+				out[i].State.Active = false
+			} else {
+				hasActive[out[i].Definition.ID] = true
+			}
+		}
+	}
+	bestIdx := map[string]int{}
+	for i, r := range out {
+		if hasActive[r.Definition.ID] {
+			continue
+		}
+		prev, ok := bestIdx[r.Definition.ID]
+		if !ok {
+			bestIdx[r.Definition.ID] = i
+			continue
+		}
+		if cmp, err := version.Compare(r.Definition.Version, out[prev].Definition.Version); err == nil && cmp >= 0 {
+			bestIdx[r.Definition.ID] = i
+		} else if err != nil {
+			bestIdx[r.Definition.ID] = i
+		}
+	}
+	for _, idx := range bestIdx {
+		out[idx].State.Active = true
+	}
+	return out
+}
+
+func sortProfileRecords(records []ProfileRecord) {
+	sort.SliceStable(records, func(i, j int) bool {
+		if records[i].Definition.ID != records[j].Definition.ID {
+			return records[i].Definition.ID < records[j].Definition.ID
+		}
+		if records[i].State.Active != records[j].State.Active {
+			return records[i].State.Active
+		}
+		if cmp, err := version.Compare(records[i].Definition.Version, records[j].Definition.Version); err == nil && cmp != 0 {
+			return cmp > 0
+		}
+		return records[i].Definition.Version > records[j].Definition.Version
+	})
 }
 func engineIndex(v []EngineRecord, id, ver string) int {
 	for i, r := range v {

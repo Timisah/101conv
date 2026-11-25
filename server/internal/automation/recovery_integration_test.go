@@ -377,8 +377,29 @@ func TestAutomationProfilePinningAndLegacyPolicy(t *testing.T) {
 	if err := f.db.QueryRow(`SELECT profile_version FROM conv_jobs WHERE id=$1`, r.JobID).Scan(&version); err != nil || version != "1.0.0" {
 		t.Fatalf("job version=%q %v", version, err)
 	}
+	// Updating to 2.0.0 retains 1.0.0 side-by-side: the pinned automation continues
+	// running on 1.0.0 without drifting to 2.0.0, and surfaces an informational notice.
+	loaded, err := f.svc.GetAutomation(f.ctx, f.a.ID, f.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(loaded.ProfileNotice, "1.0.0") || !strings.Contains(loaded.ProfileNotice, "2.0.0") {
+		t.Fatalf("expected retained-version notice, got %q", loaded.ProfileNotice)
+	}
+	f.write("retained.ppm")
+	f.scan()
+	f.stable()
+	f.scan()
+	var retainedVersion string
+	if err := f.db.QueryRow(`SELECT profile_version FROM conv_jobs ORDER BY created_at DESC LIMIT 1`).Scan(&retainedVersion); err != nil || retainedVersion != "1.0.0" {
+		t.Fatalf("expected retained 1.0.0 job, got %q %v", retainedVersion, err)
+	}
+	// Once the retained 1.0.0 version is explicitly removed, scanning refuses to drift to 2.0.0.
+	if err := f.manager.RemoveProfileVersion(f.ctx, f.a.Definition.Action.ProfileID, "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.svc.scanAutomation(f.ctx, f.a, true); err == nil {
-		t.Fatal("silently drifted profile version")
+		t.Fatal("silently drifted profile version after retained version removal")
 	}
 	def := legacyDefinition(f.a)
 	def.Action.ProfileVersion = ""
@@ -659,6 +680,9 @@ func TestAutomationUploadRecoveryIsBoundedAndKeepsPinnedRequest(t *testing.T) {
 	}
 	f.exec(`DROP TRIGGER interrupt_job ON conv_jobs`)
 	f.installProfile("2.0.0")
+	if err := f.manager.RemoveProfileVersion(f.ctx, f.a.Definition.Action.ProfileID, "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
 	f.restart()
 	for i := 0; i < 4; i++ {
 		f.exec(`UPDATE conv_automation_runs SET next_attempt=now()`)

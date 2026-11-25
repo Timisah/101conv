@@ -592,3 +592,115 @@ func TestRepositoryInstallAPIRequiresPreviewPlanAndUsesStructuredErrors(t *testi
 		t.Fatalf("expected structured stale-preview error: %+v", body)
 	}
 }
+
+func TestProfileVersionLifecycleHTTPAPI(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "imports")
+	if err := os.MkdirAll(src, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "ffmpeg"), []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	catalogService, err := catalog.New("0.1.0-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := management.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if _, err = manager.InstallEngine(t.Context(), engine.Definition{
+		SchemaVersion: 1, ID: "ffmpeg", Version: "7.0.0", Name: "FFmpeg", Platform: "linux/amd64",
+		Capabilities: []string{"image.convert"}, Executables: map[string]string{"ffmpeg": "ffmpeg"},
+	}, src); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewWithServices("0.1.0-dev", catalogService, manager, nil, "secret"))
+	defer server.Close()
+
+	doJSON := func(method, path, body string) *http.Response {
+		t.Helper()
+		var reader *strings.Reader
+		if body != "" {
+			reader = strings.NewReader(body)
+		} else {
+			reader = strings.NewReader("")
+		}
+		req, err := http.NewRequest(method, server.URL+path, reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer secret")
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	makeProfile := func(ver string) string {
+		return `{"definition":{"schemaVersion":1,"type":"conversion","id":"img-ver","version":"` + ver + `","name":"Images","engines":[{"engineId":"ffmpeg","versions":{"minimum":"7.0.0"},"capabilities":["image.convert"]}],"rules":[{"engineId":"ffmpeg","executable":"ffmpeg","sources":["png"],"targets":["jpg"],"arguments":["-i","{input}","{output}"]}]}}`
+	}
+
+	resp := doJSON(http.MethodPost, "/api/v1/profiles", makeProfile("1.0.0"))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("install 1.0.0 status=%d", resp.StatusCode)
+	}
+	resp = doJSON(http.MethodPut, "/api/v1/profiles/img-ver", makeProfile("1.1.0"))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update 1.1.0 status=%d", resp.StatusCode)
+	}
+
+	// Default /profiles returns only active 1.1.0; includeRetained=true returns both.
+	resp = doJSON(http.MethodGet, "/api/v1/profiles", "")
+	var activeOnly struct{ Profiles []management.ProfileRecord `json:"profiles"` }
+	_ = json.NewDecoder(resp.Body).Decode(&activeOnly)
+	resp.Body.Close()
+	if len(activeOnly.Profiles) != 1 || activeOnly.Profiles[0].Definition.Version != "1.1.0" {
+		t.Fatalf("default /profiles = %+v", activeOnly.Profiles)
+	}
+
+	resp = doJSON(http.MethodGet, "/api/v1/profiles?includeRetained=true", "")
+	var all struct{ Profiles []management.ProfileRecord `json:"profiles"` }
+	_ = json.NewDecoder(resp.Body).Decode(&all)
+	resp.Body.Close()
+	if len(all.Profiles) != 2 {
+		t.Fatalf("includeRetained=true len=%d, want 2", len(all.Profiles))
+	}
+
+	// /profiles/{id}/versions returns both versions with active first.
+	resp = doJSON(http.MethodGet, "/api/v1/profiles/img-ver/versions", "")
+	var vers struct{ Versions []management.ProfileRecord `json:"versions"` }
+	_ = json.NewDecoder(resp.Body).Decode(&vers)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || len(vers.Versions) != 2 || !vers.Versions[0].State.Active || vers.Versions[0].Definition.Version != "1.1.0" {
+		t.Fatalf("versions endpoint = %d %+v", resp.StatusCode, vers.Versions)
+	}
+
+	// Roll back to 1.0.0 via PUT /api/v1/profiles/{id}/active.
+	resp = doJSON(http.MethodPut, "/api/v1/profiles/img-ver/active", `{"version":"1.0.0"}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("rollback status=%d", resp.StatusCode)
+	}
+
+	// Cannot remove active 1.0.0, can remove retained 1.1.0.
+	resp = doJSON(http.MethodDelete, "/api/v1/profiles/img-ver/versions/1.0.0", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("remove active version status=%d, want 409", resp.StatusCode)
+	}
+	resp = doJSON(http.MethodDelete, "/api/v1/profiles/img-ver/versions/1.1.0", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("remove retained version status=%d, want 204", resp.StatusCode)
+	}
+}
+

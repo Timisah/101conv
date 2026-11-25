@@ -101,6 +101,100 @@ function EnginePicker({
   );
 }
 
+function ProfileVersionPicker({
+  active,
+  retained,
+  notify,
+  refresh,
+}: {
+  active: Profile;
+  retained: Profile[];
+  notify: (message: string) => void;
+  refresh: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState('');
+
+  if (!retained.length) return null;
+
+  async function activate(version: string) {
+    setBusy('activate:' + version);
+    try {
+      await apiRequest('/profiles/' + active.definition.id + '/active', {
+        method: 'PUT',
+        body: json({ version }),
+      });
+      notify(active.definition.name + ' switched to v' + version + '.');
+      setOpen(false);
+      refresh();
+    } catch (err) {
+      notify(explain((err as Error).message));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function removeVersion(version: string) {
+    if (
+      !confirm(
+        'Remove retained version v' +
+          version +
+          ' of “' +
+          active.definition.name +
+          '”? Versions pinned by automations or presets cannot be removed.',
+      )
+    ) {
+      return;
+    }
+    setBusy('remove:' + version);
+    try {
+      await apiRequest('/profiles/' + active.definition.id + '/versions/' + encodeURIComponent(version), {
+        method: 'DELETE',
+      });
+      notify('Retained version v' + version + ' removed.');
+      refresh();
+    } catch (err) {
+      notify(explain((err as Error).message));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return (
+    <div className="engine-picker">
+      <button className="text-btn" type="button" onClick={() => setOpen(!open)}>
+        Installed versions ({retained.length + 1}) <ChevronDown size={12} />
+      </button>
+      {open && (
+        <div className="engine-picker-options">
+          <div>
+            <b>v{active.definition.version} · active</b>
+          </div>
+          {retained.map(item => (
+            <div key={item.definition.version}>
+              <b>v{item.definition.version} · retained</b>
+              <button
+                type="button"
+                disabled={busy !== ''}
+                onClick={() => void activate(item.definition.version)}
+              >
+                {busy === 'activate:' + item.definition.version ? 'Switching…' : 'Set active (roll back)'}
+              </button>
+              <button
+                type="button"
+                disabled={busy !== ''}
+                onClick={() => void removeVersion(item.definition.version)}
+              >
+                {busy === 'remove:' + item.definition.version ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ConvertersPage({ notify }: { notify: (message: string) => void }) {
   const location = useLocation();
   const requested = new URLSearchParams(location.search).get('tab');
@@ -111,7 +205,7 @@ export function ConvertersPage({ notify }: { notify: (message: string) => void }
     loading: loadingProfiles,
     error: profileError,
     refresh: refreshProfiles,
-  } = useData<{ profiles: Profile[] }>('/profiles', { profiles: [] });
+  } = useData<{ profiles: Profile[] }>('/profiles?includeRetained=true', { profiles: [] });
   const {
     data: engines,
     loading: loadingEngines,
@@ -166,8 +260,22 @@ export function ConvertersPage({ notify }: { notify: (message: string) => void }
     }
   }
 
-  const visibleProfiles = (profiles.profiles || []).filter(
-    profile => (profile.definition.type === 'compression' ? 'compression' : 'conversion') === tab,
+  const allProfiles = profiles.profiles || [];
+  const groupedProfiles = new Map<string, { active: Profile; retained: Profile[] }>();
+  for (const item of allProfiles) {
+    const existing = groupedProfiles.get(item.definition.id);
+    if (!existing) {
+      groupedProfiles.set(item.definition.id, { active: item, retained: [] });
+    } else if (item.state.active && !existing.active.state.active) {
+      existing.retained.push(existing.active);
+      existing.active = item;
+    } else {
+      existing.retained.push(item);
+    }
+  }
+  const activeGroups = Array.from(groupedProfiles.values());
+  const visibleProfiles = activeGroups.filter(
+    group => (group.active.definition.type === 'compression' ? 'compression' : 'conversion') === tab,
   );
 
   return (
@@ -215,7 +323,7 @@ export function ConvertersPage({ notify }: { notify: (message: string) => void }
           to="/converters?tab=conversion"
         >
           Conversion profiles{' '}
-          <span>{profiles.profiles?.filter(item => item.definition.type !== 'compression').length || 0}</span>
+          <span>{activeGroups.filter(item => item.active.definition.type !== 'compression').length}</span>
         </NavLink>
         <NavLink
           aria-current={tab === 'compression' ? 'page' : undefined}
@@ -223,7 +331,7 @@ export function ConvertersPage({ notify }: { notify: (message: string) => void }
           to="/converters?tab=compression"
         >
           Compression profiles{' '}
-          <span>{profiles.profiles?.filter(item => item.definition.type === 'compression').length || 0}</span>
+          <span>{activeGroups.filter(item => item.active.definition.type === 'compression').length}</span>
         </NavLink>
         <NavLink
           aria-current={tab === 'engines' ? 'page' : undefined}
@@ -265,7 +373,7 @@ export function ConvertersPage({ notify }: { notify: (message: string) => void }
             </Empty>
           ) : (
             <div className="card-grid">
-              {visibleProfiles.map(profile => (
+              {visibleProfiles.map(({ active: profile, retained }) => (
                 <article className="converter-card" key={profile.definition.id}>
                   <div className="converter-card-top">
                     <span className="converter-glyph">
@@ -303,6 +411,12 @@ export function ConvertersPage({ notify }: { notify: (message: string) => void }
                     </span>
                     <span>v{profile.definition.version}</span>
                   </div>
+                  <ProfileVersionPicker
+                    active={profile}
+                    retained={retained}
+                    notify={notify}
+                    refresh={refreshProfiles}
+                  />
                   <EnginePicker profile={profile} notify={notify} refresh={refreshProfiles} />
                   <div className="card-bottom">
                     <span className="license">{profile.definition.license || 'License not specified'}</span>

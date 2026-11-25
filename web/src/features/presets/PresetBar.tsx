@@ -190,6 +190,9 @@ export function PresetBar({
           {current.compatibilityMessage || 'This preset is incompatible with the installed capabilities.'}
         </small>
       )}
+      {current && current.compatible && current.compatibilityMessage && (
+        <small className="field-hint">{current.compatibilityMessage}</small>
+      )}
       {!session.guest && (
         <div className="preset-actions">
           <button
