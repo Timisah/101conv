@@ -1,0 +1,188 @@
+.build-project-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.build-project-field {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.build-project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.build-guest-note {
+  width: 100%;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.build-format-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+}
+
+.build-fidelity-note {
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface2);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.build-fidelity-note.has-warning {
+  border-color: color-mix(in srgb, var(--warn, #d97706) 45%, var(--line));
+}
+
+.build-fidelity-warning {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.build-export-result {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface2);
+  display: grid;
+  gap: 8px;
+}
+
+.build-export-result-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.build-view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface2);
+}
+
+.build-view-toggle button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 10px;
+  min-height: 34px;
+  cursor: pointer;
+}
+
+.build-view-toggle button.active {
+  background: var(--accent2);
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
+.document-page-lead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.document-drag-handle {
+  color: var(--muted);
+  cursor: grab;
+  display: inline-flex;
+  align-items: center;
+}
+
+.document-page-card.is-dragging {
+  opacity: 0.45;
+}
+
+.document-page-card.is-drag-over {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.document-pdf-badge {
+  color: var(--accent);
+}
+
+.build-source-groups {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.build-source-group {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface2);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.build-source-group-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.build-source-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.build-source-group-title strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-source-group-pages {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (max-width: 640px) {
+  .build-project-bar {
+    padding: 12px;
+  }
+  .build-project-actions {
+    width: 100%;
+  }
+  .build-project-actions > button {
+    flex: 1 1 auto;
+  }
+  .document-drag-handle {
+    display: none;
+  }
+}

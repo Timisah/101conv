@@ -23,7 +23,7 @@ import {
   isBrowserPreviewableImage,
   previewDescriptorFor,
 } from './src/features/previews/filePreview.ts';
-import { DEFAULT_DOCUMENT_FORMATS } from './src/features/build/types.ts';
+import { DEFAULT_DOCUMENT_FORMATS } from './src/features/docbuilder/types.ts';
 
 test('navigation metadata preserves route labels, sections, and mobile shortcuts', () => {
   assert.deepEqual(

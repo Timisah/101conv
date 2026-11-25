@@ -1,6 +1,6 @@
 # Document Creator / Build Architecture
 
-The Document Creator workspace (`web/src/features/build/`, `server/internal/document/`, `server/internal/httpapi/documents.go`, `server/internal/jobs/document_build.go`, `server/internal/worker/document_build.go`) implements non-destructive multi-page document assembly across images, multi-page PDFs, and supported Office documents.
+The Document Creator workspace (`web/src/features/docbuilder/`, `server/internal/document/`, `server/internal/httpapi/documents.go`, `server/internal/jobs/document_build.go`, `server/internal/worker/document_build.go`) implements non-destructive multi-page document assembly across images, multi-page PDFs, and supported Office documents.
 
 ## Non-destructive Manifest & Persisted Projects
 
@@ -34,4 +34,4 @@ Exports execute through the existing durable job queue (`mode = "build"`, `POST 
 - **Multipage TIFF (`tiff`):** Pure-Go baseline TIFF 6.0 multi-IFD writer with bounded uncompressed RGB buffer cap (160 MiB).
 - **DOCX (`docx`), PPTX (`pptx`), ODT (`odt`), ODP (`odp`):** Spec-compliant paginated OOXML / ODF archives placing one page image per page/slide at its physical dimensions. Honest fidelity warnings communicate that these are paginated image assemblies rather than editable flowing-text reconstructions.
 
-The browser-local raster PDF path (`web/src/features/build/pdfLocal.ts`) remains available as a fast offline option when all pages are local raster images.
+The browser-local raster PDF path (`web/src/features/docbuilder/pdfLocal.ts`) remains available as a fast offline option when all pages are local raster images.

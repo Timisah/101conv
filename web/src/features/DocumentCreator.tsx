@@ -1,1 +1,1 @@
-export { DocumentCreator } from './build/DocumentCreator';
+export { DocumentCreator } from './docbuilder/DocumentCreator';
