@@ -23,7 +23,7 @@ export function BlueprintWizard({
   }
 
   return (
-    <div className="blueprint-wizard" aria-label="Quick-start blueprint templates">
+    <div className="blueprint-wizard" aria-label="Quick-start workflow templates">
       <div className="blueprint-wizard-head">
         <strong>Quick-start templates</strong>
         <div className="blueprint-category-pills" role="tablist" aria-label="Template categories">
