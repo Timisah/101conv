@@ -16,6 +16,7 @@ import {
   supportsMapping,
 } from './src/features/converters/types.ts';
 import { mergeDataDefaults } from './src/features/useData.ts';
+import { categoriesOf, searchableText, uniqueFormats } from './src/features/catalog/catalogData.ts';
 
 test('navigation metadata preserves route labels, sections, and mobile shortcuts', () => {
   assert.deepEqual(
@@ -164,3 +165,30 @@ test('mergeDataDefaults preserves initial defaults when API responses omit or nu
     count: 0,
   });
 });
+
+test('catalog helpers index formats/capabilities, infer categories, and deduplicate format chips', () => {
+  const entry = {
+    repoId: '101conv-official',
+    repo: { id: '101conv-official', name: 'Official Catalog', url: '', kind: 'official', trust: 'pinned', enabled: true, status: 'ok' },
+    kind: 'profile',
+    pkg: {
+      id: 'ffmpeg-image-linux-amd64',
+      name: 'FFmpeg Image Conversion',
+      version: '1.2.0',
+      description: 'Convert raster photos cleanly.',
+      engines: [{ engineId: 'ffmpeg', capabilities: ['image.convert'] }],
+      rules: [
+        { sources: ['jpg', 'png', 'webp', 'avif'], targets: ['webp', 'avif', 'png', 'jpg'] },
+        { sources: ['png', 'gif'], targets: ['webp'] },
+      ],
+    },
+  };
+  assert.deepEqual(uniqueFormats(entry.pkg), {
+    sources: ['jpg', 'png', 'webp', 'avif', 'gif'],
+    targets: ['webp', 'avif', 'png', 'jpg'],
+  });
+  const text = searchableText(entry);
+  assert.ok(text.includes('avif') && text.includes('image.convert') && text.includes('raster photos'));
+  assert.deepEqual(categoriesOf(entry), ['images']);
+});
+

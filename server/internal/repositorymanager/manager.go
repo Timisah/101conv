@@ -56,6 +56,7 @@ type Manager struct {
 	sources                     map[string]Source
 	engines                     *management.Service
 	plans                       map[string]installationPlan
+	batchPlans                  map[string]batchInstallationPlan
 }
 
 // official-root.json is intentionally empty until the project owner provisions
@@ -119,7 +120,7 @@ func Open(root, appVersion string, engineService *management.Service) (*Manager,
 	if !ok {
 		return nil, fmt.Errorf("repository storage is already open by another process")
 	}
-	m := &Manager{root: abs, stateFile: filepath.Join(abs, "repositories.json"), appVersion: appVersion, lock: lock, sources: map[string]Source{}, engines: engineService, plans: map[string]installationPlan{}, officialRoot: bytes.TrimSpace(embeddedOfficialRoot)}
+	m := &Manager{root: abs, stateFile: filepath.Join(abs, "repositories.json"), appVersion: appVersion, lock: lock, sources: map[string]Source{}, engines: engineService, plans: map[string]installationPlan{}, batchPlans: map[string]batchInstallationPlan{}, officialRoot: bytes.TrimSpace(embeddedOfficialRoot)}
 	if len(m.officialRoot) > 0 {
 		official := m.officialSource()
 		if _, e := newUpdater(context.Background(), official, m.officialRoot, filepath.Join(abs, "tuf", official.ID)); e != nil {
@@ -567,6 +568,7 @@ func loadUnsignedView(ctx context.Context, source Source, base, appVersion strin
 		}
 	}
 	out.IncompatibleProfiles = filterIncompatibleProfiles(out.Profiles, out.IncompatibleProfiles)
+	out.Bundles = filterValidBundles(index.Bundles)
 	return verifiedView{catalog: out, digest: digestCatalogTargets(targets), targets: targets}, nil
 }
 
@@ -725,6 +727,7 @@ func (m *Manager) loadViewLocked(ctx context.Context, s Source) (verifiedView, e
 		}
 	}
 	out.IncompatibleProfiles = filterIncompatibleProfiles(out.Profiles, out.IncompatibleProfiles)
+	out.Bundles = filterValidBundles(index.Bundles)
 	view.catalog = out
 	view.digest = digestCatalogTargets(view.targets)
 	return view, nil

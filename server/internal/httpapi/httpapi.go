@@ -175,6 +175,8 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 	mux.HandleFunc("GET /api/v1/repositories/{id}/profiles/{profileID}/update-preview", a.previewRepositoryProfileUpdate)
 	mux.HandleFunc("POST /api/v1/repositories/{id}/profiles/{profileID}/install", a.installRepositoryProfile)
 	mux.HandleFunc("PUT /api/v1/repositories/{id}/profiles/{profileID}", a.updateRepositoryProfile)
+	mux.HandleFunc("POST /api/v1/repositories/{id}/batch-preview", a.previewRepositoryBatch)
+	mux.HandleFunc("POST /api/v1/repositories/{id}/batch-apply", a.applyRepositoryBatch)
 	mux.HandleFunc("GET /api/v1/repositories/{id}/engines/{engineID}/{version}/preview", a.previewRepositoryEngine)
 	mux.HandleFunc("POST /api/v1/repositories/{id}/engines/{engineID}/{version}/install", a.installRepositoryEngine)
 	mux.HandleFunc("POST /api/v1/uploads", a.uploadFile)
