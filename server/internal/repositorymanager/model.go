@@ -36,11 +36,18 @@ type Source struct {
 	LastError   string `json:"lastError,omitempty"`
 }
 type CatalogIndex struct {
-	SchemaVersion              int            `json:"schemaVersion"`
-	MinimumAppVersion          string         `json:"minimumAppVersion,omitempty"`
-	MaximumAppVersionExclusive string         `json:"maximumAppVersionExclusive,omitempty"`
-	Engines                    []EngineEntry  `json:"engines"`
-	Profiles                   []ProfileEntry `json:"profiles"`
+	SchemaVersion              int             `json:"schemaVersion"`
+	MinimumAppVersion          string          `json:"minimumAppVersion,omitempty"`
+	MaximumAppVersionExclusive string          `json:"maximumAppVersionExclusive,omitempty"`
+	Engines                    []EngineEntry   `json:"engines"`
+	Profiles                   []ProfileEntry  `json:"profiles"`
+	Bundles                    []StarterBundle `json:"bundles,omitempty"`
+}
+type StarterBundle struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	ProfileIDs  []string `json:"profileIds"`
 }
 type EngineEntry struct {
 	ID             string `json:"id"`
@@ -65,6 +72,7 @@ type Catalog struct {
 	Engines              []engine.Definition   `json:"engines"`
 	Profiles             []profile.Definition  `json:"profiles"`
 	IncompatibleProfiles []IncompatibleProfile `json:"incompatibleProfiles"`
+	Bundles              []StarterBundle       `json:"bundles,omitempty"`
 }
 type IncompatibleProfile struct {
 	ID      string `json:"id"`
@@ -90,6 +98,30 @@ type InstallPreview struct {
 
 type InstallPlanRequest struct {
 	PlanID string `json:"planId"`
+}
+
+type BatchPreviewRequest struct {
+	ProfileIDs []string `json:"profileIds"`
+}
+
+type BatchProfileItem struct {
+	Profile          profile.Definition `json:"profile"`
+	Action           string             `json:"action"` // "install" or "update"
+	License          string             `json:"license,omitempty"`
+	InstalledVersion string             `json:"installedVersion,omitempty"`
+	ProfileChanges   []string           `json:"profileChanges,omitempty"`
+}
+
+type BatchInstallPreview struct {
+	PlanID         string              `json:"planId"`
+	CatalogDigest  string              `json:"catalogDigest"`
+	ExpiresAt      string              `json:"expiresAt"`
+	Repository     Source              `json:"repository"`
+	Publisher      string              `json:"publisher"`
+	Trust          Trust               `json:"trust"`
+	Items          []BatchProfileItem  `json:"items"`
+	Dependencies   []DependencyPreview `json:"dependencies"`
+	PlannedChanges []string            `json:"plannedChanges"`
 }
 
 type EngineInstallPreview struct {

@@ -497,6 +497,36 @@ func (a *API) updateRepositoryProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, v)
 }
+func (a *API) previewRepositoryBatch(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) || !a.repositoryReady(w) {
+		return
+	}
+	var req repositorymanager.BatchPreviewRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	v, err := a.repositories.CreateBatchInstallPlan(r.Context(), r.PathValue("id"), req.ProfileIDs)
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+func (a *API) applyRepositoryBatch(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) || !a.repositoryReady(w) {
+		return
+	}
+	var req repositorymanager.InstallPlanRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	v, err := a.repositories.ApplyBatchInstallPlan(r.Context(), r.PathValue("id"), req.PlanID)
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"profiles": v})
+}
 func (a *API) installRepositoryEngine(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(w, r) || !a.repositoryReady(w) {
 		return

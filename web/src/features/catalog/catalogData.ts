@@ -1,4 +1,4 @@
-import type { Catalog, CatalogEntry, InstalledEngine, InstalledProfile, Package, Status } from './types';
+import type { Catalog, CatalogCategory, CatalogEntry, InstalledEngine, InstalledProfile, Package, Status } from './types';
 
 export const compareVersion = (a: string, b: string) => {
   const x = a.split(/[.+-]/).slice(0, 3).map(Number), y = b.split(/[.+-]/).slice(0, 3).map(Number);
@@ -11,7 +11,10 @@ export const normalizeCatalogResponse = (value: unknown): Catalog | null => {
   const catalog = value as Partial<Catalog>;
   const validPackages = (packages: unknown): packages is Package[] => Array.isArray(packages) && packages.every(pkg => pkg && typeof pkg === 'object' && typeof pkg.id === 'string' && typeof pkg.name === 'string' && typeof pkg.version === 'string');
   if (!catalog.repository || typeof catalog.repository !== 'object' || !validPackages(catalog.engines) || !validPackages(catalog.profiles) || (catalog.incompatibleProfiles !== undefined && !Array.isArray(catalog.incompatibleProfiles))) return null;
-  return { ...catalog, incompatibleProfiles: catalog.incompatibleProfiles || [] } as Catalog;
+  const bundles = Array.isArray(catalog.bundles)
+    ? catalog.bundles.filter(b => b && typeof b === 'object' && typeof b.id === 'string' && typeof b.name === 'string' && Array.isArray(b.profileIds))
+    : [];
+  return { ...catalog, incompatibleProfiles: catalog.incompatibleProfiles || [], bundles } as Catalog;
 };
 
 export const catalogProfileType = (pkg: Package) => pkg.type || (pkg.compression || (pkg.rules || []).some((rule: any) => rule.compressionArguments?.length) ? 'legacy' : 'conversion');
@@ -52,3 +55,56 @@ export const missingEngines = (pkg: Package, engines: InstalledEngine[]) =>
   [...new Set((pkg.engines || []).map((req: any) => String(req.engineId || '')).filter(Boolean))].filter(id => !engines.some(item => item.definition.id === id));
 
 export const entryKey = (entry: { repoId: string; pkg: Package }) => `${entry.repoId}|${entry.pkg.id}|${entry.pkg.version}`;
+
+export function uniqueFormats(pkg: Package): { sources: string[]; targets: string[] } {
+  const norm = (values: unknown) =>
+    [...new Set((Array.isArray(values) ? values : []).map(v => String(v || '').trim().replace(/^\./, '').toLowerCase()).filter(Boolean))];
+  const sources = norm((pkg.rules || []).flatMap((r: any) => r.sources || []));
+  const targets = norm((pkg.rules || []).flatMap((r: any) => r.targets || []));
+  return { sources, targets };
+}
+
+export function packageCapabilities(pkg: Package): string[] {
+  const fromEngines = (pkg.engines || []).flatMap((req: any) => Array.isArray(req.capabilities) ? req.capabilities : []);
+  const direct = Array.isArray(pkg.capabilities) ? pkg.capabilities : [];
+  return [...new Set([...direct, ...fromEngines].map(c => String(c || '').trim().toLowerCase()).filter(Boolean))];
+}
+
+export function searchableText(entry: CatalogEntry): string {
+  const { sources, targets } = uniqueFormats(entry.pkg);
+  const caps = packageCapabilities(entry.pkg);
+  return [
+    entry.pkg.name,
+    entry.pkg.id,
+    entry.pkg.description || '',
+    entry.repo.name,
+    ...sources,
+    ...targets,
+    ...caps,
+  ].join(' ').toLowerCase();
+}
+
+const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'avif', 'jxl', 'gif', 'bmp', 'tif', 'tiff', 'heic', 'heif', 'ppm', 'pgm', 'pbm', 'svg', 'ico']);
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac', 'wma', 'aiff', 'alac', 'ac3']);
+const VIDEO_EXTS = new Set(['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v', 'wmv', 'flv', 'ts', 'mpeg', 'mpg', '3gp']);
+const DOC_EXTS = new Set(['pdf', 'doc', 'docx', 'odt', 'rtf', 'txt', 'xls', 'xlsx', 'ods', 'csv', 'ppt', 'pptx', 'odp', 'html', 'epub']);
+const ARCHIVE_EXTS = new Set(['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar', 'cbz']);
+
+export function categoriesOf(entry: CatalogEntry): Exclude<CatalogCategory, 'all'>[] {
+  const found = new Set<Exclude<CatalogCategory, 'all'>>();
+  const { sources, targets } = uniqueFormats(entry.pkg);
+  for (const ext of [...sources, ...targets]) {
+    if (IMAGE_EXTS.has(ext)) found.add('images');
+    if (AUDIO_EXTS.has(ext)) found.add('audio');
+    if (VIDEO_EXTS.has(ext)) found.add('video');
+    if (DOC_EXTS.has(ext)) found.add('documents');
+    if (ARCHIVE_EXTS.has(ext)) found.add('archives');
+  }
+  const caps = packageCapabilities(entry.pkg).join(' ') + ' ' + entry.pkg.name.toLowerCase() + ' ' + (entry.pkg.description || '').toLowerCase();
+  if (/\b(image|jpeg|jxl|png|webp|avif)\b/.test(caps)) found.add('images');
+  if (/\b(audio|mp3|flac|opus|aac|wav)\b/.test(caps)) found.add('audio');
+  if (/\b(video|mp4|mkv|webm|h264|hevc|av1)\b/.test(caps)) found.add('video');
+  if (/\b(pdf|document|office|libreoffice|poppler|docx|pptx|xlsx)\b/.test(caps)) found.add('documents');
+  if (/\b(archive|zip|tar|7z|cbz)\b/.test(caps)) found.add('archives');
+  return [...found];
+}
