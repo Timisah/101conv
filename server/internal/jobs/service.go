@@ -76,6 +76,8 @@ func (s *Service) EngineHasActiveJobs(ctx context.Context, engineID, engineVersi
 	return exists, err
 }
 
+func (s *Service) DB() *sql.DB { return s.db }
+
 // ProfileVersionHasActiveJobs prevents removing a retained profile version while
 // queued or running jobs still reference that exact version.
 func (s *Service) ProfileVersionHasActiveJobs(ctx context.Context, profileID, profileVersion string) (bool, error) {

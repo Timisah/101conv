@@ -5,6 +5,7 @@ import {
   Search, Settings2, ShieldCheck, X, Zap,
 } from 'lucide-react';
 import { ThemePicker } from './components/ThemePicker';
+import { AnalyticsPage } from './features/admin/AnalyticsPage';
 import { OperationsPage } from './features/admin/OperationsPage';
 import { MarketplacePage } from './features/catalog/MarketplacePage';
 import { HistoryPage } from './features/history/HistoryPage';
@@ -167,6 +168,7 @@ function App() {
                   <Route path="/admin" element={guard(isAdmin, <InstanceSettingsPage notify={setToast} update={updateStatus} onRefreshUpdate={refreshUpdate} />)} />
                   <Route path="/storage" element={guard(isAdmin, <StoragePage notify={setToast} />)} />
                   <Route path="/operations" element={guard(isAdmin, <OperationsPage />)} />
+                  <Route path="/analytics" element={guard(isAdmin, <AnalyticsPage />)} />
                   <Route path="/drives" element={guard(isAdmin, <AutomationAdministration view="drives" notify={setToast} />)} />
                   <Route path="/automations" element={guard(isAdmin, <AutomationAdministration view="automations" notify={setToast} />)} />
                   <Route path="/access" element={guard(canManageUsers, <UserAdministrationPage notify={setToast} />)} />

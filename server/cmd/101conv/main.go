@@ -17,6 +17,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/timisah/101conv/server/internal/acceleration"
+	"github.com/timisah/101conv/server/internal/analytics"
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/automation"
 	"github.com/timisah/101conv/server/internal/catalog"
@@ -144,6 +145,16 @@ func main() {
 			_ = repositoryService.Close()
 			_ = managementService.Close()
 			log.Fatalf("initialize preset service: %v", err)
+		}
+		analyticsService, err := analytics.NewService(db)
+		if err == nil {
+			err = analyticsService.Migrate(context.Background())
+		}
+		if err != nil {
+			_ = db.Close()
+			_ = repositoryService.Close()
+			_ = managementService.Close()
+			log.Fatalf("initialize analytics service: %v", err)
 		}
 	}
 

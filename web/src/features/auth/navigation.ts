@@ -1,6 +1,7 @@
 import {
   Activity,
   AudioLines,
+  BarChart3,
   Boxes,
   Clock3,
   Eye,
@@ -49,6 +50,7 @@ export const ADMIN_SECTIONS: [string, string, NavEntry[]][] = [
     [
       ['/storage', HardDrive, 'Storage'],
       ['/operations', Activity, 'Operations'],
+      ['/analytics', BarChart3, 'Analytics'],
       ['/admin', Settings2, 'Repositories & settings'],
       ['/access', ShieldCheck, 'Users & access'],
     ],
@@ -65,6 +67,7 @@ export const MOBILE_ADMIN_ITEMS: NavEntry[] = [
   ['/marketplace', Search, 'Catalog'],
   ['/storage', HardDrive, 'Storage'],
   ['/operations', Activity, 'Operations'],
+  ['/analytics', BarChart3, 'Analytics'],
   ['/admin', Settings2, 'Admin'],
 ];
 
@@ -78,6 +81,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/admin': 'Repositories & settings',
   '/storage': 'Storage',
   '/operations': 'Operations',
+  '/analytics': 'Processing analytics',
   '/account': 'Account & API keys',
   '/profile-defaults': 'Profile defaults',
   '/drives': 'Mounted drives',
