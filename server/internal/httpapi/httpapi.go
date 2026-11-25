@@ -13,6 +13,7 @@ import (
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/automation"
 	"github.com/timisah/101conv/server/internal/catalog"
+	"github.com/timisah/101conv/server/internal/demo"
 	"github.com/timisah/101conv/server/internal/jobs"
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/presets"
@@ -29,6 +30,7 @@ type API struct {
 	jobs         *jobs.Service
 	analysis     *analysis.Service
 	analytics    *analytics.Service
+	demo         *demo.Service
 	accounts     *auth.Service
 	automations  *automation.Service
 	presets      *presets.Service
@@ -71,16 +73,24 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 		analysisService, _ = analysis.NewService(managementService, jobService.UploadRoot())
 	}
 	var analyticsService *analytics.Service
-	if jobService != nil && jobService.DB() != nil {
-		analyticsService, _ = analytics.NewService(jobService.DB())
-	}
-	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, analysis: analysisService, analytics: analyticsService, accounts: accountService, automations: automationService, presets: presetService, updates: updateChecker, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
+	var demoDB = func() *demo.Service {
+		if jobService != nil && jobService.DB() != nil {
+			analyticsService, _ = analytics.NewService(jobService.DB())
+			return demo.NewService(demo.PolicyFromEnv(), jobService.DB())
+		}
+		return demo.NewService(demo.PolicyFromEnv(), nil)
+	}()
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, analysis: analysisService, analytics: analyticsService, demo: demoDB, accounts: accountService, automations: automationService, presets: presetService, updates: updateChecker, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
 	if managementService != nil {
 		a.sessions.setTTL(time.Duration(managementService.SessionTimeout()) * time.Minute)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.ready)
+	mux.HandleFunc("GET /api/v1/demo/status", a.getDemoStatus)
+	mux.HandleFunc("POST /api/v1/demo/funnel", a.recordDemoFunnel)
+	mux.HandleFunc("GET /api/v1/demo/metrics", a.getDemoMetrics)
+	mux.HandleFunc("PUT /api/v1/demo/kill-switch", a.setDemoKillSwitch)
 	mux.HandleFunc("GET /api/v1/setup/status", a.setupStatus)
 	mux.HandleFunc("POST /api/v1/setup/claim", a.claimInitialAdministrator)
 	mux.HandleFunc("POST /api/v1/setup/complete", a.completeInitialSetup)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/timisah/101conv/server/internal/analysis"
 	"github.com/timisah/101conv/server/internal/auth"
+	"github.com/timisah/101conv/server/internal/demo"
 	"github.com/timisah/101conv/server/internal/jobs"
 )
 
@@ -89,10 +90,21 @@ func (a *API) createBatch(w http.ResponseWriter, r *http.Request) {
 	if !a.consumeGuestRate(w, r, p, "submission") {
 		return
 	}
+	if !a.enforceDemoSubmission(w, r, p, "", len(req.Items)) {
+		return
+	}
+	for _, item := range req.Items {
+		if item.ProfileID != "" && !a.enforceDemoSubmission(w, r, p, item.ProfileID, 1) {
+			return
+		}
+	}
 	batch, duplicate, err := a.jobs.CreateBatch(r.Context(), req, p.ID, a.guestJobLimits(r.Context(), p))
 	if err != nil {
 		writeJobError(w, err)
 		return
+	}
+	if !duplicate && a.demo != nil && a.demo.Enabled() {
+		a.demo.RecordSubmission(r.Context(), len(req.Items))
 	}
 	status := http.StatusAccepted
 	if duplicate {
@@ -309,6 +321,10 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if !a.consumeGuestRate(w, r, p, "upload") {
 		return
 	}
+	maxFileBytes, demoOK := a.enforceDemoUpload(w, r, p)
+	if !demoOK {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, jobs.MaxInputBytes+(1<<20))
 	reservationID := ""
 	maxGuestStorage := int64(0)
@@ -319,7 +335,7 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		maxGuestStorage = settings.MaxGlobalStorageBytes
-		reservationID, err = a.jobs.ReserveGuestUpload(r.Context(), p.ID, p.MaxFileBytes, maxGuestStorage)
+		reservationID, err = a.jobs.ReserveGuestUpload(r.Context(), p.ID, maxFileBytes, maxGuestStorage)
 		if err != nil {
 			writeJobError(w, err)
 			return
@@ -345,7 +361,7 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer part.Close()
-	upload, err := a.jobs.CreateUploadWithGuestReservation(r.Context(), p.ID, p.MaxFileBytes, p.Quotas.MonthlyBytes.Value, maxGuestStorage, reservationID, part.FileName(), part)
+	upload, err := a.jobs.CreateUploadWithGuestReservation(r.Context(), p.ID, maxFileBytes, p.Quotas.MonthlyBytes.Value, maxGuestStorage, reservationID, part.FileName(), part)
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -474,10 +490,16 @@ func (a *API) submitJobMode(w http.ResponseWriter, r *http.Request, forcedMode s
 		}
 		req.Mode = "convert"
 	}
+	if !a.enforceDemoSubmission(w, r, p, req.ProfileID, 1) {
+		return
+	}
 	job, duplicate, err := a.jobs.SubmitFor(r.Context(), req, p.ID, a.guestJobLimits(r.Context(), p))
 	if err != nil {
 		writeJobError(w, err)
 		return
+	}
+	if !duplicate && a.demo != nil && a.demo.Enabled() {
+		a.demo.RecordSubmission(r.Context(), 1)
 	}
 	status := http.StatusAccepted
 	if duplicate {
@@ -574,6 +596,9 @@ func (a *API) downloadJobResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+	if a.demo != nil && a.demo.Enabled() {
+		_ = a.demo.RecordEvent(r.Context(), demo.EventDemoDownload)
+	}
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}

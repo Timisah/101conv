@@ -17,26 +17,28 @@ that every deployment exposes every capability.
 
 - Convert: submit supported files to installed, versioned conversion profiles.
 - Compress: set quality or bounded size goals and inspect actual output savings.
-- Build: order pages non-destructively, preview, and generate a raster-image PDF in the current first slice.
+- Build: expand multi-page PDFs, arrange pages non-destructively in saved or expiring projects, and export PDF (native vector text + verbatim JPEG bytes), CBZ, ordered-images ZIP, multipage TIFF, DOCX, PPTX, ODT, or ODP.
 - Inspect: run an ephemeral, bounded metadata scan without adding the source to conversion storage.
-- Automate: use registered mounted-folder blueprints with stable-file checks, history, and safe publication.
+- Automate: use registered mounted-folder blueprints with metadata conditions, stable-file checks, history, and safe publication.
 
 ## Verified catalog scope
 
-- Images: JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF image profiles; JPEG XL paths cover JPG/JPEG, PNG/APNG, and GIF to JXL, plus JXL to JPG/JPEG/PNG.
-- Audio/video: FFmpeg profiles cover MP4/MKV/MOV/AVI/WebM-family video and MP3/AAC/M4A/OGG/OPUS/WAV/FLAC/WMA/AMR audio, with separate conversion and compression paths.
-- Documents: DOCX/DOC/ODT/XLSX/XLS/ODS/PPTX/PPT/ODP/RTF/TXT to PDF; PDF to PNG/JPG/JPEG or TXT through managed document profiles on supported Linux AMD64 deployments.
+- Images: JPG/JPEG, PNG, WebP, TIFF, BMP, GIF, and AVIF image profiles; JPEG XL 1.3.0 (quality, effort, lossless) and JPEG XL compression; animated web loops (GIF/WebP/APNG/MP4/WebM).
+- Audio/video: FFmpeg 1.3.0 conversion, VP9 compression (`ffmpeg-compression-linux-amd64` 1.1.0), and Audio Mastering 1.0.0 (Opus/AAC/MP3/FLAC/WAV/M4A/OGG with EBU R128 loudness normalization).
+- Documents: DOCX/DOC/ODT/XLSX/XLS/ODS/PPTX/PPT/ODP/RTF/TXT to PDF; PDF to PNG/JPG/JPEG or TXT through managed document profiles on supported Linux AMD64 deployments; visual Document Creator with 8 export formats.
 - Catalog rules and provenance: https://github.com/Timisah/101conv/blob/main/docs/profiles/catalog-format.md
 
 ## Important limits
 
 - A deployment exposes only the engines and profiles its administrator installs.
-- Format pairs, animation behavior, metadata mapping, HDR preservation, and exact target-size results are profile- and engine-specific; no universal fidelity guarantee is made.
-- PDF rendering produces one selected page; this release does not provide OCR or editable Office export.
-- The public page is informational. There is no anonymous public conversion demo selected by this project index.
+- Format pairs, animation behavior, metadata mapping, HDR preservation, and exact target-size results are profile- and engine-specific; HDR10+/Dolby Vision dynamic metadata is explicitly rejected until verified per codec.
+- Document Creator Office exports (DOCX/PPTX/ODT/ODP) are paginated image documents, not OCR or editable text reconstruction.
+- The public page is informational. An optional isolated public demo stack (`compose.demo.yaml`) exists for resource-limited evaluation, but private self-hosting remains the default.
 
 ## Documentation
 
 - Media fidelity and compression: https://github.com/Timisah/101conv/blob/main/docs/architecture/compression-p2.md
 - Office and PDF support: https://github.com/Timisah/101conv/blob/main/docs/architecture/documents-d2.md
 - Public discoverability contract: https://github.com/Timisah/101conv/blob/main/docs/architecture/public-discoverability-p5.md
+- Isolated public demo architecture: https://github.com/Timisah/101conv/blob/main/docs/security/public-demo-p5.md
+- Brand transition plan: https://github.com/Timisah/101conv/blob/main/docs/architecture/brand-transition-p5.md

@@ -1,0 +1,54 @@
+name: Publish Public Site (GitHub Pages)
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Optional canonical base URL (defaults to GitHub Pages project URL)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify static site contract
+        run: node scripts/build-public-site.mjs --verify
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+      - name: Build static site from verified catalog
+        env:
+          INPUT_BASE_URL: ${{ inputs.base_url }}
+          PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          BASE_URL="${INPUT_BASE_URL:-$PAGES_BASE_URL}"
+          node scripts/build-public-site.mjs --out site-dist --base-url "$BASE_URL"
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site-dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

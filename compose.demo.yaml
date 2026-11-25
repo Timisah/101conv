@@ -1,0 +1,183 @@
+# Isolated, resource-limited public demonstration stack (FR-018).
+#
+# NEVER run this stack against private production data or NAS mounts.
+# Public deployment still requires passing the P0 release and security gates
+# documented in docs/security/public-demo-p5.md.
+
+name: 101conv-demo
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_DB: ${DEMO_POSTGRES_DB:-101conv_demo}
+      POSTGRES_USER: ${DEMO_POSTGRES_USER:-101conv_demo}
+      POSTGRES_PASSWORD: ${DEMO_POSTGRES_PASSWORD:?Set a dedicated DEMO_POSTGRES_PASSWORD}
+      POSTGRES_WORKER_USER: ${DEMO_POSTGRES_WORKER_USER:-101conv_demo_worker}
+      POSTGRES_WORKER_PASSWORD: ${DEMO_POSTGRES_WORKER_PASSWORD:?Set a dedicated DEMO_POSTGRES_WORKER_PASSWORD}
+    volumes:
+      - demo-postgres-data:/var/lib/postgresql/data
+      - type: bind
+        source: ./db/init/01-worker-role.sh
+        target: /docker-entrypoint-initdb.d/01-worker-role.sh
+        read_only: true
+    networks:
+      - demo-core-db
+      - demo-worker-db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    restart: unless-stopped
+
+  core:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-0.2.0}
+      no_cache: true
+    environment:
+      APP_VERSION: ${APP_VERSION:-0.2.0}
+      PORT: 5656
+      DATA_PATH: /var/lib/101conv
+      UPLOADS_PATH: /var/lib/101conv/uploads
+      RESULTS_PATH: /var/lib/101conv/results
+      # Deliberately empty: the public demo never mounts host or NAS folders.
+      AUTOMATION_MOUNT_ROOTS: ""
+      DATABASE_URL: "host=postgres port=5432 user=${DEMO_POSTGRES_USER:-101conv_demo} password=${DEMO_POSTGRES_PASSWORD:?Set a dedicated DEMO_POSTGRES_PASSWORD} dbname=${DEMO_POSTGRES_DB:-101conv_demo} sslmode=disable"
+      ENGINE_ADMIN_TOKEN: ${DEMO_ENGINE_ADMIN_TOKEN:?Set a dedicated DEMO_ENGINE_ADMIN_TOKEN}
+      # Public demo guardrails and self-hosting funnel configuration.
+      DEMO_MODE: "true"
+      DEMO_KILL_SWITCH: ${DEMO_KILL_SWITCH:-false}
+      DEMO_KILL_SWITCH_REASON: ${DEMO_KILL_SWITCH_REASON:-}
+      DEMO_MAX_FILE_BYTES: ${DEMO_MAX_FILE_BYTES:-15728640}
+      DEMO_MAX_BATCH_FILES: ${DEMO_MAX_BATCH_FILES:-3}
+      DEMO_MAX_ACTIVE_JOBS: ${DEMO_MAX_ACTIVE_JOBS:-4}
+      DEMO_MAX_GLOBAL_JOBS_PER_HOUR: ${DEMO_MAX_GLOBAL_JOBS_PER_HOUR:-60}
+      DEMO_MAX_OUTPUT_BYTES: ${DEMO_MAX_OUTPUT_BYTES:-26214400}
+      DEMO_RETENTION_MINUTES: ${DEMO_RETENTION_MINUTES:-15}
+      DEMO_ALLOWED_PROFILES: ${DEMO_ALLOWED_PROFILES:-ffmpeg-image-linux-amd64,ffmpeg-image-compression-linux-amd64,jpeg-xl-linux-amd64,jpeg-xl-compression-linux-amd64}
+      DEMO_REPO_URL: ${DEMO_REPO_URL:-https://github.com/Timisah/101conv}
+      DEMO_PRIVACY_URL: ${DEMO_PRIVACY_URL:-/about/}
+      DEMO_TERMS_URL: ${DEMO_TERMS_URL:-}
+    volumes:
+      - demo-go-data:/var/lib/101conv
+      - demo-uploads:/var/lib/101conv/uploads
+      - demo-results:/var/lib/101conv/results
+    networks:
+      - default
+      - demo-core-db
+      - demo-web-core
+    depends_on:
+      postgres:
+        condition: service_healthy
+    user: "65532:65532"
+    healthcheck:
+      test: ["CMD", "/101conv", "readycheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
+    cap_drop: [ALL]
+    pids_limit: 96
+    mem_limit: 512m
+    cpus: 1.0
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      no_cache: true
+    ports:
+      - "${DEMO_PORT:-5657}:5656"
+    networks:
+      - demo-web-core
+    user: "101:101"
+    depends_on:
+      core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -Y off -q --spider http://127.0.0.1:5656/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777
+      - /var/cache/nginx:rw,nosuid,nodev,noexec,size=16m,uid=101,gid=101,mode=0755
+      - /var/run:rw,nosuid,nodev,noexec,size=2m,uid=101,gid=101,mode=0755
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.worker
+      args:
+        APP_VERSION: ${APP_VERSION:-0.2.0}
+      no_cache: true
+    command: ["worker"]
+    user: "65532:65532"
+    environment:
+      DATABASE_URL: "host=postgres port=5432 user=${DEMO_POSTGRES_WORKER_USER:-101conv_demo_worker} password=${DEMO_POSTGRES_WORKER_PASSWORD:?Set a dedicated DEMO_POSTGRES_WORKER_PASSWORD} dbname=${DEMO_POSTGRES_DB:-101conv_demo} sslmode=disable"
+      ENGINE_ROOT: /var/lib/101conv/engines
+      UPLOADS_PATH: /var/lib/101conv/uploads
+      RESULTS_PATH: /var/lib/101conv/results
+      WORK_PATH: /work
+      CONVERSION_TIMEOUT: ${DEMO_CONVERSION_TIMEOUT:-90s}
+      MAX_OUTPUT_BYTES: ${DEMO_MAX_OUTPUT_BYTES:-26214400}
+      JOB_LEASE: 30s
+      WORKER_CONCURRENCY: 1
+      WORKER_BATCH_CONCURRENCY: 1
+      GPU_RENDER_NODES: ""
+      GPU_NVIDIA_DEVICES: ""
+    volumes:
+      - demo-go-data:/var/lib/101conv:ro
+      - demo-uploads:/var/lib/101conv/uploads:ro
+      - demo-results:/var/lib/101conv/results
+    networks:
+      - demo-worker-db
+    depends_on:
+      postgres:
+        condition: service_healthy
+      core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/101conv", "worker-health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
+      - /work:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid=65532,gid=65532
+    cap_drop: [ALL]
+    pids_limit: 48
+    mem_limit: 768m
+    cpus: 1.0
+    restart: unless-stopped
+
+volumes:
+  demo-postgres-data:
+  demo-go-data:
+  demo-uploads:
+  demo-results:
+
+networks:
+  demo-core-db:
+    internal: true
+  demo-worker-db:
+    internal: true
+  demo-web-core:

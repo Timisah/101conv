@@ -18,3 +18,4 @@ build/
 ### VS Code ###
 .vscode/
 *.tsbuildinfo
+/site-dist/
