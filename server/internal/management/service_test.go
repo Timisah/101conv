@@ -499,6 +499,98 @@ func TestProfileLifecycleAndEngineUpdateKeepCompatibleVersions(t *testing.T) {
 	}
 }
 
+func TestProfileVersionRetentionUpgradeRollbackAndRemoval(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	source := filepath.Join(root, "imports")
+	writeEngineFile(t, source, "ffmpeg")
+
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.InstallEngine(ctx, testEngine("7.0.0", "video.encode"), source); err != nil {
+		t.Fatal(err)
+	}
+	p1 := testProfile("ver-profile", engine.VersionRange{Minimum: "7.0.0"}, "video.encode")
+	p1.Version = "1.0.0"
+	if _, err = s.InstallProfile(ctx, p1, "official"); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a pre-#31 management.json that lacked State.Active and reopen.
+	raw, err := os.ReadFile(filepath.Join(root, "management.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.ReplaceAll(string(raw), `"active": true,`, "")
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(root, "management.json"), []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	activeList, err := s.ListProfiles(ctx)
+	if err != nil || len(activeList) != 1 || !activeList[0].State.Active || activeList[0].Definition.Version != "1.0.0" {
+		t.Fatalf("legacy management.json did not normalize to active 1.0.0: %+v %v", activeList, err)
+	}
+
+	// Update to 1.1.0: 1.0.0 stays retained side-by-side while 1.1.0 becomes active.
+	p2 := p1
+	p2.Version = "1.1.0"
+	p2.Name = "Versioned v1.1"
+	if _, err = s.UpdateProfile(ctx, p2, "official"); err != nil {
+		t.Fatal(err)
+	}
+	activeList, _ = s.ListProfiles(ctx)
+	if len(activeList) != 1 || activeList[0].Definition.Version != "1.1.0" || !activeList[0].State.Active {
+		t.Fatalf("ListProfiles should return only active 1.1.0: %+v", activeList)
+	}
+	versions, err := s.ListProfileVersions(ctx, "ver-profile")
+	if err != nil || len(versions) != 2 || versions[0].Definition.Version != "1.1.0" || !versions[0].State.Active || versions[1].Definition.Version != "1.0.0" || versions[1].State.Active {
+		t.Fatalf("ListProfileVersions should list active 1.1.0 then retained 1.0.0: %+v %v", versions, err)
+	}
+
+	// Pinned conversion resolution still resolves retained 1.0.0.
+	def1, _, _, _, err := s.ResolveConversionVersion("ver-profile", "1.0.0", "mp4", "webm")
+	if err != nil || def1.Version != "1.0.0" {
+		t.Fatalf("ResolveConversionVersion(1.0.0) failed: %+v %v", def1, err)
+	}
+	defActive, _, _, _, err := s.ResolveConversion("ver-profile", "mp4", "webm")
+	if err != nil || defActive.Version != "1.1.0" {
+		t.Fatalf("ResolveConversion should use active 1.1.0: %+v %v", defActive, err)
+	}
+
+	// Removing the active version is rejected.
+	if err = s.RemoveProfileVersion(ctx, "ver-profile", "1.1.0"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected ErrConflict removing active version, got %v", err)
+	}
+
+	// Explicit rollback to 1.0.0.
+	rolledBack, err := s.ActivateProfileVersion(ctx, "ver-profile", "1.0.0")
+	if err != nil || !rolledBack.State.Active || rolledBack.Definition.Version != "1.0.0" {
+		t.Fatalf("ActivateProfileVersion rollback failed: %+v %v", rolledBack, err)
+	}
+	activeList, _ = s.ListProfiles(ctx)
+	if len(activeList) != 1 || activeList[0].Definition.Version != "1.0.0" {
+		t.Fatalf("expected active 1.0.0 after rollback: %+v", activeList)
+	}
+
+	// Now 1.1.0 is retained and can be removed cleanly.
+	if err = s.RemoveProfileVersion(ctx, "ver-profile", "1.1.0"); err != nil {
+		t.Fatalf("RemoveProfileVersion(1.1.0) failed: %v", err)
+	}
+	versions, err = s.ListProfileVersions(ctx, "ver-profile")
+	if err != nil || len(versions) != 1 || versions[0].Definition.Version != "1.0.0" {
+		t.Fatalf("expected only 1.0.0 after removing 1.1.0: %+v %v", versions, err)
+	}
+}
+
 func TestStorageIsSingleWriterAndManagedPathsSurviveMove(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "imports")

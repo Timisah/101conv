@@ -294,38 +294,86 @@ func (s *Service) create(ctx context.Context, ownerID string, request WriteReque
 }
 
 func (s *Service) validateCompatibility(ctx context.Context, request WriteRequest) error {
+	_, err := s.checkCompatibility(ctx, request)
+	return err
+}
+
+func (s *Service) checkCompatibility(ctx context.Context, request WriteRequest) (string, error) {
 	profiles, err := s.management.ListProfiles(ctx)
 	if err != nil {
-		return err
+		return "", err
+	}
+	allProfiles, err := s.management.ListAllProfiles(ctx)
+	if err != nil {
+		return "", err
 	}
 	engines, err := s.management.ListEngines(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
-	catalog := capability.Build(profiles, engines)
 	preferred := request.ProviderID
 	if preferred == "" {
 		preferred = request.ProfileID
 	}
+	// If the preset pins a specific profile version that is retained (non-active),
+	// validate against that exact retained record and return an informational notice.
+	if request.ProfileVersion != "" && preferred != "" {
+		var retained *management.ProfileRecord
+		activeVersion := ""
+		for i := range allProfiles {
+			rec := &allProfiles[i]
+			if rec.Definition.ID != preferred && "profile:"+rec.Definition.ID != preferred {
+				continue
+			}
+			if rec.State.Active {
+				activeVersion = rec.Definition.Version
+			}
+			if rec.Definition.Version == request.ProfileVersion && !rec.State.Active {
+				retained = rec
+			}
+		}
+		if retained != nil {
+			retainedCatalog := capability.Build([]management.ProfileRecord{*retained}, engines)
+			resolution, resolveErr := retainedCatalog.Resolve(capability.Request{Operation: request.Mode, SourceFormat: request.SourceFormat, TargetFormat: request.TargetFormat}, preferred)
+			if resolveErr != nil {
+				return "", fmt.Errorf("%w: %v", ErrIncompatible, resolveErr)
+			}
+			if err := validateOptions(resolution.Provider, request.Options); err != nil {
+				return "", err
+			}
+			if activeVersion != "" && activeVersion != request.ProfileVersion {
+				return fmt.Sprintf("Uses retained profile version %s (active version is %s).", request.ProfileVersion, activeVersion), nil
+			}
+			return fmt.Sprintf("Uses retained profile version %s.", request.ProfileVersion), nil
+		}
+	}
+	catalog := capability.Build(profiles, engines)
 	resolution, err := catalog.Resolve(capability.Request{Operation: request.Mode, SourceFormat: request.SourceFormat, TargetFormat: request.TargetFormat}, preferred)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrIncompatible, err)
+		return "", fmt.Errorf("%w: %v", ErrIncompatible, err)
 	}
 	if preferred != "" && resolution.Strategy != "explicit provider preference" {
-		return fmt.Errorf("%w: preferred provider is no longer available", ErrIncompatible)
+		return "", fmt.Errorf("%w: preferred provider is no longer available", ErrIncompatible)
 	}
 	if request.ProfileVersion != "" && resolution.Provider.Version != request.ProfileVersion {
-		return fmt.Errorf("%w: profile version %s is no longer installed", ErrIncompatible, request.ProfileVersion)
+		return "", fmt.Errorf("%w: profile version %s is no longer installed", ErrIncompatible, request.ProfileVersion)
 	}
-	return validateOptions(resolution.Provider, request.Options)
+	return "", validateOptions(resolution.Provider, request.Options)
 }
 
 func (s *Service) compatibility(ctx context.Context, item Preset) (bool, string) {
-	err := s.validateCompatibility(ctx, WriteRequest{Name: item.Name, Description: item.Description, Mode: item.Mode, SourceFormat: item.SourceFormat, TargetFormat: item.TargetFormat, ProviderID: item.ProviderID, ProfileID: item.ProfileID, ProfileVersion: item.ProfileVersion, Options: item.Options})
+	notice, err := s.checkCompatibility(ctx, WriteRequest{Name: item.Name, Description: item.Description, Mode: item.Mode, SourceFormat: item.SourceFormat, TargetFormat: item.TargetFormat, ProviderID: item.ProviderID, ProfileID: item.ProfileID, ProfileVersion: item.ProfileVersion, Options: item.Options})
 	if err == nil {
-		return true, ""
+		return true, notice
 	}
 	return false, strings.TrimPrefix(err.Error(), ErrIncompatible.Error()+": ")
+}
+
+// ProfileVersionInUse reports whether any saved preset pins (profileID, profileVersion).
+func (s *Service) ProfileVersionInUse(ctx context.Context, profileID, profileVersion string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conv_presets WHERE profile_id=$1 AND profile_version=$2)`, profileID, profileVersion).Scan(&exists)
+	return exists, err
 }
 
 func validateWrite(request WriteRequest) error {

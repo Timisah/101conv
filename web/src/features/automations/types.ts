@@ -39,6 +39,7 @@ export type AutomationView = {
   enabled: boolean;
   status: string;
   diagnostic?: string;
+  profileNotice?: string;
   revision: number;
   definition: {
     trigger: {

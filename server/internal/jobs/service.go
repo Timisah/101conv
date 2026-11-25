@@ -76,6 +76,14 @@ func (s *Service) EngineHasActiveJobs(ctx context.Context, engineID, engineVersi
 	return exists, err
 }
 
+// ProfileVersionHasActiveJobs prevents removing a retained profile version while
+// queued or running jobs still reference that exact version.
+func (s *Service) ProfileVersionHasActiveJobs(ctx context.Context, profileID, profileVersion string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conv_jobs WHERE state IN ('queued','running') AND profile_id=$1 AND execution->>'profileVersion'=$2)`, profileID, profileVersion).Scan(&exists)
+	return exists, err
+}
+
 func NewService(db *sql.DB, manager *management.Service, uploadRoot, resultRoot string) (*Service, error) {
 	if db == nil || manager == nil || strings.TrimSpace(uploadRoot) == "" || strings.TrimSpace(resultRoot) == "" {
 		return nil, fmt.Errorf("jobs require PostgreSQL, management services, and upload/result paths")
@@ -901,9 +909,9 @@ func (s *Service) submitFor(ctx context.Context, req SubmitRequest, ownerID stri
 			return Job{}, false, err
 		}
 	}
-	profileDef, rule, engineDef, installation, err := s.management.ResolveConversion(req.ProfileID, upload.Extension, target)
+	profileDef, rule, engineDef, installation, err := s.management.ResolveConversionVersion(req.ProfileID, req.ProfileVersion, upload.Extension, target)
 	if err != nil {
-		if strings.Contains(err.Error(), "does not support") {
+		if strings.Contains(err.Error(), "does not support") || (req.ProfileVersion != "" && errors.Is(err, management.ErrNotFound)) {
 			return Job{}, false, fmt.Errorf("%w: %v", ErrUnsupported, err)
 		}
 		return Job{}, false, err

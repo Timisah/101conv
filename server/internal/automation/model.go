@@ -98,6 +98,7 @@ type Automation struct {
 	Enabled       bool       `json:"enabled"`
 	Status        string     `json:"status"`
 	Diagnostic    string     `json:"diagnostic,omitempty"`
+	ProfileNotice string     `json:"profileNotice,omitempty"`
 	Revision      int        `json:"revision"`
 	Definition    Definition `json:"definition"`
 	CreatedAt     time.Time  `json:"createdAt"`

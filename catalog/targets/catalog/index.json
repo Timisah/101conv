@@ -113,5 +113,36 @@
       "name": "PDF Rendering & Text Extraction",
       "manifestTarget": "profiles/poppler-pdf-linux-amd64-1.1.0.json"
     }
+  ],
+  "bundles": [
+    {
+      "id": "essential-images",
+      "name": "Essential Images",
+      "description": "Image conversion and compression for JPEG, PNG, WebP, AVIF, and JPEG XL.",
+      "profileIds": [
+        "ffmpeg-image-linux-amd64",
+        "ffmpeg-image-compression-linux-amd64",
+        "jpeg-xl-linux-amd64",
+        "jpeg-xl-compression-linux-amd64"
+      ]
+    },
+    {
+      "id": "office-pdf",
+      "name": "Office & PDF",
+      "description": "Convert Office documents to PDF, render PDF pages to images, and extract text.",
+      "profileIds": [
+        "libreoffice-pdf-linux-amd64",
+        "poppler-pdf-linux-amd64"
+      ]
+    },
+    {
+      "id": "audio-video",
+      "name": "Audio & Video",
+      "description": "Convert and compress common audio and video formats with FFmpeg.",
+      "profileIds": [
+        "ffmpeg-linux-amd64",
+        "ffmpeg-compression-linux-amd64"
+      ]
+    }
   ]
 }

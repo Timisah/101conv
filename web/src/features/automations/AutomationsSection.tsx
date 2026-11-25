@@ -397,6 +397,7 @@ export function AutomationsSection({
                     'Missing output'}
                 </p>
                 {automation.diagnostic && <p className="form-error">{automation.diagnostic}</p>}
+                {automation.profileNotice && <p className="field-hint">{automation.profileNotice}</p>}
                 <div className="drive-actions">
                   <button
                     className="text-btn"
