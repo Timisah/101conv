@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/timisah/101conv/server/internal/analysis"
+	"github.com/timisah/101conv/server/internal/analytics"
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/automation"
 	"github.com/timisah/101conv/server/internal/catalog"
@@ -27,6 +28,7 @@ type API struct {
 	repositories *repositorymanager.Manager
 	jobs         *jobs.Service
 	analysis     *analysis.Service
+	analytics    *analytics.Service
 	accounts     *auth.Service
 	automations  *automation.Service
 	presets      *presets.Service
@@ -68,7 +70,11 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 	if managementService != nil && jobService != nil {
 		analysisService, _ = analysis.NewService(managementService, jobService.UploadRoot())
 	}
-	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, analysis: analysisService, accounts: accountService, automations: automationService, presets: presetService, updates: updateChecker, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
+	var analyticsService *analytics.Service
+	if jobService != nil && jobService.DB() != nil {
+		analyticsService, _ = analytics.NewService(jobService.DB())
+	}
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, analysis: analysisService, analytics: analyticsService, accounts: accountService, automations: automationService, presets: presetService, updates: updateChecker, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
 	if managementService != nil {
 		a.sessions.setTTL(time.Duration(managementService.SessionTimeout()) * time.Minute)
 	}
@@ -82,6 +88,8 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 	mux.HandleFunc("GET /api/v1/storage", a.storageOverview)
 	mux.HandleFunc("POST /api/v1/storage/scan", a.startStorageScan)
 	mux.HandleFunc("GET /api/v1/operations", a.operationsOverview)
+	mux.HandleFunc("GET /api/v1/analytics/overview", a.getAnalyticsOverview)
+	mux.HandleFunc("GET /api/v1/analytics/users", a.listAnalyticsUsers)
 	mux.HandleFunc("GET /api/v1/system/update", a.updateStatus)
 	mux.HandleFunc("GET /api/v1/storage/cleanup/preview", a.previewStorageCleanup)
 	mux.HandleFunc("PUT /api/v1/storage/retention", a.updateStorageRetention)
