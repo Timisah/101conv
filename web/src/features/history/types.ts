@@ -5,6 +5,17 @@ export type Batch={id:string;mode:'convert'|'compress';state:string;total:number
 
 export type EntryType = 'job' | 'batch';
 export type HistoryTotals = { inputBytes: number; outputBytes: number; savedBytes?: number };
+export type BatchPreviewItem = {
+  index: number;
+  uploadId: string;
+  fileName?: string;
+  jobId?: string;
+  sourceFormat?: string;
+  targetFormat?: string;
+  state: string;
+  originalState?: string;
+  resultState?: string;
+};
 // One row in the unified history: a standalone job or a batch parent. Batch
 // member jobs are only reachable by expanding their batch.
 export type HistoryEntry = {
@@ -16,6 +27,7 @@ export type HistoryEntry = {
   job?: Job;
   batch?: Batch;
   totals?: HistoryTotals;
+  previewItems?: BatchPreviewItem[];
 };
 export type HistoryPageData = { entries: HistoryEntry[]; total: number; limit: number; offset: number };
 

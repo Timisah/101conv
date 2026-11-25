@@ -1475,6 +1475,28 @@ func (s *Service) OpenResult(ctx context.Context, id string) (*os.File, Job, str
 	return s.OpenResultFor(ctx, id, "")
 }
 
+// OpenOriginalFor opens a job's original uploaded file after verifying job
+// ownership and upload retention state.
+func (s *Service) OpenOriginalFor(ctx context.Context, id, ownerID string) (*os.File, error) {
+	s.fileMu.RLock()
+	defer s.fileMu.RUnlock()
+	if _, err := s.GetFor(ctx, id, ownerID); err != nil {
+		return nil, err
+	}
+	var uploadID string
+	if err := s.db.QueryRowContext(ctx, `SELECT upload_id FROM conv_jobs WHERE id=$1`, id).Scan(&uploadID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	_, path, err := s.GetUploadFor(ctx, uploadID, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	return os.Open(path)
+}
+
 func (s *Service) OpenResultFor(ctx context.Context, id, ownerID string) (*os.File, Job, string, error) {
 	// Cleanup takes the write lock across unlink and state update. Once this
 	// read lock opens the file, Unix keeps that inode readable for the response

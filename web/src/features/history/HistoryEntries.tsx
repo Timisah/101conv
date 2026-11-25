@@ -1,6 +1,8 @@
 import { ArrowDownToLine, ArrowRight, ChevronDown, X } from 'lucide-react';
 import { StatePill } from '../../components/common';
 import { bytes, explain, fileStatus, pretty } from '../format';
+import { BatchCollage, RemoteFileThumb } from '../previews/FileThumbnail';
+import { previewDescriptorFor } from '../previews/filePreview';
 import type { Batch, HistoryEntry } from './types';
 
 const operation = (mode?: string) => (mode === 'compress' ? 'Compression' : 'Conversion');
@@ -28,15 +30,33 @@ export type EntryActions = {
 
 export function JobEntry({ entry, actions }: { entry: HistoryEntry; actions: EntryActions }) {
   const job = entry.job!;
+  const preview = previewDescriptorFor({
+    jobId: job.id,
+    sourceFormat: job.sourceFormat,
+    targetFormat: job.targetFormat,
+    fileName: entry.fileName,
+    state: job.state,
+    originalState: job.originalState,
+    resultState: job.resultState,
+  });
   return (
     <article className="history-entry job-entry">
-      <div className="entry-main">
-        <div className="job-format">
-          <span className="mini-file">{job.sourceFormat}</span><ArrowRight size={14} /><span className="mini-file output">{job.targetFormat}</span>
+      <div className="entry-main entry-with-thumb">
+        <RemoteFileThumb
+          url={preview.url}
+          alt={`${preview.badge === 'Output' ? 'Processed output' : 'Original'} preview of ${entry.fileName || job.id}`}
+          format={preview.format}
+          badge={preview.badge}
+          size="md"
+        />
+        <div className="entry-with-thumb-body">
+          <div className="job-format">
+            <span className="mini-file">{job.sourceFormat}</span><ArrowRight size={14} /><span className="mini-file output">{job.targetFormat}</span>
+          </div>
+          {entry.fileName && <b className="entry-title" title={entry.fileName}>{entry.fileName}</b>}
+          <small className="job-id">{operation(job.mode)} · {job.id}</small>
+          <small className="job-id">Original · {fileStatus(job.originalState)}</small>
         </div>
-        {entry.fileName && <b className="entry-title" title={entry.fileName}>{entry.fileName}</b>}
-        <small className="job-id">{operation(job.mode)} · {job.id}</small>
-        <small className="job-id">Original · {fileStatus(job.originalState)}</small>
       </div>
       <div className="entry-profile" data-label="Profile"><b>{job.profileId}</b><small>v{job.profileVersion}</small></div>
       <div className="entry-status">
@@ -76,16 +96,33 @@ export function BatchEntry({ entry, detail, retrySelection, onToggle, onSelectRe
 }) {
   const batch = entry.batch!;
   const items = detail?.items || batch.items;
+  const collageItems =
+    entry.previewItems && entry.previewItems.length > 0
+      ? entry.previewItems
+      : items.slice(0, 3).map(item => ({
+          index: item.index,
+          uploadId: item.uploadId,
+          fileName: item.fileName,
+          jobId: item.jobId || item.job?.id,
+          sourceFormat: item.job?.sourceFormat,
+          targetFormat: item.job?.targetFormat,
+          state: item.state,
+          originalState: item.job?.originalState,
+          resultState: item.job?.resultState,
+        }));
   const more = batch.total - 1;
   return (
     <details className="history-entry batch-history-card" onToggle={event => onToggle(batch.id, event.currentTarget.open)}>
       <summary>
-        <span className="batch-summary-main">
-          <b>{operation(batch.mode)} batch</b>
-          {entry.fileName && <span className="batch-file-hint" title={entry.fileName}>{entry.fileName}{more > 0 ? ` and ${plural(more, 'other')}` : ''}</span>}
-          <small>{plural(batch.total, 'file')} · {when(batch.createdAt)}{entry.ownerName ? ` · ${entry.ownerName}` : ''}</small>
-          <small className="batch-id">ID {batch.id}</small>
-          {entry.totals && entry.totals.outputBytes > 0 && <small>{entry.totals.savedBytes ? `Saved ${bytes(entry.totals.savedBytes)} across successful files` : `${bytes(entry.totals.outputBytes)} output`}</small>}
+        <span className="batch-summary-main entry-with-thumb">
+          <BatchCollage items={collageItems} total={batch.total} />
+          <span className="entry-with-thumb-body">
+            <b>{operation(batch.mode)} batch</b>
+            {entry.fileName && <span className="batch-file-hint" title={entry.fileName}>{entry.fileName}{more > 0 ? ` and ${plural(more, 'other')}` : ''}</span>}
+            <small>{plural(batch.total, 'file')} · {when(batch.createdAt)}{entry.ownerName ? ` · ${entry.ownerName}` : ''}</small>
+            <small className="batch-id">ID {batch.id}</small>
+            {entry.totals && entry.totals.outputBytes > 0 && <small>{entry.totals.savedBytes ? `Saved ${bytes(entry.totals.savedBytes)} across successful files` : `${bytes(entry.totals.outputBytes)} output`}</small>}
+          </span>
         </span>
         <span className="batch-summary-counts">
           <span className="batch-state-line"><StatePill state={batch.state} /><ChevronDown className="batch-chevron" size={16} aria-hidden="true" /></span>
@@ -101,40 +138,59 @@ export function BatchEntry({ entry, detail, retrySelection, onToggle, onSelectRe
         {batch.succeeded > 0 && <button className="secondary small" onClick={event => { event.preventDefault(); actions.downloadBatch(batch.id); }}>Download successful files (.zip)</button>}
       </div>
       <div className="batch-item-list">
-        {!detail ? <div className="batch-details-loading">Open to load item details…</div> : (detail.items || []).map(item => (
-          <article className="batch-item-row" key={item.index}>
-            <div className="batch-item-number">
-              {item.state === 'failed' && <input type="checkbox" aria-label={`Select failed item ${item.index + 1} to retry`} checked={retrySelection.includes(item.index)} onChange={event => onSelectRetry(batch.id, item.index, event.target.checked)} />}
-              <span>{String(item.index + 1).padStart(2, '0')}</span>
-            </div>
-            <div className="batch-item-content">
-              <b>{item.fileName || `File ${item.index + 1}`}</b>
-              <small>{item.job ? `${item.job.sourceFormat.toUpperCase()} → ${item.job.targetFormat.toUpperCase()}` : item.uploadId}</small>
-              {item.job && <small>{item.job.profileId} · v{item.job.profileVersion}</small>}
-              {item.job && <small className="job-id">Job · {item.job.id}</small>}
-              {item.job?.outputSize ? <small>{bytes(item.job.outputSize)}{item.job.savedBytes ? ` · saved ${bytes(item.job.savedBytes)} (${item.job.savingsPercent?.toFixed(1)}%)` : ''}</small> : null}
-              {item.job?.state === 'succeeded' && item.job.resultState !== 'available' && <small className="error-hint">Result {fileStatus(item.job.resultState)}</small>}
-              {item.error && <p className="error-hint">{explain(item.error)}</p>}
-              {item.attempts && item.attempts.length > 0 && (
-                <details className="batch-attempt-details">
-                  <summary>{plural(item.attempts.length, 'execution attempt')}</summary>
-                  {item.attempts.map(attempt => (
-                    <div key={attempt.number}>
-                      <b>Attempt {attempt.number} · {pretty(attempt.state)}</b>
-                      <small>{when(attempt.startedAt)}{attempt.finishedAt ? ' · finished ' + when(attempt.finishedAt) : ''}</small>
-                      {attempt.error && <small>{explain(attempt.error)}</small>}
-                    </div>
-                  ))}
-                </details>
-              )}
-            </div>
-            <StatePill state={item.state} />
-            <div className="row-actions">
-              {(item.state === 'queued' || item.state === 'running') && <button className="icon-btn" aria-label="Cancel this file" onClick={() => actions.cancelItem(batch.id, item.index)}><X size={16} /></button>}
-              {item.job?.state === 'succeeded' && item.job.resultState === 'available' && <button className="icon-btn download-btn" aria-label="Download this result" onClick={() => actions.downloadJob(item.job!)}><ArrowDownToLine size={17} /></button>}
-            </div>
-          </article>
-        ))}
+        {!detail ? <div className="batch-details-loading">Open to load item details…</div> : (detail.items || []).map(item => {
+          const itemPreview = previewDescriptorFor({
+            jobId: item.jobId || item.job?.id,
+            uploadId: item.uploadId,
+            sourceFormat: item.job?.sourceFormat,
+            targetFormat: item.job?.targetFormat,
+            fileName: item.fileName,
+            state: item.job?.state || item.state,
+            originalState: item.job?.originalState,
+            resultState: item.job?.resultState,
+          });
+          return (
+            <article className="batch-item-row" key={item.index}>
+              <div className="batch-item-number">
+                {item.state === 'failed' && <input type="checkbox" aria-label={`Select failed item ${item.index + 1} to retry`} checked={retrySelection.includes(item.index)} onChange={event => onSelectRetry(batch.id, item.index, event.target.checked)} />}
+                <span>{String(item.index + 1).padStart(2, '0')}</span>
+              </div>
+              <RemoteFileThumb
+                url={itemPreview.url}
+                alt={`${itemPreview.badge === 'Output' ? 'Processed output' : 'Original'} preview of ${item.fileName || `file ${item.index + 1}`}`}
+                format={itemPreview.format}
+                badge={itemPreview.badge}
+                size="sm"
+              />
+              <div className="batch-item-content">
+                <b>{item.fileName || `File ${item.index + 1}`}</b>
+                <small>{item.job ? `${item.job.sourceFormat.toUpperCase()} → ${item.job.targetFormat.toUpperCase()}` : item.uploadId}</small>
+                {item.job && <small>{item.job.profileId} · v{item.job.profileVersion}</small>}
+                {item.job && <small className="job-id">Job · {item.job.id}</small>}
+                {item.job?.outputSize ? <small>{bytes(item.job.outputSize)}{item.job.savedBytes ? ` · saved ${bytes(item.job.savedBytes)} (${item.job.savingsPercent?.toFixed(1)}%)` : ''}</small> : null}
+                {item.job?.state === 'succeeded' && item.job.resultState !== 'available' && <small className="error-hint">Result {fileStatus(item.job.resultState)}</small>}
+                {item.error && <p className="error-hint">{explain(item.error)}</p>}
+                {item.attempts && item.attempts.length > 0 && (
+                  <details className="batch-attempt-details">
+                    <summary>{plural(item.attempts.length, 'execution attempt')}</summary>
+                    {item.attempts.map(attempt => (
+                      <div key={attempt.number}>
+                        <b>Attempt {attempt.number} · {pretty(attempt.state)}</b>
+                        <small>{when(attempt.startedAt)}{attempt.finishedAt ? ' · finished ' + when(attempt.finishedAt) : ''}</small>
+                        {attempt.error && <small>{explain(attempt.error)}</small>}
+                      </div>
+                    ))}
+                  </details>
+                )}
+              </div>
+              <StatePill state={item.state} />
+              <div className="row-actions">
+                {(item.state === 'queued' || item.state === 'running') && <button className="icon-btn" aria-label="Cancel this file" onClick={() => actions.cancelItem(batch.id, item.index)}><X size={16} /></button>}
+                {item.job?.state === 'succeeded' && item.job.resultState === 'available' && <button className="icon-btn download-btn" aria-label="Download this result" onClick={() => actions.downloadJob(item.job!)}><ArrowDownToLine size={17} /></button>}
+              </div>
+            </article>
+          );
+        })}
       </div>
     </details>
   );
