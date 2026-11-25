@@ -21,6 +21,7 @@ import (
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/automation"
 	"github.com/timisah/101conv/server/internal/catalog"
+	"github.com/timisah/101conv/server/internal/demo"
 	"github.com/timisah/101conv/server/internal/httpapi"
 	"github.com/timisah/101conv/server/internal/jobs"
 	"github.com/timisah/101conv/server/internal/management"
@@ -155,6 +156,13 @@ func main() {
 			_ = repositoryService.Close()
 			_ = managementService.Close()
 			log.Fatalf("initialize analytics service: %v", err)
+		}
+		demoService := demo.NewService(demo.PolicyFromEnv(), db)
+		if err := demoService.Migrate(context.Background()); err != nil {
+			_ = db.Close()
+			_ = repositoryService.Close()
+			_ = managementService.Close()
+			log.Fatalf("initialize demo service: %v", err)
 		}
 	}
 

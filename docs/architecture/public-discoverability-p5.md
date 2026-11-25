@@ -44,10 +44,14 @@ checks that the README retains the matching catalog matrix and screenshot, and
 that `llms.txt` remains credential-free. The page has a keyboard skip link and
 visible focus styling for the public navigation.
 
+## Static GitHub Pages candidate
+
+`scripts/build-public-site.mjs` generates a zero-JavaScript, zero-tracker static site directly from the authoritative `catalog/targets/catalog/index.json` and target profile manifests. It emits substantive pages for each of the five workspaces (`/convert/`, `/compress/`, `/build/`, `/inspect/`, `/automate/`), one catalog-generated `/formats/` inventory, and a `/self-host/` security/deployment guide — never doorway pages.
+
+- When `--base-url` / `SITE_BASE_URL` is provided (such as in `.github/workflows/pages.yml`), every page receives a matching `<link rel="canonical">` and `/sitemap.xml` + `/robots.txt` + `/llms.txt` are generated together.
+- When built without a base URL, canonicals and sitemap are omitted so self-hosted or preview outputs never emit wrong domains.
+- CI executes `node scripts/build-public-site.mjs --verify` on every push and pull request.
+
 ## Deliberate limits
 
-The project name, logo, canonical domain, and public demo remain unresolved.
-The page does not choose a new identity, add a canonical URL that could be
-wrong for a self-hosted deployment, create a sitemap before a domain exists,
-or enable anonymous processing. A future owner-approved brand/domain pass can
-add canonical and sitemap metadata to a separately published static site.
+The project name, logo, and custom domain remain owner-controlled decisions (`docs/architecture/brand-transition-p5.md`, `DECISIONS.md` A-010/A-024). The self-hosted `/about/` page never injects a hardcoded canonical URL or enables anonymous processing. An optional isolated public demo stack (`compose.demo.yaml`) is documented separately in `docs/security/public-demo-p5.md` and remains disabled by default (`DEMO_MODE=false`).

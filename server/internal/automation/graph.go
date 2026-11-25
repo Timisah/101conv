@@ -28,13 +28,24 @@ func GraphFromDefinition(d Definition) Graph {
 	if d.Condition != nil {
 		conditionConfig["tree"] = d.Condition
 	}
-	if len(d.Filter.Extensions) > 0 || d.Filter.NameGlob != "" || d.Filter.MinBytes > 0 || d.Filter.MaxBytes > 0 || d.Condition != nil {
-		nodes = append(nodes, GraphNode{ID: "conditions", BlockID: "condition.file-filter", Version: "1.0.0", Kind: "condition", Config: conditionConfig})
+	hasCondition := len(d.Filter.Extensions) > 0 || d.Filter.NameGlob != "" || d.Filter.MinBytes > 0 || d.Filter.MaxBytes > 0 || d.Condition != nil
+	condID := ""
+	if hasCondition {
+		condID = "conditions"
+		condBlock := "condition.file-filter"
+		if d.FallbackAction != nil {
+			condBlock = "condition.branch"
+		} else if d.Condition != nil && conditionNeedsMetadata(*d.Condition) {
+			condBlock = "condition.inspect-metadata"
+		}
+		nodes = append(nodes, GraphNode{ID: condID, BlockID: condBlock, Version: "1.0.0", Kind: "condition", Config: conditionConfig})
 	}
 	mode := d.Action.Mode
 	blockID := "action.convert"
 	if mode == "compress" {
 		blockID = "action.compress"
+	} else if mode == "build" {
+		blockID = "action.build"
 	}
 	nodes = append(nodes, GraphNode{ID: "action", BlockID: blockID, Version: "1.0.0", Kind: "action", Config: map[string]any{
 		"mode": mode, "profileId": d.Action.ProfileID, "profileVersion": d.Action.ProfileVersion,
@@ -43,10 +54,44 @@ func GraphFromDefinition(d Definition) Graph {
 	nodes = append(nodes, GraphNode{ID: "output", BlockID: "action.file-output", Version: "1.0.0", Kind: "output", Config: map[string]any{
 		"outputDriveId": d.Action.OutputDriveID, "behavior": d.Action.OutputBehavior,
 	}})
-	edges := []GraphEdge{{From: "trigger", To: "action"}, {From: "action", To: "output"}}
-	if len(nodes) == 4 {
-		edges[0] = GraphEdge{From: "trigger", To: "conditions"}
-		edges = append(edges[:1], append([]GraphEdge{{From: "conditions", To: "action"}}, edges[1:]...)...)
+	edges := make([]GraphEdge, 0, 5)
+	if condID != "" {
+		edges = append(edges, GraphEdge{From: "trigger", To: condID})
+		if d.FallbackAction != nil {
+			edges = append(edges, GraphEdge{From: condID, To: "action", Port: "true"})
+		} else {
+			edges = append(edges, GraphEdge{From: condID, To: "action"})
+		}
+	} else {
+		edges = append(edges, GraphEdge{From: "trigger", To: "action"})
+	}
+	edges = append(edges, GraphEdge{From: "action", To: "output"})
+
+	if d.FallbackAction != nil && condID != "" {
+		fbMode := d.FallbackAction.Mode
+		fbBlock := "action.skip"
+		switch fbMode {
+		case "stop":
+			fbBlock = "action.stop"
+		case "convert":
+			fbBlock = "action.convert"
+		case "compress":
+			fbBlock = "action.compress"
+		}
+		nodes = append(nodes, GraphNode{
+			ID:      "fallback",
+			BlockID: fbBlock,
+			Version: "1.0.0",
+			Kind:    "action",
+			Config: map[string]any{
+				"mode":           fbMode,
+				"profileId":      d.FallbackAction.ProfileID,
+				"profileVersion": d.FallbackAction.ProfileVersion,
+				"targetFormat":   d.FallbackAction.TargetFormat,
+				"options":        d.FallbackAction.Options,
+			},
+		})
+		edges = append(edges, GraphEdge{From: condID, To: "fallback", Port: "false"})
 	}
 	return Graph{Nodes: nodes, Edges: edges}
 }
@@ -69,7 +114,7 @@ func ValidateGraph(g Graph) error {
 		return errors.New("visual workflow has too many connections")
 	}
 	nodes := make(map[string]GraphNode, len(g.Nodes))
-	triggerCount, actionCount := 0, 0
+	triggerCount, actionCount, conditionCount := 0, 0, 0
 	for _, node := range g.Nodes {
 		if !graphIDPattern.MatchString(node.ID) || node.BlockID == "" || len(node.BlockID) > 128 || len(node.Version) > 40 {
 			return fmt.Errorf("visual workflow contains an invalid block identifier")
@@ -100,18 +145,23 @@ func ValidateGraph(g Graph) error {
 			}
 		}
 		nodes[node.ID] = node
-		if node.Kind == "trigger" {
+		switch node.Kind {
+		case "trigger":
 			triggerCount++
-		}
-		if node.Kind == "action" {
+		case "condition":
+			conditionCount++
+		case "action":
 			actionCount++
 		}
 	}
 	if triggerCount != 1 {
 		return errors.New("visual workflow must contain exactly one trigger block")
 	}
-	if actionCount != 1 {
-		return errors.New("visual workflow must contain exactly one processing action")
+	if actionCount < 1 || actionCount > 4 {
+		return errors.New("visual workflow must contain between 1 and 4 processing actions")
+	}
+	if actionCount > 1 && conditionCount == 0 {
+		return errors.New("visual workflow with multiple actions must include a condition or branch block")
 	}
 	indegree := make(map[string]int, len(nodes))
 	adj := make(map[string][]string, len(nodes))
@@ -124,6 +174,9 @@ func ValidateGraph(g Graph) error {
 		}
 		if len(edge.Port) > 32 || strings.ContainsAny(edge.Port, "\r\n") {
 			return errors.New("connection port is invalid")
+		}
+		if edge.Port != "" && edge.Port != "true" && edge.Port != "false" && edge.Port != "default" && edge.Port != "output" {
+			return fmt.Errorf("unsupported connection port %q", edge.Port)
 		}
 		adj[edge.From] = append(adj[edge.From], edge.To)
 		indegree[edge.To]++
@@ -205,7 +258,13 @@ func ApplyGraphToDefinition(d *Definition) error {
 	if err := ValidateGraph(*d.Graph); err != nil {
 		return err
 	}
-	var trigger, action, output *GraphNode
+	falseTargets := make(map[string]bool)
+	for _, edge := range d.Graph.Edges {
+		if edge.Port == "false" {
+			falseTargets[edge.To] = true
+		}
+	}
+	var trigger, action, fallbackAction, output *GraphNode
 	var conditions []GraphNode
 	for i := range d.Graph.Nodes {
 		node := &d.Graph.Nodes[i]
@@ -215,13 +274,21 @@ func ApplyGraphToDefinition(d *Definition) error {
 		case "condition":
 			conditions = append(conditions, *node)
 		case "action":
-			action = node
+			if falseTargets[node.ID] || node.ID == "fallback" {
+				fallbackAction = node
+			} else if action == nil {
+				action = node
+			}
 		case "output":
 			output = node
 		}
 	}
 	if trigger != nil {
-		d.Trigger.Type = firstString(trigger.Config, "type", strings.TrimPrefix(trigger.BlockID, "trigger."))
+		trigType := firstString(trigger.Config, "type", strings.TrimPrefix(trigger.BlockID, "trigger."))
+		if trigType == "schedule" || trigType == "folder-scan" {
+			trigType = "folder.scan"
+		}
+		d.Trigger.Type = trigType
 		d.Trigger.InputDriveID = firstString(trigger.Config, "inputDriveId", d.Trigger.InputDriveID)
 		d.Trigger.IntervalSeconds = firstInt(trigger.Config, "intervalSeconds", d.Trigger.IntervalSeconds)
 		d.Trigger.StabilitySeconds = firstInt(trigger.Config, "stabilitySeconds", d.Trigger.StabilitySeconds)
@@ -234,6 +301,8 @@ func ApplyGraphToDefinition(d *Definition) error {
 			if err != nil || json.Unmarshal(encoded, &d.Condition) != nil {
 				return errors.New("visual condition tree is invalid")
 			}
+		} else if conditions[0].BlockID == "condition.inspect-metadata" {
+			d.Condition = conditionFromMetadataConfig(conditions[0].Config)
 		} else {
 			*d = applyFilterConfig(*d, conditions[0].Config)
 		}
@@ -252,11 +321,76 @@ func ApplyGraphToDefinition(d *Definition) error {
 			}
 		}
 	}
+	if fallbackAction != nil {
+		fb := FileAction{
+			Mode:           firstString(fallbackAction.Config, "mode", strings.TrimPrefix(fallbackAction.BlockID, "action.")),
+			ProfileID:      firstString(fallbackAction.Config, "profileId", ""),
+			ProfileVersion: firstString(fallbackAction.Config, "profileVersion", ""),
+			TargetFormat:   firstString(fallbackAction.Config, "targetFormat", ""),
+		}
+		if opts, ok := fallbackAction.Config["options"].(map[string]any); ok {
+			fb.Options = make(map[string]string, len(opts))
+			for key, value := range opts {
+				if text, ok := value.(string); ok {
+					fb.Options[key] = text
+				}
+			}
+		}
+		d.FallbackAction = &fb
+	}
 	if output != nil {
 		d.Action.OutputDriveID = firstString(output.Config, "outputDriveId", d.Action.OutputDriveID)
 		d.Action.OutputBehavior = firstString(output.Config, "behavior", d.Action.OutputBehavior)
 	}
 	return nil
+}
+
+func conditionFromMetadataConfig(config map[string]any) *Condition {
+	var children []Condition
+	if w := firstInt64(config, "minWidth", 0); w > 0 {
+		children = append(children, Condition{Operator: "min_width", Bytes: w})
+	}
+	if h := firstInt64(config, "minHeight", 0); h > 0 {
+		children = append(children, Condition{Operator: "min_height", Bytes: h})
+	}
+	if v, ok := config["hdr"]; ok {
+		switch tv := v.(type) {
+		case bool:
+			if tv {
+				children = append(children, Condition{Operator: "hdr", Value: "true"})
+			} else {
+				children = append(children, Condition{Operator: "hdr", Value: "false"})
+			}
+		case string:
+			if tv == "true" || tv == "false" {
+				children = append(children, Condition{Operator: "hdr", Value: tv})
+			}
+		}
+	}
+	if codec := firstString(config, "codec", ""); codec != "" {
+		children = append(children, Condition{Operator: "codec", Value: codec})
+	}
+	if v, ok := config["hasAudio"]; ok {
+		switch tv := v.(type) {
+		case bool:
+			if tv {
+				children = append(children, Condition{Operator: "has_audio", Value: "true"})
+			} else {
+				children = append(children, Condition{Operator: "has_audio", Value: "false"})
+			}
+		case string:
+			if tv == "true" || tv == "false" {
+				children = append(children, Condition{Operator: "has_audio", Value: tv})
+			}
+		}
+	}
+	if len(children) == 0 {
+		return nil
+	}
+	if len(children) == 1 {
+		return &children[0]
+	}
+	return &Condition{Operator: "and", Children: children}
 }
 
 func applyFilterConfig(d Definition, config map[string]any) Definition {

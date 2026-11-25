@@ -171,7 +171,7 @@ security design is approved.
 
 **Goal:** replace provisional `101conv` with distinct name and logo suitable for a complete file workspace.  
 **Acceptance:** domain/trademark/GitHub availability research, distinct identity, favicon/mobile/light/dark assets, owner selection, redirect/legacy identifier transition and backwards compatible API/data/Compose path plan. No spontaneous repo rename.  
-**Status:** Identity open, not yet chosen.
+**Status:** Transition plan and selection rubric documented in `docs/architecture/brand-transition-p5.md`; final brand name, trademark/domain selection, and logo approval remain owner-controlled decisions (`DECISIONS.md` A-010, A-024).
 
 ### FR-017 — GitHub-centered discoverability and SEO
 
@@ -179,23 +179,15 @@ security design is approved.
 **Acceptance:** README screenshots, quick start, format matrix, useful docs, static SEO pages through GitHub Pages or equivalent, proper titles/sitemaps/robots/canonicals/schema when justified, crawler accessibility and privacy. Only verified features; no spammy bulk landing pages or promises of ChatGPT/Google ranking.  
 **Dependencies:** honest catalog FR-003, brand FR-016 for custom domain.
 
-**Current worktree progress:** the Web image now includes an owner-neutral,
-static `/about/` page with responsive metadata, semantic Schema.org markup,
-accurate five-workspace descriptions, a compact catalog-backed capability
-summary, a copyable Docker quick start, repository/install links, and a robots
-policy that excludes authenticated/API paths. The README carries a matching
-format matrix with fidelity caveats and a real landing-page screenshot. A
-credential-free `llms.txt` index supports machine-readable discovery without
-claiming ranking or universal assistant support. A post-build contract test
-covers the public route, no-index boundary, quick-start content, README asset,
-and crawler index. Canonical and sitemap metadata remain deferred until a
-public domain and publication target are approved.
+**Status:** Implemented for P5. `README.md`, `web/public/about/index.html`, and `web/public/llms.txt` are synchronized with verified P2/P3/P5 capabilities; `scripts/build-public-site.mjs` generates a zero-JS, zero-tracker, catalog-driven static GitHub Pages site (8 substantive pages, `/formats/` generated from `catalog/targets/catalog/index.json`, `robots.txt`, `llms.txt`, and optional `sitemap.xml` + canonical tags when `SITE_BASE_URL` is configured) with opt-in `.github/workflows/pages.yml` publishing and CI verification (`node scripts/build-public-site.mjs --verify` + `web/public-smoke.cjs`).
 
 ### FR-018 — Resource-limited public demo
 
 **Goal:** visitors try actual conversions and discover self-hosting.  
-**Acceptance:** separate isolated deployment without personal/NAS production data, conservative guest quotas, global compute/storage/output budgets, rate/abuse protection, short retention and privacy disclosures, limited verified engines, clear links to GitHub/installation, aggregate cost/conversion/referral metrics and kill switch. Evaluate benefits empirically; never unlimited free processing.  
+**Acceptance:** separate isolated deployment without personal/NAS production data, conservative guest quotas, global compute/storage/output budgets, rate/abuse protection, short retention and privacy disclosures, limited verified engines, clear links to GitHub/installation, aggregate cost/conversion/referral metrics and kill switch. Evaluate whether conversion visitors actually explore GitHub/install docs rather than assume benefit. Public security/release gates must pass before deployment.  
 **Dependencies:** P0 security/release gates, verified format capabilities.
+
+**Status:** Software and isolated deployment architecture implemented for P5 (`server/internal/demo/`, `server/internal/httpapi/demo.go`, `compose.demo.yaml`, `scripts/verify-demo-compose.sh`, `web/src/features/demo/`, `docs/security/public-demo-p5.md`). Disabled by default (`DEMO_MODE=false`) with zero impact on private self-hosted instances. Launching a live internet-facing demo host remains gated on owner sign-off of P0 #4 (TUF trust root) and P0 #5 (host/proxy exposure audit).
 
 ## Workflow
 

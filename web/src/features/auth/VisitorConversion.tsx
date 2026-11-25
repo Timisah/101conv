@@ -1,6 +1,7 @@
 import { CircleAlert, LockKeyhole } from 'lucide-react';
 import { ThemePicker } from '../../components/ThemePicker';
 import { ConvertPage } from '../convert/ConvertPage';
+import { DemoBanner } from '../demo/DemoBanner';
 import type { Session } from '../session';
 
 export function VisitorConversion({
@@ -33,6 +34,7 @@ export function VisitorConversion({
         </div>
       </header>
       <main className="visitor-convert-main">
+        <DemoBanner />
         {guestError ? (
           <div className="banner error visitor-access-message" role="alert">
             <CircleAlert size={18} />

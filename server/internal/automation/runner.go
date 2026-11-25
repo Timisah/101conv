@@ -100,6 +100,13 @@ func (s *Service) DryRun(ctx context.Context, id, owner string) (Preview, error)
 			continue
 		}
 		ok, reason := s.matchesDefinitionFile(ctx, a.Definition, filepath.Join(input.Path, e.Name()), e.Name(), info.Size())
+		if !ok && a.Definition.FallbackAction != nil && a.Definition.FallbackAction.Mode != "" {
+			if reason != "" {
+				reason = fmt.Sprintf("%s; fallback branch: %s", reason, a.Definition.FallbackAction.Mode)
+			} else {
+				reason = fmt.Sprintf("fallback branch: %s", a.Definition.FallbackAction.Mode)
+			}
+		}
 		preview.Files = append(preview.Files, PreviewFile{Name: e.Name(), Size: info.Size(), Matches: ok, Reason: reason})
 		if len(preview.Files) >= maxFilesPerAutomation {
 			preview.Truncated = true
@@ -303,8 +310,13 @@ func (s *Service) scanEntry(ctx context.Context, principal auth.Principal, a Aut
 	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > jobs.MaxInputBytes {
 		return nil
 	}
-	match, _ := s.matchesDefinitionFile(ctx, a.Definition, path, entry.Name(), info.Size())
+	match, matchReason := s.matchesDefinitionFile(ctx, a.Definition, path, entry.Name(), info.Size())
 	if !match {
+		if a.Definition.FallbackAction != nil && (a.Definition.FallbackAction.Mode == "skip" || a.Definition.FallbackAction.Mode == "stop") {
+			fp := fmt.Sprintf("branch:%d:%s", scan.Generation, fileIdentityFingerprint(entry.Name(), fmt.Sprint(info.Size(), ":", info.ModTime().UnixNano())))
+			diag := fmt.Sprintf("routed to %s branch (%s)", a.Definition.FallbackAction.Mode, matchReason)
+			_, _ = s.db.ExecContext(ctx, `INSERT INTO conv_automation_runs(id,automation_id,revision,fingerprint,source_name,source_path,state,error,observed_size,observed_mtime,scan_generation,finished_at) VALUES($1,$2,$3,$4,$5,$5,'skipped_branch',$6,$7,$8,$9,now()) ON CONFLICT DO NOTHING`, mustID(), a.ID, a.Revision, fp, entry.Name(), diag, info.Size(), info.ModTime().UnixNano(), scan.Generation)
+		}
 		return nil
 	}
 	var id, state string
