@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/timisah/101conv/server/internal/analysis"
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/jobs"
 )
@@ -98,7 +99,7 @@ func (s *Service) DryRun(ctx context.Context, id, owner string) (Preview, error)
 		if x != nil {
 			continue
 		}
-		ok, reason := matchesDefinition(a.Definition, e.Name(), info.Size())
+		ok, reason := s.matchesDefinitionFile(ctx, a.Definition, filepath.Join(input.Path, e.Name()), e.Name(), info.Size())
 		preview.Files = append(preview.Files, PreviewFile{Name: e.Name(), Size: info.Size(), Matches: ok, Reason: reason})
 		if len(preview.Files) >= maxFilesPerAutomation {
 			preview.Truncated = true
@@ -302,7 +303,7 @@ func (s *Service) scanEntry(ctx context.Context, principal auth.Principal, a Aut
 	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > jobs.MaxInputBytes {
 		return nil
 	}
-	match, _ := matchesDefinition(a.Definition, entry.Name(), info.Size())
+	match, _ := s.matchesDefinitionFile(ctx, a.Definition, path, entry.Name(), info.Size())
 	if !match {
 		return nil
 	}
@@ -689,6 +690,74 @@ func matches(filter FileFilter, name string, size int64) (bool, string) {
 	return true, ""
 }
 
+func (s *Service) matchesDefinitionFile(ctx context.Context, def Definition, path, name string, size int64) (bool, string) {
+	if matched, reason := matches(def.Filter, name, size); !matched {
+		return false, reason
+	}
+	if def.Condition == nil {
+		return true, ""
+	}
+	var meta *FileMetadata
+	if conditionNeedsMetadata(*def.Condition) && path != "" {
+		meta = s.probeFileMetadata(ctx, path, name, size)
+	}
+	matched, reason := evaluateConditionWithMetadata(*def.Condition, name, size, meta)
+	if !matched && reason == "" {
+		reason = "File does not satisfy the configured conditions"
+	}
+	return matched, reason
+}
+
+func (s *Service) probeFileMetadata(ctx context.Context, path, name string, size int64) *FileMetadata {
+	if s.management == nil {
+		return nil
+	}
+	svc, err := analysis.NewService(s.management, filepath.Dir(path))
+	if err != nil {
+		return nil
+	}
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")
+	report, err := svc.Analyze(ctx, analysis.File{
+		ID:        filepath.Base(path),
+		Name:      name,
+		Extension: ext,
+		Size:      size,
+		Path:      path,
+	})
+	if err != nil {
+		return nil
+	}
+	meta := &FileMetadata{}
+	if report.Image != nil {
+		meta.Width = report.Image.Width
+		meta.Height = report.Image.Height
+	}
+	if report.Media != nil {
+		seen := map[string]bool{}
+		for _, stream := range report.Media.Streams {
+			if stream.CodecType == "video" {
+				if meta.Width == 0 {
+					meta.Width = stream.Width
+				}
+				if meta.Height == 0 {
+					meta.Height = stream.Height
+				}
+				if isHDR, _ := stream.HDR(); isHDR {
+					meta.HDR = true
+				}
+			}
+			if stream.CodecType == "audio" {
+				meta.HasAudio = true
+			}
+			if stream.CodecName != "" && !seen[stream.CodecName] {
+				seen[stream.CodecName] = true
+				meta.Codecs = append(meta.Codecs, stream.CodecName)
+			}
+		}
+	}
+	return meta
+}
+
 func matchesDefinition(def Definition, name string, size int64) (bool, string) {
 	if matched, reason := matches(def.Filter, name, size); !matched {
 		return false, reason
@@ -703,24 +772,51 @@ func matchesDefinition(def Definition, name string, size int64) (bool, string) {
 	return matched, reason
 }
 
+// FileMetadata carries bounded typed inspection results (dimensions, HDR,
+// codecs, audio presence) for metadata-driven automation conditions.
+type FileMetadata struct {
+	Width    int
+	Height   int
+	HDR      bool
+	Codecs   []string
+	HasAudio bool
+}
+
+func conditionNeedsMetadata(c Condition) bool {
+	switch c.Operator {
+	case "min_width", "min_height", "hdr", "codec", "has_audio":
+		return true
+	}
+	for _, child := range c.Children {
+		if conditionNeedsMetadata(child) {
+			return true
+		}
+	}
+	return false
+}
+
 func evaluateCondition(c Condition, name string, size int64) (bool, string) {
+	return evaluateConditionWithMetadata(c, name, size, nil)
+}
+
+func evaluateConditionWithMetadata(c Condition, name string, size int64, meta *FileMetadata) (bool, string) {
 	switch c.Operator {
 	case "and":
 		for _, child := range c.Children {
-			if ok, reason := evaluateCondition(child, name, size); !ok {
+			if ok, reason := evaluateConditionWithMetadata(child, name, size, meta); !ok {
 				return false, reason
 			}
 		}
 		return true, ""
 	case "or":
 		for _, child := range c.Children {
-			if ok, _ := evaluateCondition(child, name, size); ok {
+			if ok, _ := evaluateConditionWithMetadata(child, name, size, meta); ok {
 				return true, ""
 			}
 		}
 		return false, "No alternative condition matched"
 	case "not":
-		ok, _ := evaluateCondition(c.Children[0], name, size)
+		ok, _ := evaluateConditionWithMetadata(c.Children[0], name, size, meta)
 		if ok {
 			return false, "Excluded by a NOT condition"
 		}
@@ -735,6 +831,38 @@ func evaluateCondition(c Condition, name string, size int64) (bool, string) {
 		return size >= c.Bytes, "File is below the configured size condition"
 	case "max_size":
 		return size <= c.Bytes, "File exceeds the configured size condition"
+	case "min_width":
+		if meta == nil || meta.Width <= 0 {
+			return false, "Image or video width metadata is unavailable"
+		}
+		return int64(meta.Width) >= c.Bytes, "File width is below the configured threshold"
+	case "min_height":
+		if meta == nil || meta.Height <= 0 {
+			return false, "Image or video height metadata is unavailable"
+		}
+		return int64(meta.Height) >= c.Bytes, "File height is below the configured threshold"
+	case "hdr":
+		if meta == nil {
+			return false, "HDR metadata is unavailable"
+		}
+		want := c.Value == "true"
+		return meta.HDR == want, "HDR condition did not match"
+	case "has_audio":
+		if meta == nil {
+			return false, "Audio stream metadata is unavailable"
+		}
+		want := c.Value == "true"
+		return meta.HasAudio == want, "Audio stream condition did not match"
+	case "codec":
+		if meta == nil || len(meta.Codecs) == 0 {
+			return false, "Codec metadata is unavailable"
+		}
+		for _, codec := range meta.Codecs {
+			if strings.EqualFold(codec, c.Value) {
+				return true, ""
+			}
+		}
+		return false, "Codec condition did not match"
 	default:
 		return false, "Unknown condition block"
 	}
