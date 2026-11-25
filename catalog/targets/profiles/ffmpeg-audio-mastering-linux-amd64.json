@@ -1,0 +1,102 @@
+{
+  "profile": {
+    "schemaVersion": 1,
+    "type": "conversion",
+    "id": "ffmpeg-audio-mastering-linux-amd64",
+    "version": "1.0.0",
+    "name": "Audio Mastering & Voice/Podcast",
+    "description": "Dedicated audio conversion for music, podcasts, and voice notes to Opus, AAC/M4A, MP3, OGG, or lossless FLAC with bounded bitrate, channel (mono/stereo), sample rate, and metadata controls.",
+    "license": "LGPL-2.1-or-later for FFmpeg; bundled dependencies have separate terms.",
+    "minimumAppVersion": "0.1.0",
+    "maximumAppVersionExclusive": "1.0.0",
+    "priority": 48,
+    "engines": [
+      {
+        "engineId": "ffmpeg",
+        "versions": { "minimum": "9.0.0", "maximumExclusive": "10.0.0" },
+        "capabilities": ["audio.decode", "audio.encode", "media.probe"]
+      }
+    ],
+    "rules": [
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["wav", "flac", "mp3", "m4a", "aac", "ogg", "opus", "wma", "aiff"],
+        "targets": ["opus"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}", "-vn",
+          "-map_metadata", "{option:metadata}",
+          "-c:a", "libopus", "-b:a", "{option:bitrate}",
+          "-ac", "{option:channels}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "bitrate", "label": "Opus bitrate (32k voice; 128k music)", "type": "select", "default": "64k", "choices": ["32k", "48k", "64k", "96k", "128k", "192k", "256k"] },
+          { "key": "channels", "label": "Channels (1 mono voice; 2 stereo)", "type": "select", "default": "1", "choices": ["1", "2"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["wav", "flac", "mp3", "m4a", "aac", "ogg", "opus", "wma", "aiff"],
+        "targets": ["m4a", "aac"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}", "-vn",
+          "-map_metadata", "{option:metadata}",
+          "-c:a", "aac", "-b:a", "{option:bitrate}",
+          "-ar", "{option:sampleRate}", "-ac", "{option:channels}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "bitrate", "label": "AAC bitrate", "type": "select", "default": "128k", "choices": ["64k", "96k", "128k", "192k", "256k", "320k"] },
+          { "key": "sampleRate", "label": "Sample rate (Hz)", "type": "select", "default": "48000", "choices": ["24000", "32000", "44100", "48000"] },
+          { "key": "channels", "label": "Channels (1 mono; 2 stereo)", "type": "select", "default": "2", "choices": ["1", "2"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["wav", "flac", "mp3", "m4a", "aac", "ogg", "opus", "wma", "aiff"],
+        "targets": ["mp3"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}", "-vn",
+          "-map_metadata", "{option:metadata}",
+          "-c:a", "libmp3lame", "-b:a", "{option:bitrate}",
+          "-ar", "{option:sampleRate}", "-ac", "{option:channels}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "bitrate", "label": "MP3 bitrate", "type": "select", "default": "192k", "choices": ["64k", "96k", "128k", "192k", "256k", "320k"] },
+          { "key": "sampleRate", "label": "Sample rate (Hz)", "type": "select", "default": "48000", "choices": ["24000", "32000", "44100", "48000"] },
+          { "key": "channels", "label": "Channels (1 mono; 2 stereo)", "type": "select", "default": "2", "choices": ["1", "2"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["wav", "flac", "mp3", "m4a", "aac", "ogg", "opus", "wma", "aiff"],
+        "targets": ["flac"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}", "-vn",
+          "-map_metadata", "{option:metadata}",
+          "-c:a", "flac", "-compression_level", "{option:compressionLevel}",
+          "-ar", "{option:sampleRate}", "-ac", "{option:channels}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "compressionLevel", "label": "FLAC compression level (0 fastest; 12 smallest)", "type": "number", "default": "5", "min": 0, "max": 12, "step": 1 },
+          { "key": "sampleRate", "label": "Sample rate (Hz)", "type": "select", "default": "48000", "choices": ["44100", "48000"] },
+          { "key": "channels", "label": "Channels (1 mono; 2 stereo)", "type": "select", "default": "2", "choices": ["1", "2"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      }
+    ]
+  }
+}

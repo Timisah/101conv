@@ -121,10 +121,42 @@ for target in webp avif; do
     test "$dimensions" = "160,96"
 done
 
+# Verify adaptive quality-order size scaling on JPEG, WebP, and AVIF (#9).
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.png" -frames:v 1 -c:v mjpeg -q:v 2 "$fixture_root/q-high.jpg"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.png" -frames:v 1 -c:v mjpeg -q:v 28 "$fixture_root/q-low.jpg"
+test "$(stat -c '%s' "$fixture_root/q-high.jpg")" -gt "$(stat -c '%s' "$fixture_root/q-low.jpg")"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.png" -frames:v 1 -c:v libwebp -quality 95 "$fixture_root/q-high.webp"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.png" -frames:v 1 -c:v libwebp -quality 15 "$fixture_root/q-low.webp"
+test "$(stat -c '%s' "$fixture_root/q-high.webp")" -gt "$(stat -c '%s' "$fixture_root/q-low.webp")"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.png" -frames:v 1 -c:v libaom-av1 -crf 18 -b:v 0 -still-picture 1 "$fixture_root/q-high.avif"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.png" -frames:v 1 -c:v libaom-av1 -crf 52 -b:v 0 -still-picture 1 "$fixture_root/q-low.avif"
+test "$(stat -c '%s' "$fixture_root/q-high.avif")" -gt "$(stat -c '%s' "$fixture_root/q-low.avif")"
+
+# Verify modernized VP9 video compression (MP4 + WebM), Audio Mastering (Opus/AAC/MP3/FLAC),
+# and Animated Web Media (GIF -> animated WebP & MP4 loop) (#11, #33).
+"$ffmpeg_bin" -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=160x96:rate=10' -f lavfi -i 'sine=frequency=440:sample_rate=48000' -t 1 -c:v mpeg4 -c:a aac "$fixture_root/input.mp4"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.mp4" -map_metadata 0 -c:v libvpx-vp9 -c:a aac -b:v 200k -maxrate 200k -bufsize 400k -b:a 96k "$fixture_root/vp9-out.mp4"
+test -s "$fixture_root/vp9-out.mp4"
+vp9_codec="$("$ffprobe_bin" -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of csv=p=0 "$fixture_root/vp9-out.mp4")"
+test "$vp9_codec" = "vp9,160,96"
+
+"$ffmpeg_bin" -hide_banner -loglevel error -f lavfi -i 'sine=frequency=440:sample_rate=48000' -t 1 "$fixture_root/input.wav"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.wav" -vn -map_metadata 0 -c:a libopus -b:a 64k -ac 1 "$fixture_root/master.opus"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.wav" -vn -map_metadata 0 -c:a aac -b:a 128k -ar 48000 -ac 2 "$fixture_root/master.m4a"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.wav" -vn -map_metadata 0 -c:a libmp3lame -b:a 192k -ar 48000 -ac 2 "$fixture_root/master.mp3"
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.wav" -vn -map_metadata 0 -c:a flac -compression_level 5 -ar 48000 -ac 2 "$fixture_root/master.flac"
+for audio_out in master.opus master.m4a master.mp3 master.flac; do
+    test -s "$fixture_root/$audio_out"
+done
+test "$("$ffprobe_bin" -v error -select_streams a:0 -show_entries stream=channels -of csv=p=0 "$fixture_root/master.opus")" = "1"
+
+"$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/input.gif" -an -vf 'fps=15,scale=trunc(iw/2)*2:trunc(ih/2)*2' -c:v libvpx-vp9 -pix_fmt yuv420p -movflags +faststart "$fixture_root/anim-loop.mp4"
+test -s "$fixture_root/anim-loop.mp4"
+
 printf 'not an image\n' > "$fixture_root/corrupt.jpg"
 if "$ffmpeg_bin" -hide_banner -loglevel error -nostdin -y -i "$fixture_root/corrupt.jpg" -frames:v 1 -c:v png "$fixture_root/corrupt.png" 2>/dev/null; then
     echo 'corrupt input unexpectedly converted' >&2
     exit 1
 fi
 
-echo "Pinned FFmpeg image matrix passed: ${#sources[@]} inputs x ${#targets[@]} targets; animated GIF behavior, dimensions, signatures, and corrupt-input failure verified."
+echo "Pinned FFmpeg image, audio, video, and animated-media matrix passed."

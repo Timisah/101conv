@@ -1,0 +1,187 @@
+{
+  "profile": {
+    "schemaVersion": 1,
+    "type": "conversion",
+    "id": "ffmpeg-linux-amd64",
+    "version": "1.3.0",
+    "name": "FFmpeg Audio/Video Conversion",
+    "description": "Audio and video format conversion with bounded codec, bitrate, sample-rate, channel, and metadata controls using the shared LGPL FFmpeg engine.",
+    "license": "LGPL-2.1-or-later for FFmpeg; bundled dependencies have separate terms.",
+    "minimumAppVersion": "0.1.0",
+    "maximumAppVersionExclusive": "1.0.0",
+    "priority": 50,
+    "engines": [
+      {
+        "engineId": "ffmpeg",
+        "versions": { "minimum": "9.0.0", "maximumExclusive": "10.0.0" },
+        "capabilities": ["audio.decode", "audio.encode", "video.decode", "video.encode", "media.probe"]
+      }
+    ],
+    "rules": [
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "mpg", "mpeg", "3gp", "flv"],
+        "targets": ["mp4", "mkv", "mov", "m4v"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}",
+          "-map_metadata", "{option:metadata}",
+          "-c:v", "{option:videoCodec}",
+          "-c:a", "aac", "-b:a", "{option:audioBitrate}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "videoCodec", "label": "Video codec", "type": "select", "default": "libvpx-vp9", "choices": ["libvpx-vp9", "mpeg4"] },
+          { "key": "audioBitrate", "label": "Audio bitrate", "type": "select", "default": "192k", "choices": ["96k", "128k", "192k", "256k", "320k"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "mpg", "mpeg", "3gp", "flv"],
+        "targets": ["webm"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}",
+          "-map_metadata", "{option:metadata}",
+          "-c:v", "libvpx-vp9",
+          "-c:a", "libopus", "-b:a", "{option:audioBitrate}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "audioBitrate", "label": "Audio bitrate", "type": "select", "default": "128k", "choices": ["64k", "96k", "128k", "192k", "256k"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "mpg", "mpeg", "3gp", "flv"],
+        "targets": ["avi", "mpg", "mpeg", "3gp", "flv"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}",
+          "-map_metadata", "{option:metadata}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["mp3"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}",
+          "-map_metadata", "{option:metadata}",
+          "-c:a", "libmp3lame", "-b:a", "{option:audioBitrate}",
+          "-ar", "{option:sampleRate}", "-ac", "{option:channels}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "audioBitrate", "label": "Audio bitrate", "type": "select", "default": "192k", "choices": ["96k", "128k", "192k", "256k", "320k"] },
+          { "key": "sampleRate", "label": "Sample rate (Hz)", "type": "select", "default": "48000", "choices": ["24000", "32000", "44100", "48000"] },
+          { "key": "channels", "label": "Channels (1 mono; 2 stereo)", "type": "select", "default": "2", "choices": ["1", "2"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["aac", "m4a"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}",
+          "-map_metadata", "{option:metadata}",
+          "-c:a", "aac", "-b:a", "{option:audioBitrate}",
+          "-ar", "{option:sampleRate}", "-ac", "{option:channels}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "audioBitrate", "label": "Audio bitrate", "type": "select", "default": "192k", "choices": ["96k", "128k", "192k", "256k", "320k"] },
+          { "key": "sampleRate", "label": "Sample rate (Hz)", "type": "select", "default": "48000", "choices": ["24000", "32000", "44100", "48000"] },
+          { "key": "channels", "label": "Channels (1 mono; 2 stereo)", "type": "select", "default": "2", "choices": ["1", "2"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["ogg"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}",
+          "-map_metadata", "{option:metadata}",
+          "-c:a", "libvorbis", "-b:a", "{option:audioBitrate}",
+          "-ar", "{option:sampleRate}", "-ac", "{option:channels}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "audioBitrate", "label": "Audio bitrate", "type": "select", "default": "160k", "choices": ["96k", "128k", "160k", "192k", "256k"] },
+          { "key": "sampleRate", "label": "Sample rate (Hz)", "type": "select", "default": "48000", "choices": ["24000", "32000", "44100", "48000"] },
+          { "key": "channels", "label": "Channels (1 mono; 2 stereo)", "type": "select", "default": "2", "choices": ["1", "2"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["opus"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}",
+          "-map_metadata", "{option:metadata}",
+          "-c:a", "libopus", "-b:a", "{option:audioBitrate}",
+          "-ac", "{option:channels}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "audioBitrate", "label": "Audio bitrate", "type": "select", "default": "128k", "choices": ["32k", "64k", "96k", "128k", "192k", "256k"] },
+          { "key": "channels", "label": "Channels (1 mono; 2 stereo)", "type": "select", "default": "2", "choices": ["1", "2"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["wav", "flac"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}",
+          "-map_metadata", "{option:metadata}",
+          "-ar", "{option:sampleRate}", "-ac", "{option:channels}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "sampleRate", "label": "Sample rate (Hz)", "type": "select", "default": "48000", "choices": ["24000", "32000", "44100", "48000"] },
+          { "key": "channels", "label": "Channels (1 mono; 2 stereo)", "type": "select", "default": "2", "choices": ["1", "2"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["wma", "amr"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}",
+          "-map_metadata", "{option:metadata}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      }
+    ]
+  }
+}

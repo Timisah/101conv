@@ -51,6 +51,15 @@
       "maximumAppVersionExclusive": "1.0.0"
     },
     {
+      "id": "ffmpeg-linux-amd64",
+      "version": "1.3.0",
+      "name": "FFmpeg Audio/Video Conversion",
+      "description": "Audio and video format conversion with bounded codec, bitrate, sample-rate, channel, and metadata controls using the shared LGPL FFmpeg engine.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-linux-amd64-1.3.0.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
       "id": "ffmpeg-image-linux-amd64",
       "version": "1.0.0",
       "name": "FFmpeg Image Conversion",
@@ -87,11 +96,29 @@
       "maximumAppVersionExclusive": "1.0.0"
     },
     {
+      "id": "jpeg-xl-linux-amd64",
+      "version": "1.3.0",
+      "name": "JPEG XL Image Conversion",
+      "description": "Encode JPEG, PNG, APNG, and GIF images as JPEG XL with bounded quality, effort, and lossless-JPEG options; decode JPEG XL to JPEG or PNG.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/jpeg-xl-linux-amd64-1.3.0.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
       "id": "ffmpeg-compression-linux-amd64",
       "version": "1.0.0",
       "name": "FFmpeg Audio/Video Compression",
       "description": "FFmpeg Audio/Video Compression settings using the shared ffmpeg engine installation.",
       "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-compression-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
+      "id": "ffmpeg-compression-linux-amd64",
+      "version": "1.1.0",
+      "name": "FFmpeg Audio/Video Compression",
+      "description": "Modern LGPL audio and video compression with VP9/MPEG-4 codec selection, target-size bitrate budgeting, preserved source resolution and compatible HDR signaling, stream retention, and metadata control.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-compression-linux-amd64-1.1.0.json",
       "minimumAppVersion": "0.1.0",
       "maximumAppVersionExclusive": "1.0.0"
     },
@@ -165,6 +192,24 @@
       "description": "Render one chosen PDF page to PNG/JPEG, or extract UTF-8 text. Scanned PDFs require OCR, which is not included. Encrypted PDFs are unsupported. Requires the document Worker image.",
       "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/poppler-pdf-linux-amd64-1.1.0.json",
       "minimumAppVersion": "0.0.1",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
+      "id": "ffmpeg-audio-mastering-linux-amd64",
+      "version": "1.0.0",
+      "name": "Audio Mastering & Voice/Podcast",
+      "description": "Dedicated audio conversion for music, podcasts, and voice notes to Opus, AAC/M4A, MP3, OGG, or lossless FLAC with bounded bitrate, channel (mono/stereo), sample rate, and metadata controls.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-audio-mastering-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
+      "maximumAppVersionExclusive": "1.0.0"
+    },
+    {
+      "id": "ffmpeg-animated-web-linux-amd64",
+      "version": "1.0.0",
+      "name": "Animated Web Media",
+      "description": "Convert animated GIFs and short clips between GIF, animated WebP, APNG, and web-ready MP4 loops with bounded FPS, width, and quality controls.",
+      "manifestUrl": "https://raw.githubusercontent.com/Timisah/101conv/main/catalog/targets/profiles/ffmpeg-animated-web-linux-amd64.json",
+      "minimumAppVersion": "0.1.0",
       "maximumAppVersionExclusive": "1.0.0"
     }
   ]

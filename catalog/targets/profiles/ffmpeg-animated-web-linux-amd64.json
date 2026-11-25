@@ -1,0 +1,74 @@
+{
+  "profile": {
+    "schemaVersion": 1,
+    "type": "conversion",
+    "id": "ffmpeg-animated-web-linux-amd64",
+    "version": "1.0.0",
+    "name": "Animated Web Media",
+    "description": "Convert animated GIFs and short clips between GIF, animated WebP, APNG, and web-ready MP4 loops with bounded FPS, width, and quality controls.",
+    "license": "LGPL-2.1-or-later for FFmpeg; bundled dependencies have separate terms.",
+    "minimumAppVersion": "0.1.0",
+    "maximumAppVersionExclusive": "1.0.0",
+    "priority": 42,
+    "engines": [
+      {
+        "engineId": "ffmpeg",
+        "versions": { "minimum": "9.0.0", "maximumExclusive": "10.0.0" },
+        "capabilities": ["image.decode", "image.encode", "video.decode", "video.encode"]
+      }
+    ],
+    "rules": [
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["gif", "webp", "apng", "mp4", "webm"],
+        "targets": ["webp"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}", "-an",
+          "-vf", "fps={option:fps},scale={option:width}:-1:flags=lanczos",
+          "-c:v", "libwebp", "-lossless", "0", "-quality", "{option:quality}", "-loop", "0",
+          "{target}"
+        ],
+        "options": [
+          { "key": "fps", "label": "Frame rate (FPS)", "type": "number", "default": "15", "min": 5, "max": 30, "step": 1 },
+          { "key": "width", "label": "Max width (px; -1 keeps original)", "type": "select", "default": "-1", "choices": ["-1", "320", "480", "640", "800", "1280"] },
+          { "key": "quality", "label": "WebP quality (1–100; higher is better)", "type": "number", "default": "75", "min": 1, "max": 100, "step": 1 }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["gif", "webp", "apng", "mp4", "webm"],
+        "targets": ["gif"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}", "-an",
+          "-vf", "fps={option:fps},scale={option:width}:-1:flags=lanczos",
+          "-c:v", "gif", "-loop", "0",
+          "{target}"
+        ],
+        "options": [
+          { "key": "fps", "label": "Frame rate (FPS)", "type": "number", "default": "12", "min": 5, "max": 24, "step": 1 },
+          { "key": "width", "label": "Max width (px; -1 keeps original)", "type": "select", "default": "480", "choices": ["-1", "320", "480", "640", "800"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["gif", "webp", "apng", "webm"],
+        "targets": ["mp4"],
+        "arguments": [
+          "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+          "-i", "{source}", "-an",
+          "-vf", "fps={option:fps},scale=trunc(iw/2)*2:trunc(ih/2)*2",
+          "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+          "{target}"
+        ],
+        "options": [
+          { "key": "fps", "label": "Frame rate (FPS)", "type": "number", "default": "15", "min": 5, "max": 30, "step": 1 }
+        ]
+      }
+    ]
+  }
+}

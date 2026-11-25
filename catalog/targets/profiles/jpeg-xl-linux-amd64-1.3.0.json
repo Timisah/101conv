@@ -1,0 +1,68 @@
+{
+  "profile": {
+    "schemaVersion": 1,
+    "type": "conversion",
+    "id": "jpeg-xl-linux-amd64",
+    "version": "1.3.0",
+    "name": "JPEG XL Image Conversion",
+    "description": "Encode JPEG, PNG, APNG, and GIF images as JPEG XL with bounded quality, effort, and lossless-JPEG options; decode JPEG XL to JPEG or PNG.",
+    "license": "BSD-3-Clause; bundled dependency notices are included in the upstream package.",
+    "minimumAppVersion": "0.1.0",
+    "maximumAppVersionExclusive": "1.0.0",
+    "priority": 45,
+    "engines": [
+      {
+        "engineId": "jpeg-xl",
+        "versions": { "minimum": "0.12.0", "maximumExclusive": "1.0.0" },
+        "capabilities": ["image.decode", "image.encode"]
+      }
+    ],
+    "rules": [
+      {
+        "engineId": "jpeg-xl",
+        "executable": "cjxl",
+        "sources": ["jpg", "jpeg"],
+        "targets": ["jxl"],
+        "arguments": [
+          "{source}",
+          "--lossless_jpeg={option:losslessJpeg}",
+          "-q",
+          "{option:quality}",
+          "-e",
+          "{option:effort}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "quality", "label": "Quality (1–100; 100 is lossless)", "type": "number", "default": "90", "min": 1, "max": 100, "step": 1 },
+          { "key": "effort", "label": "Encoder effort (1 fastest; 9 smallest)", "type": "number", "default": "7", "min": 1, "max": 9, "step": 1 },
+          { "key": "losslessJpeg", "label": "Lossless JPEG transcoding (0 recompress; 1 exact)", "type": "select", "default": "0", "choices": ["0", "1"] }
+        ]
+      },
+      {
+        "engineId": "jpeg-xl",
+        "executable": "cjxl",
+        "sources": ["png", "apng", "gif"],
+        "targets": ["jxl"],
+        "arguments": [
+          "{source}",
+          "-q",
+          "{option:quality}",
+          "-e",
+          "{option:effort}",
+          "{target}"
+        ],
+        "options": [
+          { "key": "quality", "label": "Quality (1–100; 100 is lossless)", "type": "number", "default": "90", "min": 1, "max": 100, "step": 1 },
+          { "key": "effort", "label": "Encoder effort (1 fastest; 9 smallest)", "type": "number", "default": "7", "min": 1, "max": 9, "step": 1 }
+        ]
+      },
+      {
+        "engineId": "jpeg-xl",
+        "executable": "djxl",
+        "sources": ["jxl"],
+        "targets": ["jpg", "jpeg", "png"],
+        "arguments": ["{source}", "{target}"]
+      }
+    ]
+  }
+}

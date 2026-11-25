@@ -1,0 +1,125 @@
+{
+  "profile": {
+    "schemaVersion": 1,
+    "type": "compression",
+    "id": "ffmpeg-compression-linux-amd64",
+    "version": "1.1.0",
+    "name": "FFmpeg Audio/Video Compression",
+    "description": "Modern LGPL audio and video compression with VP9/MPEG-4 codec selection, target-size bitrate budgeting, preserved source resolution and compatible HDR signaling, stream retention, and metadata control.",
+    "license": "LGPL-2.1-or-later for FFmpeg; bundled dependencies have separate terms.",
+    "minimumAppVersion": "0.1.0",
+    "maximumAppVersionExclusive": "1.0.0",
+    "priority": 50,
+    "engines": [
+      {
+        "engineId": "ffmpeg",
+        "versions": { "minimum": "9.0.0", "maximumExclusive": "10.0.0" },
+        "capabilities": ["audio.decode", "audio.encode", "video.decode", "video.encode", "media.probe"]
+      }
+    ],
+    "compression": {
+      "options": [
+        { "key": "targetSizeMb", "label": "Target size (MB)", "type": "number", "default": "8", "min": 1, "max": 500, "step": 1, "targetSizeMb": true },
+        { "key": "videoCodec", "label": "Video codec", "type": "select", "default": "libvpx-vp9", "choices": ["libvpx-vp9", "mpeg4"] },
+        { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+      ],
+      "probeExecutable": "ffprobe",
+      "audioBitrateKbps": 128,
+      "minimumVideoKbps": 64,
+      "requireSmallerOutput": true,
+      "preserveResolution": true,
+      "preserveHDR": true
+    },
+    "rules": [
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "mpg", "mpeg", "3gp", "flv"],
+        "targets": ["mp4", "mkv", "mov", "m4v"],
+        "streamSelection": "all",
+        "preserveMetadata": true,
+        "hdrPolicy": "preserve",
+        "dynamicHDRPolicy": "reject",
+        "arguments": ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", "{source}", "-map_metadata", "{option:metadata}", "{compression.args}", "{target}"],
+        "compressionArguments": ["-c:v", "{option:videoCodec}", "-c:a", "aac", "-b:v", "{compression.videoKbps}k", "-maxrate", "{compression.videoKbps}k", "-bufsize", "{compression.bufferKbps}k", "-b:a", "{compression.audioKbps}k"],
+        "options": [
+          { "key": "targetSizeMb", "label": "Target size (MB)", "type": "number", "default": "8", "min": 1, "max": 500, "step": 1, "targetSizeMb": true },
+          { "key": "videoCodec", "label": "Video codec", "type": "select", "default": "libvpx-vp9", "choices": ["libvpx-vp9", "mpeg4"] },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "mpg", "mpeg", "3gp", "flv"],
+        "targets": ["webm"],
+        "streamSelection": "all",
+        "preserveMetadata": true,
+        "hdrPolicy": "preserve",
+        "dynamicHDRPolicy": "reject",
+        "arguments": ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", "{source}", "-map_metadata", "{option:metadata}", "{compression.args}", "{target}"],
+        "compressionArguments": ["-c:v", "libvpx-vp9", "-c:a", "libopus", "-b:v", "{compression.videoKbps}k", "-maxrate", "{compression.videoKbps}k", "-bufsize", "{compression.bufferKbps}k", "-b:a", "{compression.audioKbps}k"],
+        "options": [
+          { "key": "targetSizeMb", "label": "Target size (MB)", "type": "number", "default": "8", "min": 1, "max": 500, "step": 1, "targetSizeMb": true },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["mp3"],
+        "streamSelection": "audio",
+        "preserveMetadata": true,
+        "arguments": ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", "{source}", "-map_metadata", "{option:metadata}", "{compression.args}", "{target}"],
+        "compressionArguments": ["-c:a", "libmp3lame", "-b:a", "{compression.audioKbps}k"],
+        "options": [
+          { "key": "targetSizeMb", "label": "Target size (MB)", "type": "number", "default": "8", "min": 1, "max": 500, "step": 1, "targetSizeMb": true },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["aac", "m4a"],
+        "streamSelection": "audio",
+        "preserveMetadata": true,
+        "arguments": ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", "{source}", "-map_metadata", "{option:metadata}", "{compression.args}", "{target}"],
+        "compressionArguments": ["-c:a", "aac", "-b:a", "{compression.audioKbps}k"],
+        "options": [
+          { "key": "targetSizeMb", "label": "Target size (MB)", "type": "number", "default": "8", "min": 1, "max": 500, "step": 1, "targetSizeMb": true },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["ogg"],
+        "streamSelection": "audio",
+        "preserveMetadata": true,
+        "arguments": ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", "{source}", "-map_metadata", "{option:metadata}", "{compression.args}", "{target}"],
+        "compressionArguments": ["-c:a", "libvorbis", "-b:a", "{compression.audioKbps}k"],
+        "options": [
+          { "key": "targetSizeMb", "label": "Target size (MB)", "type": "number", "default": "8", "min": 1, "max": 500, "step": 1, "targetSizeMb": true },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      },
+      {
+        "engineId": "ffmpeg",
+        "executable": "ffmpeg",
+        "sources": ["mp3", "aac", "m4a", "ogg", "opus", "wav", "flac", "wma", "amr"],
+        "targets": ["opus"],
+        "streamSelection": "audio",
+        "preserveMetadata": true,
+        "arguments": ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", "{source}", "-map_metadata", "{option:metadata}", "{compression.args}", "{target}"],
+        "compressionArguments": ["-c:a", "libopus", "-b:a", "{compression.audioKbps}k"],
+        "options": [
+          { "key": "targetSizeMb", "label": "Target size (MB)", "type": "number", "default": "8", "min": 1, "max": 500, "step": 1, "targetSizeMb": true },
+          { "key": "metadata", "label": "Metadata mapping (0 preserves; -1 strips)", "type": "select", "default": "0", "choices": ["0", "-1"] }
+        ]
+      }
+    ]
+  }
+}

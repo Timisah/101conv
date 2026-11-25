@@ -827,14 +827,16 @@ func TestOfficialUnsignedCatalogAtV0_2_0OmitsSupersededIncompatibleReleases(t *t
 
 	source := Source{ID: "101conv-official", Name: "101conv Official Catalog", Kind: KindOfficial, Trust: TrustUnavailable, Enabled: true}
 	wantHighest := map[string]string{
-		"ffmpeg-linux-amd64":                   "1.2.0",
+		"ffmpeg-linux-amd64":                   "1.3.0",
 		"ffmpeg-image-linux-amd64":             "1.2.0",
-		"jpeg-xl-linux-amd64":                  "1.2.0",
-		"ffmpeg-compression-linux-amd64":       "1.0.0",
+		"jpeg-xl-linux-amd64":                  "1.3.0",
+		"ffmpeg-compression-linux-amd64":       "1.1.0",
 		"jpeg-xl-compression-linux-amd64":      "1.1.0",
 		"ffmpeg-image-compression-linux-amd64": "1.1.0",
 		"libreoffice-pdf-linux-amd64":          "1.1.0",
 		"poppler-pdf-linux-amd64":              "1.1.0",
+		"ffmpeg-audio-mastering-linux-amd64":   "1.0.0",
+		"ffmpeg-animated-web-linux-amd64":      "1.0.0",
 	}
 
 	for _, appVersion := range []string{"0.2.0", "0.9.9"} {
@@ -843,8 +845,8 @@ func TestOfficialUnsignedCatalogAtV0_2_0OmitsSupersededIncompatibleReleases(t *t
 			if err != nil {
 				t.Fatalf("browse official catalog at %s: %v", appVersion, err)
 			}
-			if len(catalog.Profiles) != 10 {
-				t.Fatalf("expected 10 compatible profile releases at %s, got %d: %+v", appVersion, len(catalog.Profiles), catalog.Profiles)
+			if len(catalog.Profiles) != 15 {
+				t.Fatalf("expected 15 compatible profile releases at %s, got %d: %+v", appVersion, len(catalog.Profiles), catalog.Profiles)
 			}
 			seenIDs := map[string]bool{}
 			for _, p := range catalog.Profiles {
