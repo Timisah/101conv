@@ -1,0 +1,12 @@
+# Reviewed opt-in Intel VAAPI/Quick Sync or AMD VAAPI Worker override.
+# Usage: docker compose -f compose.yaml -f deploy/compose.gpu-vaapi.yaml up -d
+#
+# Preserves Worker least privilege: read-only root filesystem, dropped Linux
+# capabilities, non-root user, internal-only DB network, no Docker socket, and
+# only the single allowlisted /dev/dri/renderD* node.
+services:
+  worker:
+    environment:
+      GPU_RENDER_NODES: ${GPU_RENDER_NODE:-/dev/dri/renderD128}
+    devices:
+      - ${GPU_RENDER_NODE:-/dev/dri/renderD128}:${GPU_RENDER_NODE:-/dev/dri/renderD128}

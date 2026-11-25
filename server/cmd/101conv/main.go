@@ -265,6 +265,15 @@ func runWorker() error {
 	if err != nil {
 		return fmt.Errorf("probe GPU acceleration: %w", err)
 	}
+	if accelerationConfig.HardwareConfigured() {
+		if ffmpegPath := findInstalledFFmpeg(runner.EngineRoot); ffmpegPath != "" {
+			probeCtx, cancelProbe := context.WithTimeout(context.Background(), 10*time.Second)
+			if probeErr := acceleration.ProbeFFmpegCapabilities(probeCtx, ffmpegPath, &accelerationReport, acceleration.SystemProbe()); probeErr != nil {
+				log.Printf("worker ffmpeg acceleration probe warning: %v", probeErr)
+			}
+			cancelProbe()
+		}
+	}
 	for _, item := range accelerationReport.Accelerators {
 		if item.Vendor != acceleration.VendorCPU && item.Available {
 			log.Printf("worker acceleration available: %s (%s)", item.ID, item.Reason)
@@ -364,3 +373,22 @@ func intEnv(key string, fallback int) int {
 	}
 	return n
 }
+
+func findInstalledFFmpeg(engineRoot string) string {
+	dir := filepath.Join(engineRoot, "ffmpeg")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if !entries[i].IsDir() {
+			continue
+		}
+		candidate := filepath.Join(dir, entries[i].Name(), "bin", "ffmpeg")
+		if info, statErr := os.Lstat(candidate); statErr == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+			return candidate
+		}
+	}
+	return ""
+}
+

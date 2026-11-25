@@ -86,6 +86,7 @@ export function CompressPage({
     percent: number;
   } | null>(null);
   const [options, setOptions] = useState<Record<string, string>>({});
+  const [hardwareAcceleration, setHardwareAcceleration] = useState('auto');
 
   const fileLimit = session.guest ? session.guestMaxBatchFiles || 5 : 50;
 
@@ -162,6 +163,7 @@ export function CompressPage({
       targetFormat: string;
       profileId?: string;
       options?: Record<string, string>;
+      hardwareAcceleration?: string;
     }[] = [];
     const failures: string[] = [];
 
@@ -180,6 +182,9 @@ export function CompressPage({
           ...(profile
             ? { profileId: profile.definition.id, options: submitOptions }
             : { profileId: effectiveAutomaticProfile, options: submitOptions }),
+          ...(['mp4', 'mkv', 'webm', 'mov', 'avi'].includes(target.toLowerCase()) && hardwareAcceleration !== 'auto'
+            ? { hardwareAcceleration }
+            : {}),
         });
       } catch (err) {
         failures.push(file.name + ': ' + explain((err as Error).message));
@@ -463,6 +468,30 @@ export function CompressPage({
               <ChevronDown size={16} />
             </div>
             <small className="field-hint">Only needed to force a specific installed implementation.</small>
+            {['mp4', 'mkv', 'webm', 'mov', 'avi'].includes(target.toLowerCase()) && (
+              <>
+                <label className="field-label" htmlFor="compress-hw-accel">
+                  Hardware video acceleration
+                </label>
+                <div className="select-wrap">
+                  <select
+                    id="compress-hw-accel"
+                    value={hardwareAcceleration}
+                    onChange={event => setHardwareAcceleration(event.target.value)}
+                    disabled={busy}
+                  >
+                    <option value="auto">Automatic (use verified GPU when compatible, else CPU)</option>
+                    <option value="cpu">CPU only (deterministic software encoder)</option>
+                    <option value="prefer_hardware">Prefer hardware (fall back to CPU if unsupported)</option>
+                    <option value="require_hardware">Require hardware (fail if no compatible GPU)</option>
+                  </select>
+                  <ChevronDown size={16} />
+                </div>
+                <small className="field-hint">
+                  Hardware encoding is opt-in and faster on supported GPUs, though quality can differ from CPU. HDR-preserving jobs automatically use CPU unless hardware HDR is verified.
+                </small>
+              </>
+            )}
           </details>
 
           {!profile && canonicalSelection.provider && (

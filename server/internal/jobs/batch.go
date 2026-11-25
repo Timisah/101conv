@@ -21,10 +21,11 @@ type BatchRequest struct {
 }
 
 type BatchItemRequest struct {
-	UploadID     string            `json:"uploadId"`
-	ProfileID    string            `json:"profileId,omitempty"`
-	TargetFormat string            `json:"targetFormat"`
-	Options      map[string]string `json:"options,omitempty"`
+	UploadID             string            `json:"uploadId"`
+	ProfileID            string            `json:"profileId,omitempty"`
+	TargetFormat         string            `json:"targetFormat"`
+	Options              map[string]string `json:"options,omitempty"`
+	HardwareAcceleration string            `json:"hardwareAcceleration,omitempty"`
 }
 
 type Batch struct {
@@ -413,7 +414,7 @@ func (s *Service) CreateBatch(ctx context.Context, req BatchRequest, ownerID str
 		return Batch{}, false, err
 	}
 	for i, item := range req.Items {
-		payload, marshalErr := json.Marshal(SubmitRequest{UploadID: item.UploadID, ProfileID: item.ProfileID, TargetFormat: item.TargetFormat, Mode: req.Mode, Options: item.Options, IdempotencyKey: batchItemKey(id, i)})
+		payload, marshalErr := json.Marshal(SubmitRequest{UploadID: item.UploadID, ProfileID: item.ProfileID, TargetFormat: item.TargetFormat, Mode: req.Mode, Options: item.Options, HardwareAcceleration: item.HardwareAcceleration, IdempotencyKey: batchItemKey(id, i)})
 		if marshalErr != nil {
 			return Batch{}, false, marshalErr
 		}

@@ -3,6 +3,7 @@ package jobs
 import (
 	"time"
 
+	"github.com/timisah/101conv/server/internal/acceleration"
 	"github.com/timisah/101conv/server/internal/document"
 )
 
@@ -26,25 +27,26 @@ type Upload struct {
 }
 
 type Job struct {
-	ID             string    `json:"id"`
-	ProfileID      string    `json:"profileId"`
-	ProfileVer     string    `json:"profileVersion"`
-	SourceFormat   string    `json:"sourceFormat"`
-	TargetFormat   string    `json:"targetFormat"`
-	Mode           string    `json:"mode"`
-	State          State     `json:"state"`
-	Progress       int       `json:"progress"`
-	Attempt        int       `json:"attempt"`
-	MaxAttempts    int       `json:"maxAttempts"`
-	Error          string    `json:"error,omitempty"`
-	InputSize      int64     `json:"inputSize,omitempty"`
-	OutputSize     int64     `json:"outputSize,omitempty"`
-	SavedBytes     int64     `json:"savedBytes,omitempty"`
-	SavingsPercent float64   `json:"savingsPercent,omitempty"`
-	OriginalState  string    `json:"originalState"`
-	ResultState    string    `json:"resultState"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID             string                         `json:"id"`
+	ProfileID      string                         `json:"profileId"`
+	ProfileVer     string                         `json:"profileVersion"`
+	SourceFormat   string                         `json:"sourceFormat"`
+	TargetFormat   string                         `json:"targetFormat"`
+	Mode           string                         `json:"mode"`
+	State          State                          `json:"state"`
+	Progress       int                            `json:"progress"`
+	Attempt        int                            `json:"attempt"`
+	MaxAttempts    int                            `json:"maxAttempts"`
+	Error          string                         `json:"error,omitempty"`
+	InputSize      int64                          `json:"inputSize,omitempty"`
+	OutputSize     int64                          `json:"outputSize,omitempty"`
+	SavedBytes     int64                          `json:"savedBytes,omitempty"`
+	SavingsPercent float64                        `json:"savingsPercent,omitempty"`
+	OriginalState  string                         `json:"originalState"`
+	ResultState    string                         `json:"resultState"`
+	Acceleration   *acceleration.ExecutionSummary `json:"acceleration,omitempty"`
+	CreatedAt      time.Time                      `json:"createdAt"`
+	UpdatedAt      time.Time                      `json:"updatedAt"`
 }
 
 type Attempt struct {
@@ -59,13 +61,14 @@ type Attempt struct {
 }
 
 type SubmitRequest struct {
-	UploadID       string            `json:"uploadId"`
-	ProfileID      string            `json:"profileId"`
-	ProfileVersion string            `json:"profileVersion,omitempty"`
-	TargetFormat   string            `json:"targetFormat"`
-	Mode           string            `json:"mode,omitempty"`
-	Options        map[string]string `json:"options,omitempty"`
-	IdempotencyKey string            `json:"idempotencyKey"`
+	UploadID             string            `json:"uploadId"`
+	ProfileID            string            `json:"profileId"`
+	ProfileVersion       string            `json:"profileVersion,omitempty"`
+	TargetFormat         string            `json:"targetFormat"`
+	Mode                 string            `json:"mode,omitempty"`
+	Options              map[string]string `json:"options,omitempty"`
+	HardwareAcceleration string            `json:"hardwareAcceleration,omitempty"`
+	IdempotencyKey       string            `json:"idempotencyKey"`
 }
 
 // ProfilePreference is an exact format mapping. ProfileID may be retained even
@@ -98,31 +101,32 @@ type PreferenceMapping struct {
 }
 
 type ExecutionSpec struct {
-	EngineID                       string   `json:"engineId"`
-	EngineVersion                  string   `json:"engineVersion"`
-	ExecutableName                 string   `json:"executableName"`
-	ExecutableRelativePath         string   `json:"executableRelativePath"`
-	Arguments                      []string `json:"arguments"`
-	SourceExtension                string   `json:"sourceExtension"`
-	TargetExtension                string   `json:"targetExtension"`
-	CompressionArguments           []string `json:"compressionArguments,omitempty"`
-	TargetSizeBytes                int64    `json:"targetSizeBytes,omitempty"`
-	ProbeExecutableRelativePath    string   `json:"probeExecutableRelativePath,omitempty"`
-	AudioBitrateKbps               int      `json:"audioBitrateKbps,omitempty"`
-	MinimumVideoKbps               int      `json:"minimumVideoKbps,omitempty"`
-	RequireSmaller                 bool     `json:"requireSmallerOutput,omitempty"`
-	CompressionQualityMin          float64  `json:"compressionQualityMin,omitempty"`
-	CompressionQualityMax          float64  `json:"compressionQualityMax,omitempty"`
-	CompressionQualityStep         float64  `json:"compressionQualityStep,omitempty"`
-	CompressionQualityHigherBetter bool     `json:"compressionQualityHigherIsBetter,omitempty"`
-	CompressionQualityAttempts     int      `json:"compressionQualityAttempts,omitempty"`
-	CompressionFixedQuality        string   `json:"compressionFixedQuality,omitempty"` // single frozen quality when no target size is requested
-	PreserveResolution             bool     `json:"preserveResolution,omitempty"`
-	PreserveHDR                    bool     `json:"preserveHDR,omitempty"`
-	StreamSelection                string   `json:"streamSelection,omitempty"`
-	PreserveMetadata               bool     `json:"preserveMetadata,omitempty"`
+	EngineID                       string                       `json:"engineId"`
+	EngineVersion                  string                       `json:"engineVersion"`
+	ExecutableName                 string                       `json:"executableName"`
+	ExecutableRelativePath         string                       `json:"executableRelativePath"`
+	Arguments                      []string                     `json:"arguments"`
+	SourceExtension                string                       `json:"sourceExtension"`
+	TargetExtension                string                       `json:"targetExtension"`
+	CompressionArguments           []string                     `json:"compressionArguments,omitempty"`
+	TargetSizeBytes                int64                        `json:"targetSizeBytes,omitempty"`
+	ProbeExecutableRelativePath    string                       `json:"probeExecutableRelativePath,omitempty"`
+	AudioBitrateKbps               int                          `json:"audioBitrateKbps,omitempty"`
+	MinimumVideoKbps               int                          `json:"minimumVideoKbps,omitempty"`
+	RequireSmaller                 bool                         `json:"requireSmallerOutput,omitempty"`
+	CompressionQualityMin          float64                      `json:"compressionQualityMin,omitempty"`
+	CompressionQualityMax          float64                      `json:"compressionQualityMax,omitempty"`
+	CompressionQualityStep         float64                      `json:"compressionQualityStep,omitempty"`
+	CompressionQualityHigherBetter bool                         `json:"compressionQualityHigherIsBetter,omitempty"`
+	CompressionQualityAttempts     int                          `json:"compressionQualityAttempts,omitempty"`
+	CompressionFixedQuality        string                       `json:"compressionFixedQuality,omitempty"` // single frozen quality when no target size is requested
+	PreserveResolution             bool                         `json:"preserveResolution,omitempty"`
+	PreserveHDR                    bool                         `json:"preserveHDR,omitempty"`
+	StreamSelection                string                       `json:"streamSelection,omitempty"`
+	PreserveMetadata               bool                         `json:"preserveMetadata,omitempty"`
 	HDRPolicy                      string                       `json:"hdrPolicy,omitempty"`
 	DynamicHDRPolicy               string                       `json:"dynamicHDRPolicy,omitempty"`
+	HardwareAcceleration           string                       `json:"hardwareAcceleration,omitempty"`
 	DocumentBuild                  *document.BuildExecutionSpec `json:"documentBuild,omitempty"`
 }
 
