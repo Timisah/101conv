@@ -13,6 +13,7 @@ import (
 	"github.com/timisah/101conv/server/internal/auth"
 	"github.com/timisah/101conv/server/internal/automation"
 	"github.com/timisah/101conv/server/internal/catalog"
+	"github.com/timisah/101conv/server/internal/immich"
 	"github.com/timisah/101conv/server/internal/jobs"
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/presets"
@@ -29,6 +30,7 @@ type API struct {
 	jobs         *jobs.Service
 	analysis     *analysis.Service
 	analytics    *analytics.Service
+	immich       *immich.Store
 	accounts     *auth.Service
 	automations  *automation.Service
 	presets      *presets.Service
@@ -71,10 +73,12 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 		analysisService, _ = analysis.NewService(managementService, jobService.UploadRoot())
 	}
 	var analyticsService *analytics.Service
+	var immichStore *immich.Store
 	if jobService != nil && jobService.DB() != nil {
 		analyticsService, _ = analytics.NewService(jobService.DB())
+		immichStore, _ = immich.NewStore(context.Background(), jobService.DB())
 	}
-	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, analysis: analysisService, analytics: analyticsService, accounts: accountService, automations: automationService, presets: presetService, updates: updateChecker, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
+	a := &API{version: version, catalog: catalogService, management: managementService, repositories: repositoryService, jobs: jobService, analysis: analysisService, analytics: analyticsService, immich: immichStore, accounts: accountService, automations: automationService, presets: presetService, updates: updateChecker, adminToken: adminToken, sessions: newSessionStore(), loginGuard: newLoginGuard()}
 	if managementService != nil {
 		a.sessions.setTTL(time.Duration(managementService.SessionTimeout()) * time.Minute)
 	}
@@ -103,9 +107,16 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 	mux.HandleFunc("GET /api/v1/blueprints", a.listBlueprints)
 	mux.HandleFunc("POST /api/v1/blueprints/{id}/install", a.installBlueprint)
 	mux.HandleFunc("GET /api/v1/extensions", a.listExtensions)
+	mux.HandleFunc("GET /api/v1/extensions/catalog", a.listExtensionCatalog)
 	mux.HandleFunc("POST /api/v1/extensions/install", a.installExtension)
 	mux.HandleFunc("POST /api/v1/extensions/{id}/activate", a.activateExtension)
 	mux.HandleFunc("POST /api/v1/extensions/{id}/rollback", a.rollbackExtension)
+	mux.HandleFunc("GET /api/v1/connectors/immich", a.getImmichConfig)
+	mux.HandleFunc("PUT /api/v1/connectors/immich", a.saveImmichConfig)
+	mux.HandleFunc("POST /api/v1/connectors/immich/test", a.testImmichConnection)
+	mux.HandleFunc("GET /api/v1/connectors/immich/assets", a.listImmichAssets)
+	mux.HandleFunc("POST /api/v1/connectors/immich/import", a.importImmichAsset)
+	mux.HandleFunc("POST /api/v1/connectors/immich/export", a.exportJobToImmich)
 	mux.HandleFunc("GET /api/v1/automations", a.listAutomations)
 	mux.HandleFunc("POST /api/v1/automations", a.createAutomation)
 	mux.HandleFunc("GET /api/v1/automations/{id}", a.getAutomation)

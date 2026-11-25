@@ -36,8 +36,8 @@ func ValidateExtensionManifest(manifest ExtensionManifest) error {
 	if manifest.ConfigurationSchema < 1 || manifest.ConfigurationSchema > 1000 {
 		return errors.New("extension configuration schema is invalid")
 	}
-	if manifest.Integrity != "" && !sha256Integrity.MatchString(manifest.Integrity) {
-		return errors.New("extension integrity must be a sha256 digest")
+	if err := VerifyExtensionSecurity(manifest); err != nil {
+		return err
 	}
 	if manifest.ExtensionAPIRange.Minimum != "" {
 		if _, err := version.Parse(manifest.ExtensionAPIRange.Minimum); err != nil {

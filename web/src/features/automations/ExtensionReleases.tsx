@@ -1,7 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { json } from '../format';
 import { apiRequest } from '../session';
+import { ImmichConnector } from './ImmichConnector';
 import type { ExtensionView } from './types';
+
+type CatalogExtension = {
+  id: string;
+  name: string;
+  publisher: string;
+  version: string;
+  externalApplication?: string;
+  externalVersion?: string;
+  permissions?: string[];
+  integrity?: string;
+  blocks?: { id: string; version: string; kind: string; name: string }[];
+};
 
 export function ExtensionReleases({
   extensions,
@@ -16,22 +29,45 @@ export function ExtensionReleases({
 }) {
   const [extensionManifest, setExtensionManifest] = useState('');
   const [extensionBusy, setExtensionBusy] = useState(false);
+  const [catalog, setCatalog] = useState<CatalogExtension[]>([]);
 
-  async function installExtension() {
+  useEffect(() => {
+    let alive = true;
+    void apiRequest<{ extensions: CatalogExtension[] }>('/extensions/catalog')
+      .then(resp => {
+        if (alive) setCatalog(resp.extensions || []);
+      })
+      .catch(() => {
+        // Catalog is optional in minimal test harnesses.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function installManifest(manifest: unknown) {
     setExtensionBusy(true);
     try {
-      const manifest = JSON.parse(extensionManifest) as unknown;
       await apiRequest('/extensions/install', {
         method: 'POST',
         body: json({ manifest, activate: true }),
       });
-      setExtensionManifest('');
       await onRefresh();
-      notify('Declarative extension release installed.');
+      notify('Verified declarative extension release installed.');
     } catch (err) {
       notify((err as Error).message);
     } finally {
       setExtensionBusy(false);
+    }
+  }
+
+  async function installExtension() {
+    try {
+      const manifest = JSON.parse(extensionManifest) as unknown;
+      await installManifest(manifest);
+      setExtensionManifest('');
+    } catch (err) {
+      notify((err as Error).message);
     }
   }
 
@@ -64,14 +100,17 @@ export function ExtensionReleases({
   return (
     <details className="auto-advanced extension-details">
       <summary>
-        Extension releases <small>advanced</small>
+        Extensions &amp; connectors <small>advanced</small>
       </summary>
       <div className="auto-advanced-body">
         <section className="automation-history extension-lifecycle">
           <div className="panel-heading">
             <div>
-              <h3>Extension releases</h3>
-              <p>Only reviewed declarative metadata and typed blocks are retained here; no extension code is executed.</p>
+              <h3>Installed extension releases</h3>
+              <p>
+                Retained declarative releases with SHA-256 integrity checks and explicit permissions. No untrusted
+                extension code is executed.
+              </p>
             </div>
             <span className="state-pill enabled">
               {extensions.filter(item => item.active).length} active
@@ -117,15 +156,62 @@ export function ExtensionReleases({
           )}
         </section>
 
+        {catalog.length > 0 && (
+          <section className="automation-history extension-lifecycle" aria-label="Extension marketplace catalog">
+            <div className="panel-heading">
+              <div>
+                <h3>Extension marketplace</h3>
+                <p>Integrity-verified versioned releases, including older compatible versions for safe pinning.</p>
+              </div>
+            </div>
+            {catalog.map(entry => {
+              const installed = extensions.some(
+                item => item.manifest.id === entry.id && item.manifest.version === entry.version,
+              );
+              return (
+                <div className="extension-row" key={`${entry.id}:${entry.version}`}>
+                  <div>
+                    <b>
+                      {entry.name} · v{entry.version}
+                    </b>
+                    <small>
+                      {entry.publisher}
+                      {entry.externalApplication && entry.externalVersion
+                        ? ` · ${entry.externalApplication} ${entry.externalVersion}`
+                        : ''}
+                      {entry.integrity ? ' · SHA-256 verified' : ''}
+                    </small>
+                    {entry.permissions?.length ? (
+                      <small>Permissions: {entry.permissions.join(', ')}</small>
+                    ) : null}
+                  </div>
+                  <div className="drive-actions">
+                    <button
+                      type="button"
+                      className="text-btn"
+                      disabled={extensionBusy || installed}
+                      onClick={() => void installManifest(entry)}
+                    >
+                      {installed ? 'Installed' : 'Install'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </section>
+        )}
+
+        <ImmichConnector notify={notify} />
+
         <section className="automation-history extension-install">
-          <h3>Install a declarative release</h3>
+          <h3>Install custom declarative manifest</h3>
           <p className="muted-copy">
-            Paste a manifest from a reviewed source. Package downloads, arbitrary commands, and runtime code are
-            intentionally unsupported.
+            Paste a reviewed manifest JSON. Unapproved permissions, mismatched SHA-256 digests, and executable configs
+            are rejected.
           </p>
           <textarea
             aria-label="Extension manifest JSON"
-            rows={6}
+            rows={5}
             value={extensionManifest}
             onChange={event => setExtensionManifest(event.target.value)}
             placeholder={
