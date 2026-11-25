@@ -106,6 +106,8 @@ jobs:
       - name: Verify public discovery contract
         working-directory: web
         run: npm run test:public
+      - name: Verify catalog-driven static GitHub Pages site
+        run: node scripts/build-public-site.mjs --verify
 
   upload-proxy:
     name: Nginx large-upload regression
@@ -134,6 +136,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify non-root services, private networks, mounts, and resource bounds
         run: ./scripts/verify-compose-security.sh
+      - name: Verify isolated public demo Compose contract
+        run: ./scripts/verify-demo-compose.sh
 
   ffmpeg-image-verification:
     name: Pinned FFmpeg image compatibility matrix
