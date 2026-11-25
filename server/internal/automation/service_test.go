@@ -64,6 +64,39 @@ func TestConditionTreeEvaluationAndBounds(t *testing.T) {
 	}
 }
 
+func TestMetadataDrivenConditions(t *testing.T) {
+	c := Condition{Operator: "and", Children: []Condition{
+		{Operator: "min_width", Bytes: 3840},
+		{Operator: "min_height", Bytes: 2160},
+		{Operator: "hdr", Value: "true"},
+		{Operator: "codec", Value: "hevc"},
+		{Operator: "has_audio", Value: "true"},
+	}}
+	if err := validateCondition(c, 0, new(int)); err != nil {
+		t.Fatalf("expected valid metadata condition tree, got %v", err)
+	}
+	if !conditionNeedsMetadata(c) {
+		t.Fatal("expected conditionNeedsMetadata=true")
+	}
+	meta := &FileMetadata{Width: 3840, Height: 2160, HDR: true, Codecs: []string{"hevc", "aac"}, HasAudio: true}
+	if ok, reason := evaluateConditionWithMetadata(c, "clip.mkv", 1024, meta); !ok {
+		t.Fatalf("expected 4K HDR HEVC file to match, got reason=%q", reason)
+	}
+	sdr := &FileMetadata{Width: 3840, Height: 2160, HDR: false, Codecs: []string{"hevc", "aac"}, HasAudio: true}
+	if ok, _ := evaluateConditionWithMetadata(c, "clip.mkv", 1024, sdr); ok {
+		t.Fatal("expected SDR file to fail hdr=true condition")
+	}
+	if ok, _ := evaluateConditionWithMetadata(c, "clip.mkv", 1024, nil); ok {
+		t.Fatal("expected missing metadata to fail metadata condition")
+	}
+	if err := validateCondition(Condition{Operator: "hdr", Value: "maybe"}, 0, new(int)); err == nil {
+		t.Fatal("accepted invalid hdr value")
+	}
+	if err := validateCondition(Condition{Operator: "codec", Value: "hevc; rm -rf /"}, 0, new(int)); err == nil {
+		t.Fatal("accepted unsafe codec value")
+	}
+}
+
 func TestStagePublicationValidatesContentsAndReceipt(t *testing.T) {
 	root, err := os.OpenRoot(t.TempDir())
 	if err != nil {

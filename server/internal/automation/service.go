@@ -819,6 +819,18 @@ func validateCondition(c Condition, depth int, count *int) error {
 		if len(c.Children) != 0 || c.Value != "" || c.Bytes < 0 {
 			return errors.New("size condition requires a non-negative byte limit")
 		}
+	case "min_width", "min_height":
+		if len(c.Children) != 0 || c.Value != "" || c.Bytes < 1 || c.Bytes > 65536 {
+			return errors.New("dimension condition requires a pixel value between 1 and 65536")
+		}
+	case "hdr", "has_audio":
+		if len(c.Children) != 0 || c.Bytes != 0 || (c.Value != "true" && c.Value != "false") {
+			return fmt.Errorf("%s condition requires value \"true\" or \"false\"", c.Operator)
+		}
+	case "codec":
+		if len(c.Children) != 0 || c.Bytes != 0 || !regexp.MustCompile(`^[a-zA-Z0-9._-]{1,32}$`).MatchString(c.Value) {
+			return errors.New("codec condition requires a valid codec name")
+		}
 	default:
 		return fmt.Errorf("unsupported condition block %q", c.Operator)
 	}

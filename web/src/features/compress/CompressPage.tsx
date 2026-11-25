@@ -15,6 +15,7 @@ import { CompressionOptionField } from '../../components/CompressionOptionField'
 import { UploadArea, selectFiles } from '../../components/UploadArea';
 import { PageHeading } from '../../components/common';
 import { LocalFileThumb } from '../previews/FileThumbnail';
+import { SourceAnalysisHint } from '../previews/SourceAnalysisHint';
 import {
   inputFormats,
   optionsFor,
@@ -376,6 +377,7 @@ export function CompressPage({
                   </div>
                 );
               })}
+              <SourceAnalysisHint files={files} disabled={busy || session.guest} />
             </section>
           )}
         </div>
