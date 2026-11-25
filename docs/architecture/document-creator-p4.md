@@ -1,42 +1,37 @@
-# Document Creator foundation
+# Document Creator / Build Architecture
 
-The first Build slice establishes the non-destructive page model and a
-mobile-friendly editor shell. Users can add source files, see image thumbnails,
-open an ordered preview, reorder pages with accessible up/down controls,
-rotate in 90-degree increments, duplicate or remove pages, and undo/redo those
-edits. Preparing sources uploads each unique file through the normal ownership,
-quota, and retention path; it does not replace or rewrite the original.
+The Document Creator workspace (`web/src/features/build/`, `server/internal/document/`, `server/internal/httpapi/documents.go`, `server/internal/jobs/document_build.go`, `server/internal/worker/document_build.go`) implements non-destructive multi-page document assembly across images, multi-page PDFs, and supported Office documents.
 
-The typed manifest lives in `server/internal/document/manifest.go`:
+## Non-destructive Manifest & Persisted Projects
 
-- schema version 1;
-- PDF is the first export target;
-- at most 500 pages;
-- each page references an owned upload and a bounded source-page number;
-- rotations are limited to 0/90/180/270 degrees;
-- page array order is the export order, so filenames never determine layout.
+The typed v1 manifest lives in `server/internal/document/manifest.go`:
 
-For raster image pages, the editor can generate a PDF directly in the browser:
-each page keeps its oriented pixel dimensions and receives a bounded physical
-page size. Automatic mode follows each image's aspect ratio (with a 150 DPI
-mapping and 2–15 inch long-edge bounds); Fit and Fill use A4, Letter, or a
-validated custom page with automatic landscape/portrait orientation. Margins,
-background, focal position, and a per-page mode override are represented in the
-typed layout contract. The same geometry resolver drives the thumbnail,
-ordered preview, and browser PDF MediaBox/draw matrix, so preview and export
-do not silently fall back to a rigid portrait page.
+- Schema version 1, at most 500 pages per project (`MaxPages`), rotations limited to `0`, `90`, `180`, or `270` degrees.
+- Each page references an ownership-verified `uploadId`, a 1-based `sourcePage`, optional source grouping metadata (`sourceName`, `sourceKind`, `sourcePageCount`), and optional additive `layout` overrides.
+- Page array order is the exact export order; filenames never determine page order.
+- Projects are persisted in PostgreSQL (`conv_document_projects`):
+  - Signed-in users receive persistent saved projects (`expires_at IS NULL`).
+  - Guest projects automatically expire according to the instance guest retention window (`expires_at`), and expired guest projects are purged during scheduled guest cleanup.
+  - Deleting a project never deletes source uploads.
 
-The browser exporter preserves native JPEG bytes only when no rotation or EXIF
-orientation correction is required. Other raster pages are encoded at their
-original pixel dimensions for this local PDF path; server export remains the
-place to preserve native PNG/PDF/vector content without rasterization.
-Images are decoded with EXIF orientation applied where supported, and browser
-work is bounded at 80 million pixels. This is an initial local exporter, not a
-replacement for the server worker. PDF/Office source expansion and merging,
-saved projects, guest expiration, and fidelity-tested server PDF assembly
-remain the next layers. Unsupported source types are shown honestly and remain
-available for source preparation/manifest handoff rather than pretending that
-the browser exporter can merge them.
+## Source Inspection & Multi-page Expansion
 
-The prepared manifest can still be downloaded as a durable handoff for that
-upcoming server exporter.
+`GET /api/v1/documents/sources/{id}` inspects an owned upload without mutating it:
+
+- **Images (JPEG/PNG/GIF):** bounded header decode + EXIF orientation check -> 1 page with exact oriented dimensions.
+- **PDFs:** bounded pure-Go PDF parser (`server/internal/document/pdf_parser.go`) supporting classic xref tables, incremental updates, PDF 1.5+ cross-reference streams, and compressed object streams (`/Type /ObjStm`). Encrypted PDFs are rejected explicitly. Returns exact page count and per-page MediaBox/Rotate dimensions so multi-page PDFs expand into individually rearrangeable pages.
+- **Office documents (DOCX/ODT/PPTX/ODP/XLSX/ODS/RTF/DOC/XLS/PPT/TXT):** validated for ZIP traversal and decompression bombs (`ValidateOfficePackage`); expanded to PDF pages inside the isolated Worker via LibreOffice during export.
+
+## Shared Page Geometry & Multi-format Assembly
+
+`server/internal/document/geometry.go` mirrors `web/src/features/documentLayout.ts` (`A-028`) so server export geometry matches browser previews (`automatic`, `fit`, `fill`, `a4`, `letter`, `custom`, `marginMm`, `background`, `positionX/Y`).
+
+Exports execute through the existing durable job queue (`mode = "build"`, `POST /api/v1/documents/export`) inside the isolated Worker (`server/internal/worker/document_build.go`), verifying every source upload's SHA-256 digest and size before assembly:
+
+- **PDF (`pdf`):** Preserves native PDF vector text, fonts, paths, and streams via lossless object-closure copying and renumbering (zero rasterization) with `/Rotate` merging. Native JPEGs with EXIF orientation 1 are embedded verbatim via `/Filter /DCTDecode` (even when rotated via PDF CTM) with zero recompression; PNG/GIF images are embedded losslessly via `/Filter /FlateDecode` (+ `/SMask` alpha).
+- **CBZ (`cbz`):** Ordered ZIP (`001.jpg`, `002.png`, ...) preserving original JPEG/PNG bytes for unrotated raster pages; PDF/Office pages rasterized via Poppler (`pdftoppm`) in the Worker.
+- **Ordered Images ZIP (`zip`):** Numbered page images alongside `manifest.json`.
+- **Multipage TIFF (`tiff`):** Pure-Go baseline TIFF 6.0 multi-IFD writer with bounded uncompressed RGB buffer cap (160 MiB).
+- **DOCX (`docx`), PPTX (`pptx`), ODT (`odt`), ODP (`odp`):** Spec-compliant paginated OOXML / ODF archives placing one page image per page/slide at its physical dimensions. Honest fidelity warnings communicate that these are paginated image assemblies rather than editable flowing-text reconstructions.
+
+The browser-local raster PDF path (`web/src/features/build/pdfLocal.ts`) remains available as a fast offline option when all pages are local raster images.

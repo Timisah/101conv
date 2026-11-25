@@ -124,15 +124,7 @@ comparisons remain release verification work.
 **Acceptance:** real thumbnails, accessible reorder + drag, rotation, remove/duplicate, multipage flatten/group, undo/redo, mobile one-column/touch editor, non-destructive manifest, expiring guest and saved logged-in projects, PDF export preserving vector text/images and original bytes where possible; no needless resizing/resampling. Export formats beyond PDF (DOCX/ODT/PPTX/ODP/CBZ/multipage TIFF/ZIP) shipped only with honest fidelity and format-specific tests. Default one input page per output page.  
 **Dependencies:** PDF/Office engines, FR-010 and design of safe project lifecycle.
 
-**Status:** The current worktree extends the first Build slice with a typed,
-bounded layout contract and shared preview/export geometry. Automatic image
-pages follow oriented source ratios; Fit and Fill support A4, Letter, custom
-millimetres, margins, backgrounds, focal position, and per-page mode overrides.
-The browser smoke fixture now checks actual generated PDF MediaBox dimensions
-for rotated, square, panoramic, and fixed-A4 pages. CI run #98 verified the
-browser Build slice; PDF/Office expansion, native vector preservation, and
-saved/expiring projects remain open. Browser-local PDF generation is
-intentionally limited to raster image pages.
+**Status:** Implemented for P3. The modular `web/src/features/build/` workspace and `server/internal/document/` + Worker build pipeline provide multi-page PDF expansion (`GET /api/v1/documents/sources/{id}`), drag-and-drop and accessible keyboard/touch reordering, 90° rotation, duplicate/remove, undo/redo, flat and source-grouped views, shared page layout geometry (`A-028`), persisted non-destructive projects (`conv_document_projects`) with automatic guest expiry, and durable Worker export (`POST /api/v1/documents/export`) for PDF (preserving native PDF vector text/streams and verbatim JPEG bytes without resampling), CBZ, ordered-images ZIP, multipage TIFF, DOCX, PPTX, ODT, and ODP with explicit per-format fidelity disclosures. Browser-local raster PDF generation remains available as a fast offline shortcut.
 
 ## P4 — GPU, automations and extensions
 

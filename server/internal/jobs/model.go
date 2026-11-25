@@ -1,6 +1,10 @@
 package jobs
 
-import "time"
+import (
+	"time"
+
+	"github.com/timisah/101conv/server/internal/document"
+)
 
 type State string
 
@@ -117,8 +121,9 @@ type ExecutionSpec struct {
 	PreserveHDR                    bool     `json:"preserveHDR,omitempty"`
 	StreamSelection                string   `json:"streamSelection,omitempty"`
 	PreserveMetadata               bool     `json:"preserveMetadata,omitempty"`
-	HDRPolicy                      string   `json:"hdrPolicy,omitempty"`
-	DynamicHDRPolicy               string   `json:"dynamicHDRPolicy,omitempty"`
+	HDRPolicy                      string                       `json:"hdrPolicy,omitempty"`
+	DynamicHDRPolicy               string                       `json:"dynamicHDRPolicy,omitempty"`
+	DocumentBuild                  *document.BuildExecutionSpec `json:"documentBuild,omitempty"`
 }
 
 type JobDetail struct {

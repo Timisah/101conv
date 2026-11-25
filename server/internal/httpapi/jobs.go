@@ -580,6 +580,8 @@ func (a *API) downloadJobResult(w http.ResponseWriter, r *http.Request) {
 	prefix := "converted"
 	if job.Mode == "compress" {
 		prefix = "compressed"
+	} else if job.Mode == "build" {
+		prefix = "document"
 	}
 	filename := fmt.Sprintf("%s-%s.%s", prefix, job.ID, job.TargetFormat)
 	contentDisposition := mime.FormatMediaType("attachment", map[string]string{"filename": filename})

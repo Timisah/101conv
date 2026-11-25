@@ -24,6 +24,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/timisah/101conv/server/internal/capability"
+	"github.com/timisah/101conv/server/internal/document"
 	"github.com/timisah/101conv/server/internal/limits"
 	"github.com/timisah/101conv/server/internal/management"
 	"github.com/timisah/101conv/server/internal/profile"
@@ -47,6 +48,7 @@ var (
 type Service struct {
 	db          *sql.DB
 	management  *management.Service
+	documents   *document.ProjectStore
 	uploadRoot  string
 	resultRoot  string
 	fileMu      sync.RWMutex
@@ -55,10 +57,11 @@ type Service struct {
 	scanRunning bool
 }
 
-func (s *Service) UploadRoot() string               { return s.uploadRoot }
-func (s *Service) ResultRoot() string               { return s.resultRoot }
-func (s *Service) UploadFreeBytes() (uint64, error) { return freeBytes(s.uploadRoot) }
-func (s *Service) ResultFreeBytes() (uint64, error) { return freeBytes(s.resultRoot) }
+func (s *Service) UploadRoot() string                  { return s.uploadRoot }
+func (s *Service) ResultRoot() string                  { return s.resultRoot }
+func (s *Service) Documents() *document.ProjectStore   { return s.documents }
+func (s *Service) UploadFreeBytes() (uint64, error)    { return freeBytes(s.uploadRoot) }
+func (s *Service) ResultFreeBytes() (uint64, error)    { return freeBytes(s.resultRoot) }
 
 func freeBytes(path string) (uint64, error) {
 	var fs syscall.Statfs_t
@@ -105,7 +108,11 @@ func NewService(db *sql.DB, manager *management.Service, uploadRoot, resultRoot 
 			return nil, fmt.Errorf("job storage path must be a real directory: %s", dir)
 		}
 	}
-	return &Service{db: db, management: manager, uploadRoot: uploadRoot, resultRoot: resultRoot}, nil
+	docStore, err := document.NewProjectStore(db)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{db: db, management: manager, documents: docStore, uploadRoot: uploadRoot, resultRoot: resultRoot}, nil
 }
 
 func (s *Service) Migrate(ctx context.Context) error {
@@ -312,8 +319,15 @@ ALTER TABLE conv_worker_heartbeats ADD COLUMN IF NOT EXISTS configured_concurren
 ALTER TABLE conv_worker_heartbeats ADD COLUMN IF NOT EXISTS batch_concurrency INTEGER NOT NULL DEFAULT 2;
 ALTER TABLE conv_worker_heartbeats ADD COLUMN IF NOT EXISTS acceleration JSONB NOT NULL DEFAULT '{"schemaVersion":1,"hardwareConfigured":false,"cpuFallback":true,"accelerators":[]}'::jsonb;
 `
-	_, err := s.db.ExecContext(ctx, schema)
-	return err
+	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	if s.documents != nil {
+		if err := s.documents.Migrate(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func normalizePreference(mode, source, target string) (string, string, string, error) {

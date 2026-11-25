@@ -33,7 +33,7 @@ func TestManifestValidateRejectsUnsafeOrAmbiguousPages(t *testing.T) {
 		{"invalid rotation", func(m *Manifest) { m.Pages[0].Rotation = 45 }},
 		{"invalid source page", func(m *Manifest) { m.Pages[0].SourcePage = 0 }},
 		{"unsafe upload id", func(m *Manifest) { m.Pages[0].UploadID = "../secret" }},
-		{"unsupported output", func(m *Manifest) { m.OutputFormat = "docx" }},
+		{"unsupported output", func(m *Manifest) { m.OutputFormat = "exe" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

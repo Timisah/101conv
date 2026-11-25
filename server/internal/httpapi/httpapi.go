@@ -203,6 +203,14 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", a.cancelJob)
 	mux.HandleFunc("GET /api/v1/jobs/{id}/result", a.downloadJobResult)
 	mux.HandleFunc("GET /api/v1/jobs/{id}/thumbnail", a.getJobThumbnail)
+	mux.HandleFunc("GET /api/v1/documents/formats", a.listDocumentFormats)
+	mux.HandleFunc("GET /api/v1/documents/sources/{id}", a.inspectDocumentSource)
+	mux.HandleFunc("GET /api/v1/documents/projects", a.listDocumentProjects)
+	mux.HandleFunc("POST /api/v1/documents/projects", a.createDocumentProject)
+	mux.HandleFunc("GET /api/v1/documents/projects/{id}", a.getDocumentProject)
+	mux.HandleFunc("PUT /api/v1/documents/projects/{id}", a.updateDocumentProject)
+	mux.HandleFunc("DELETE /api/v1/documents/projects/{id}", a.deleteDocumentProject)
+	mux.HandleFunc("POST /api/v1/documents/export", a.exportDocument)
 	return mux
 }
 
