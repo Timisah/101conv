@@ -42,16 +42,32 @@ type HistoryTotals struct {
 	SavedBytes  int64 `json:"savedBytes,omitempty"`
 }
 
+// BatchPreviewItem is a lightweight summary of one of the first three items
+// in a batch, used to render visual Jobs & history collage previews without
+// fetching every batch's full item list.
+type BatchPreviewItem struct {
+	Index         int    `json:"index"`
+	UploadID      string `json:"uploadId"`
+	FileName      string `json:"fileName,omitempty"`
+	JobID         string `json:"jobId,omitempty"`
+	SourceFormat  string `json:"sourceFormat,omitempty"`
+	TargetFormat  string `json:"targetFormat,omitempty"`
+	State         string `json:"state"`
+	OriginalState string `json:"originalState,omitempty"`
+	ResultState   string `json:"resultState,omitempty"`
+}
+
 // HistoryEntry is either a standalone job or a batch parent.
 type HistoryEntry struct {
-	Type      string         `json:"type"`
-	CreatedAt time.Time      `json:"createdAt"`
-	FileName  string         `json:"fileName,omitempty"`
-	OwnerID   string         `json:"ownerId,omitempty"`
-	OwnerName string         `json:"ownerName,omitempty"`
-	Job       *Job           `json:"job,omitempty"`
-	Batch     *Batch         `json:"batch,omitempty"`
-	Totals    *HistoryTotals `json:"totals,omitempty"`
+	Type         string             `json:"type"`
+	CreatedAt    time.Time          `json:"createdAt"`
+	FileName     string             `json:"fileName,omitempty"`
+	OwnerID      string             `json:"ownerId,omitempty"`
+	OwnerName    string             `json:"ownerName,omitempty"`
+	Job          *Job               `json:"job,omitempty"`
+	Batch        *Batch             `json:"batch,omitempty"`
+	Totals       *HistoryTotals     `json:"totals,omitempty"`
+	PreviewItems []BatchPreviewItem `json:"previewItems,omitempty"`
 }
 
 // historyCTE unions standalone jobs with batch parents. Batch member jobs
@@ -221,22 +237,36 @@ func (s *Service) hydrateHistoryBatches(ctx context.Context, entries []HistoryEn
 	}
 	rows.Close()
 	firstNames := make(map[string]string, len(ids))
-	nameRows, err := s.db.QueryContext(ctx, `SELECT bi.batch_id, u.file_name FROM conv_batch_items bi JOIN conv_uploads u ON u.id=bi.upload_id WHERE bi.batch_id=ANY($1) AND bi.item_index=0`, ids)
+	previewItems := make(map[string][]BatchPreviewItem, len(ids))
+	previewRows, err := s.db.QueryContext(ctx, `SELECT bi.batch_id, bi.item_index, bi.upload_id, u.file_name,
+	 COALESCE(bi.current_job_id,''), COALESCE(j.source_format, u.extension), COALESCE(j.target_format, ''),
+	 bi.state,
+	 CASE WHEN u.original_deleted_at IS NOT NULL THEN 'expired' WHEN u.original_missing_at IS NOT NULL THEN 'missing' ELSE 'available' END,
+	 CASE WHEN j.id IS NULL THEN '' WHEN j.result_deleted_at IS NOT NULL THEN 'expired' WHEN j.result_missing_at IS NOT NULL THEN 'missing' WHEN j.state='succeeded' THEN 'available' ELSE '' END
+	 FROM conv_batch_items bi
+	 JOIN conv_uploads u ON u.id=bi.upload_id
+	 LEFT JOIN conv_jobs j ON j.id=bi.current_job_id
+	 WHERE bi.batch_id=ANY($1) AND bi.item_index < 3
+	 ORDER BY bi.batch_id, bi.item_index`, ids)
 	if err != nil {
 		return err
 	}
-	defer nameRows.Close()
-	for nameRows.Next() {
-		var id, name string
-		if err = nameRows.Scan(&id, &name); err != nil {
+	defer previewRows.Close()
+	for previewRows.Next() {
+		var batchID string
+		var item BatchPreviewItem
+		if err = previewRows.Scan(&batchID, &item.Index, &item.UploadID, &item.FileName, &item.JobID, &item.SourceFormat, &item.TargetFormat, &item.State, &item.OriginalState, &item.ResultState); err != nil {
 			return err
 		}
-		firstNames[id] = name
+		if item.Index == 0 {
+			firstNames[batchID] = item.FileName
+		}
+		previewItems[batchID] = append(previewItems[batchID], item)
 	}
-	if err = nameRows.Err(); err != nil {
+	if err = previewRows.Err(); err != nil {
 		return err
 	}
-	nameRows.Close()
+	previewRows.Close()
 	totals := make(map[string]HistoryTotals, len(ids))
 	sizeRows, err := s.db.QueryContext(ctx, `SELECT bi.batch_id, COALESCE(sum(u.size_bytes),0), COALESCE(sum(j.result_size),0)
 	 FROM conv_batch_items bi JOIN conv_jobs j ON j.id=bi.current_job_id AND j.state='succeeded' JOIN conv_uploads u ON u.id=j.upload_id
@@ -270,6 +300,7 @@ func (s *Service) hydrateHistoryBatches(ctx context.Context, entries []HistoryEn
 		}
 		entries[i].Batch = &batch
 		entries[i].FileName = firstNames[id]
+		entries[i].PreviewItems = previewItems[id]
 		if t, ok := totals[id]; ok {
 			t := t
 			entries[i].Totals = &t

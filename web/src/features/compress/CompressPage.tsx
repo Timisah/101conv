@@ -14,6 +14,7 @@ import {
 import { CompressionOptionField } from '../../components/CompressionOptionField';
 import { UploadArea, selectFiles } from '../../components/UploadArea';
 import { PageHeading } from '../../components/common';
+import { LocalFileThumb } from '../previews/FileThumbnail';
 import {
   inputFormats,
   optionsFor,
@@ -352,7 +353,7 @@ export function CompressPage({
                 const prefName = prefRow?.alternatives.find(alt => alt.id === prefRow.effectiveProfileId)?.name;
                 return (
                   <div className="file-row" key={index}>
-                    <div className="filetype-icon">{sourceExt.slice(0, 4) || 'FILE'}</div>
+                    <LocalFileThumb file={file} />
                     <div className="file-info">
                       <b title={file.name}>{file.name}</b>
                       <small>

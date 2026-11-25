@@ -184,6 +184,7 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 	mux.HandleFunc("POST /api/v1/repositories/{id}/engines/{engineID}/{version}/install", a.installRepositoryEngine)
 	mux.HandleFunc("POST /api/v1/uploads", a.uploadFile)
 	mux.HandleFunc("GET /api/v1/uploads/{id}/analysis", a.analyzeUpload)
+	mux.HandleFunc("GET /api/v1/uploads/{id}/thumbnail", a.getUploadThumbnail)
 	mux.HandleFunc("POST /api/v1/inspect", a.inspectUpload)
 	mux.HandleFunc("POST /api/v1/uploads/{id}/metadata-removal", a.removeMetadata)
 	mux.HandleFunc("POST /api/v1/jobs", a.submitJob)
@@ -201,6 +202,7 @@ func NewWithUpdates(version string, catalogService *catalog.Service, managementS
 	mux.HandleFunc("GET /api/v1/jobs/{id}", a.getJob)
 	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", a.cancelJob)
 	mux.HandleFunc("GET /api/v1/jobs/{id}/result", a.downloadJobResult)
+	mux.HandleFunc("GET /api/v1/jobs/{id}/thumbnail", a.getJobThumbnail)
 	return mux
 }
 

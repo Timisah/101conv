@@ -17,6 +17,12 @@ import {
 } from './src/features/converters/types.ts';
 import { mergeDataDefaults } from './src/features/useData.ts';
 import { categoriesOf, searchableText, uniqueFormats } from './src/features/catalog/catalogData.ts';
+import {
+  batchCollagePlan,
+  fileKindFor,
+  isBrowserPreviewableImage,
+  previewDescriptorFor,
+} from './src/features/previews/filePreview.ts';
 
 test('navigation metadata preserves route labels, sections, and mobile shortcuts', () => {
   assert.deepEqual(
@@ -190,5 +196,53 @@ test('catalog helpers index formats/capabilities, infer categories, and deduplic
   const text = searchableText(entry);
   assert.ok(text.includes('avif') && text.includes('image.convert') && text.includes('raster photos'));
   assert.deepEqual(categoriesOf(entry), ['images']);
+});
+
+test('batch collage plans never emit a fake +0 tile and compute +N accurately', () => {
+  const mk = n => Array.from({ length: n }, (_, i) => ({ index: i }));
+  assert.deepEqual(batchCollagePlan(mk(1), 1), { tiles: [{ index: 0 }], overflowCount: 0 });
+  assert.deepEqual(batchCollagePlan(mk(2), 2), { tiles: [{ index: 0 }, { index: 1 }], overflowCount: 0 });
+  assert.deepEqual(batchCollagePlan(mk(3), 3), { tiles: [{ index: 0 }, { index: 1 }, { index: 2 }], overflowCount: 0 });
+  assert.deepEqual(batchCollagePlan(mk(4), 4), { tiles: [{ index: 0 }, { index: 1 }, { index: 2 }], overflowCount: 1 });
+  assert.deepEqual(batchCollagePlan(mk(3), 12), { tiles: [{ index: 0 }, { index: 1 }, { index: 2 }], overflowCount: 9 });
+});
+
+test('preview descriptors distinguish output vs original and respect expiry and safe formats', () => {
+  assert.equal(isBrowserPreviewableImage('photo.jpg', 'image/jpeg'), true);
+  assert.equal(isBrowserPreviewableImage('vector.svg', 'image/svg+xml'), false);
+  assert.equal(isBrowserPreviewableImage('report.pdf', 'application/pdf'), false);
+  assert.equal(fileKindFor('report.pdf'), 'document');
+  assert.equal(fileKindFor('clip.mp4'), 'video');
+
+  const succeeded = previewDescriptorFor({
+    jobId: 'job-1',
+    sourceFormat: 'png',
+    targetFormat: 'jpg',
+    state: 'succeeded',
+    originalState: 'available',
+    resultState: 'available',
+  });
+  assert.equal(succeeded.badge, 'Output');
+  assert.equal(succeeded.url, '/api/v1/jobs/job-1/thumbnail?kind=result');
+
+  const queued = previewDescriptorFor({
+    jobId: 'job-2',
+    sourceFormat: 'png',
+    targetFormat: 'jpg',
+    state: 'queued',
+    originalState: 'available',
+  });
+  assert.equal(queued.badge, 'Original');
+  assert.equal(queued.url, '/api/v1/jobs/job-2/thumbnail?kind=original');
+
+  const expired = previewDescriptorFor({
+    jobId: 'job-3',
+    sourceFormat: 'png',
+    targetFormat: 'jpg',
+    state: 'succeeded',
+    originalState: 'expired',
+    resultState: 'expired',
+  });
+  assert.equal(expired.url, null);
 });
 
