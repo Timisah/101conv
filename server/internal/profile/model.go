@@ -147,6 +147,7 @@ type Installation struct {
 	ProfileID       string            `json:"profileId"`
 	Version         string            `json:"version"`
 	Enabled         bool              `json:"enabled"`
+	Active          bool              `json:"active,omitempty"`
 	RepositoryID    string            `json:"repositoryId,omitempty"`
 	Customized      bool              `json:"customized,omitempty"`
 	ResolvedEngines map[string]string `json:"resolvedEngines,omitempty"`

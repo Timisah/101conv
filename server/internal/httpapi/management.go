@@ -130,7 +130,15 @@ func (a *API) listProfiles(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && !a.authorized(w, r) {
 		return
 	}
-	v, err := a.management.ListProfiles(r.Context())
+	var (
+		v   []management.ProfileRecord
+		err error
+	)
+	if p.IsAdmin() && r.URL.Query().Get("includeRetained") == "true" {
+		v, err = a.management.ListAllProfiles(r.Context())
+	} else {
+		v, err = a.management.ListProfiles(r.Context())
+	}
 	if err != nil {
 		writeManagementError(w, err)
 		return
@@ -200,6 +208,81 @@ func (a *API) removeProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.management.RemoveProfile(r.Context(), r.PathValue("id")); err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) listProfileVersions(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) {
+		return
+	}
+	versions, err := a.management.ListProfileVersions(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"versions": versions})
+}
+func (a *API) activateProfileVersion(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) {
+		return
+	}
+	var req engineVersionRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if req.Version == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "version is required")
+		return
+	}
+	v, err := a.management.ActivateProfileVersion(r.Context(), r.PathValue("id"), req.Version)
+	if err != nil {
+		writeManagementError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+func (a *API) removeProfileVersion(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	ver := r.PathValue("version")
+	if a.jobs != nil {
+		inUse, err := a.jobs.ProfileVersionHasActiveJobs(r.Context(), id, ver)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "job_storage_error", "could not verify active jobs before profile version removal")
+			return
+		}
+		if inUse {
+			writeAPIError(w, http.StatusConflict, "profile_version_in_use", "profile version is referenced by queued or running jobs")
+			return
+		}
+	}
+	if a.automations != nil {
+		inUse, err := a.automations.ProfileVersionInUse(r.Context(), id, ver)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "automation_storage_error", "could not verify automations before profile version removal")
+			return
+		}
+		if inUse {
+			writeAPIError(w, http.StatusConflict, "profile_version_in_use", "profile version is pinned by an automation; update or remove the automation first")
+			return
+		}
+	}
+	if a.presets != nil {
+		inUse, err := a.presets.ProfileVersionInUse(r.Context(), id, ver)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "preset_storage_error", "could not verify presets before profile version removal")
+			return
+		}
+		if inUse {
+			writeAPIError(w, http.StatusConflict, "profile_version_in_use", "profile version is referenced by a saved preset; update or delete the preset first")
+			return
+		}
+	}
+	if err := a.management.RemoveProfileVersion(r.Context(), id, ver); err != nil {
 		writeManagementError(w, err)
 		return
 	}

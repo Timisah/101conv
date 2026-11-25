@@ -433,6 +433,7 @@ func (s *Service) GetAutomation(ctx context.Context, id, owner string) (Automati
 		graph := GraphFromDefinition(a.Definition)
 		a.Definition.Graph = &graph
 	}
+	s.populateProfileNotices(ctx, []Automation{a}, func(i int, notice string) { a.ProfileNotice = notice })
 	return a, nil
 }
 
@@ -458,7 +459,52 @@ func (s *Service) ListAutomations(ctx context.Context, owner string) ([]Automati
 		}
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	s.populateProfileNotices(ctx, out, func(i int, notice string) { out[i].ProfileNotice = notice })
+	return out, nil
+}
+
+func (s *Service) populateProfileNotices(ctx context.Context, items []Automation, set func(i int, notice string)) {
+	if s.management == nil || len(items) == 0 {
+		return
+	}
+	all, err := s.management.ListAllProfiles(ctx)
+	if err != nil {
+		return
+	}
+	activeVer := map[string]string{}
+	installedKey := map[string]bool{}
+	for _, p := range all {
+		installedKey[p.Definition.ID+"\x00"+p.Definition.Version] = true
+		if p.State.Active {
+			activeVer[p.Definition.ID] = p.Definition.Version
+		}
+	}
+	for i, a := range items {
+		pid := a.Definition.Action.ProfileID
+		pver := a.Definition.Action.ProfileVersion
+		if pid == "" || pver == "" {
+			continue
+		}
+		active := activeVer[pid]
+		if active != "" && active != pver && installedKey[pid+"\x00"+pver] {
+			set(i, fmt.Sprintf("Pinned to retained profile version %s (active version is %s).", pver, active))
+		}
+	}
+}
+
+// ProfileVersionInUse reports whether any automation's current revision pins
+// the given (profileID, profileVersion).
+func (s *Service) ProfileVersionInUse(ctx context.Context, profileID, profileVersion string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM conv_automations a
+		JOIN conv_automation_revisions r ON r.automation_id=a.id AND r.revision=a.current_revision
+		WHERE r.definition->'action'->>'profileId'=$1 AND r.definition->'action'->>'profileVersion'=$2
+	)`, profileID, profileVersion).Scan(&exists)
+	return exists, err
 }
 
 func (s *Service) SetEnabled(ctx context.Context, id, owner string, enabled bool) (Automation, error) {
@@ -664,21 +710,27 @@ func (s *Service) ValidateDefinition(ctx context.Context, d Definition) error {
 		collectConditionFormats(*d.Condition, &conditionFormats)
 	}
 	if s.management != nil {
-		profiles, profileErr := s.management.ListProfiles(ctx)
+		profiles, profileErr := s.management.ListAllProfiles(ctx)
 		if profileErr != nil {
 			return profileErr
 		}
 		found := false
+		idInstalled := false
 		for _, installed := range profiles {
 			p := installed.Definition
 			if p.ID != d.Action.ProfileID {
 				continue
 			}
+			idInstalled = true
+			if d.Action.ProfileVersion != "" {
+				if p.Version != d.Action.ProfileVersion {
+					continue
+				}
+			} else if !installed.State.Active {
+				continue
+			}
 			if !installed.State.Enabled {
 				return errors.New("selected conversion profile is disabled")
-			}
-			if d.Action.ProfileVersion != "" && p.Version != d.Action.ProfileVersion {
-				return errors.New("selected profile version is no longer installed; edit this automation to review a compatible version")
 			}
 			if !p.SupportsMode(d.Action.Mode) {
 				return errors.New("selected profile is not compatible with this automation mode")
@@ -723,8 +775,12 @@ func (s *Service) ValidateDefinition(ctx context.Context, d Definition) error {
 				}
 			}
 			found = true
+			break
 		}
 		if !found {
+			if idInstalled && d.Action.ProfileVersion != "" {
+				return errors.New("selected profile version is no longer installed; edit this automation to review a compatible version")
+			}
 			return errors.New("selected profile is not installed")
 		}
 	}
