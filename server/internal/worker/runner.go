@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/timisah/101conv/server/internal/document"
 	"github.com/timisah/101conv/server/internal/limits"
 )
 
@@ -60,6 +61,7 @@ type Invocation struct {
 	SourceExtension                string
 	ExpectedInputSHA256            string
 	ExpectedInputSize              int64
+	DocumentBuild                  *document.BuildExecutionSpec
 }
 
 type Result struct {
@@ -84,6 +86,9 @@ type ProcessRunner struct {
 }
 
 func (r *ProcessRunner) Run(parent context.Context, in Invocation) (ret Result, retErr error) {
+	if in.DocumentBuild != nil {
+		return r.runDocumentBuild(parent, in)
+	}
 	if !safeSegment.MatchString(in.JobID) || !safeSegment.MatchString(in.InputID) || !safeSegment.MatchString(in.EngineID) || !safeSegment.MatchString(in.EngineVersion) || in.Attempt < 1 || in.Attempt > 1000000 {
 		return Result{}, fmt.Errorf("invalid worker invocation identity")
 	}

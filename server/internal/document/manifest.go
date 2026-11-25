@@ -1,4 +1,5 @@
-// Package document owns the non-destructive Document Creator manifest.
+// Package document owns the non-destructive Document Creator manifest,
+// project persistence, source inspection, and multi-format assembly.
 // Exporters consume this typed contract; they never infer page order from
 // filenames or mutate source uploads.
 package document
@@ -17,6 +18,121 @@ const (
 )
 
 var identifierRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+// FormatInfo describes a supported Document Creator export format along with
+// honest fidelity expectations so callers and UIs never overpromise editable
+// text reconstruction for rasterized or paginated exports.
+type FormatInfo struct {
+	ID                 string `json:"id"`
+	Label              string `json:"label"`
+	Extension          string `json:"extension"`
+	MIMEType           string `json:"mimeType"`
+	PreservesNativePDF bool   `json:"preservesNativePdf"`
+	RasterizesVector   bool   `json:"rasterizesVector"`
+	FidelitySummary    string `json:"fidelitySummary"`
+	FidelityWarning    string `json:"fidelityWarning,omitempty"`
+}
+
+var supportedFormats = []FormatInfo{
+	{
+		ID:                 "pdf",
+		Label:              "PDF Document",
+		Extension:          "pdf",
+		MIMEType:           "application/pdf",
+		PreservesNativePDF: true,
+		RasterizesVector:   false,
+		FidelitySummary:    "Preserves native PDF vector text/graphics and embeds original JPEG/PNG bytes without needless resampling.",
+	},
+	{
+		ID:                 "cbz",
+		Label:              "CBZ (Comic Book Archive)",
+		Extension:          "cbz",
+		MIMEType:           "application/vnd.comicbook+zip",
+		PreservesNativePDF: false,
+		RasterizesVector:   true,
+		FidelitySummary:    "Ordered ZIP of page images preserving original JPEG/PNG bytes for unrotated raster pages.",
+		FidelityWarning:    "PDF and Office pages are rendered as raster page images; selectable vector text is not preserved.",
+	},
+	{
+		ID:                 "zip",
+		Label:              "Ordered Images ZIP",
+		Extension:          "zip",
+		MIMEType:           "application/zip",
+		PreservesNativePDF: false,
+		RasterizesVector:   true,
+		FidelitySummary:    "Numbered page images in export order alongside a non-destructive manifest.json.",
+		FidelityWarning:    "PDF and Office pages are rendered as PNG images; vector text is not preserved.",
+	},
+	{
+		ID:                 "tiff",
+		Label:              "Multipage TIFF",
+		Extension:          "tiff",
+		MIMEType:           "image/tiff",
+		PreservesNativePDF: false,
+		RasterizesVector:   true,
+		FidelitySummary:    "Single multipage TIFF file containing one uncompressed RGB page per input page.",
+		FidelityWarning:    "All pages are stored as raster images; selectable PDF text is not preserved.",
+	},
+	{
+		ID:                 "docx",
+		Label:              "Word Document (DOCX)",
+		Extension:          "docx",
+		MIMEType:           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		PreservesNativePDF: false,
+		RasterizesVector:   true,
+		FidelitySummary:    "Paginated DOCX placing one page image per document page at its physical dimensions.",
+		FidelityWarning:    "Paginated image assembly — does not convert scans or PDFs into editable flowing Word paragraphs.",
+	},
+	{
+		ID:                 "pptx",
+		Label:              "PowerPoint Presentation (PPTX)",
+		Extension:          "pptx",
+		MIMEType:           "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		PreservesNativePDF: false,
+		RasterizesVector:   true,
+		FidelitySummary:    "Paginated PPTX placing one page image per slide sized to match the page aspect ratio.",
+		FidelityWarning:    "Paginated slide assembly — pages are embedded as slide images rather than editable text boxes.",
+	},
+	{
+		ID:                 "odt",
+		Label:              "OpenDocument Text (ODT)",
+		Extension:          "odt",
+		MIMEType:           "application/vnd.oasis.opendocument.text",
+		PreservesNativePDF: false,
+		RasterizesVector:   true,
+		FidelitySummary:    "Paginated ODT placing one page image per page at its physical dimensions.",
+		FidelityWarning:    "Paginated image assembly — does not reconstruct editable flowing text.",
+	},
+	{
+		ID:                 "odp",
+		Label:              "OpenDocument Presentation (ODP)",
+		Extension:          "odp",
+		MIMEType:           "application/vnd.oasis.opendocument.presentation",
+		PreservesNativePDF: false,
+		RasterizesVector:   true,
+		FidelitySummary:    "Paginated ODP placing one page image per slide.",
+		FidelityWarning:    "Paginated slide assembly — pages are embedded as slide images rather than editable text boxes.",
+	},
+}
+
+// SupportedFormats returns a copy of the verified export formats and their
+// honest fidelity metadata.
+func SupportedFormats() []FormatInfo {
+	out := make([]FormatInfo, len(supportedFormats))
+	copy(out, supportedFormats)
+	return out
+}
+
+// LookupFormat resolves a normalized output format identifier.
+func LookupFormat(format string) (FormatInfo, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(format))
+	for _, info := range supportedFormats {
+		if info.ID == normalized {
+			return info, true
+		}
+	}
+	return FormatInfo{}, false
+}
 
 type Manifest struct {
 	SchemaVersion int     `json:"schemaVersion"`
@@ -57,11 +173,37 @@ type LayoutOverride struct {
 // Page is a reference to an existing upload and source page. Page order is
 // the order in Manifest.Pages; the source upload remains unchanged.
 type Page struct {
-	ID         string          `json:"id"`
-	UploadID   string          `json:"uploadId"`
-	SourcePage int             `json:"sourcePage"`
-	Rotation   int             `json:"rotation"`
-	Layout     *LayoutOverride `json:"layout,omitempty"`
+	ID              string          `json:"id"`
+	UploadID        string          `json:"uploadId"`
+	SourcePage      int             `json:"sourcePage"`
+	Rotation        int             `json:"rotation"`
+	Layout          *LayoutOverride `json:"layout,omitempty"`
+	SourceName      string          `json:"sourceName,omitempty"`
+	SourceKind      string          `json:"sourceKind,omitempty"`
+	SourcePageCount int             `json:"sourcePageCount,omitempty"`
+}
+
+// SourceSpec is the frozen, ownership- and digest-verified source upload
+// reference embedded into an immutable Worker build specification.
+type SourceSpec struct {
+	UploadID  string `json:"uploadId"`
+	FileName  string `json:"fileName"`
+	Extension string `json:"extension"`
+	Size      int64  `json:"size"`
+	SHA256    string `json:"sha256"`
+}
+
+// BuildExecutionSpec is stored inside jobs.ExecutionSpec for durable Worker
+// execution of Document Creator exports.
+type BuildExecutionSpec struct {
+	Manifest                 Manifest     `json:"manifest"`
+	Sources                  []SourceSpec `json:"sources"`
+	LibreOfficeEngineID      string       `json:"libreOfficeEngineId,omitempty"`
+	LibreOfficeEngineVersion string       `json:"libreOfficeEngineVersion,omitempty"`
+	LibreOfficeRelativePath  string       `json:"libreOfficeRelativePath,omitempty"`
+	PopplerEngineID          string       `json:"popplerEngineId,omitempty"`
+	PopplerEngineVersion     string       `json:"popplerEngineVersion,omitempty"`
+	PopplerRelativePath      string       `json:"popplerRelativePath,omitempty"`
 }
 
 func (m Manifest) Validate() error {
@@ -75,8 +217,8 @@ func (m Manifest) Validate() error {
 	if name == "" || len([]byte(name)) > MaxNameBytes {
 		return fmt.Errorf("name is required and must be at most %d bytes", MaxNameBytes)
 	}
-	if strings.ToLower(strings.TrimSpace(m.OutputFormat)) != "pdf" {
-		return fmt.Errorf("only PDF export is available in the first manifest version")
+	if _, ok := LookupFormat(m.OutputFormat); !ok {
+		return fmt.Errorf("unsupported output format %q", m.OutputFormat)
 	}
 	if m.Layout != nil {
 		if err := validateLayout(*m.Layout); err != nil {

@@ -23,6 +23,7 @@ import {
   isBrowserPreviewableImage,
   previewDescriptorFor,
 } from './src/features/previews/filePreview.ts';
+import { DEFAULT_DOCUMENT_FORMATS } from './src/features/docbuilder/types.ts';
 
 test('navigation metadata preserves route labels, sections, and mobile shortcuts', () => {
   assert.deepEqual(
@@ -245,4 +246,17 @@ test('preview descriptors distinguish output vs original and respect expiry and 
   });
   assert.equal(expired.url, null);
 });
+
+test('document creator formats declare honest fidelity metadata for PDF vs raster/office exports', () => {
+  const ids = DEFAULT_DOCUMENT_FORMATS.map(f => f.id);
+  assert.deepEqual(ids, ['pdf', 'cbz', 'zip', 'tiff', 'docx', 'pptx', 'odt', 'odp']);
+  const pdf = DEFAULT_DOCUMENT_FORMATS.find(f => f.id === 'pdf');
+  assert.equal(pdf?.preservesNativePdf, true);
+  assert.equal(pdf?.rasterizesVector, false);
+  for (const format of DEFAULT_DOCUMENT_FORMATS.filter(f => f.id !== 'pdf')) {
+    assert.equal(format.rasterizesVector, true);
+    assert.ok(format.fidelityWarning && format.fidelityWarning.length > 10, `${format.id} must explain fidelity tradeoffs`);
+  }
+});
+
 

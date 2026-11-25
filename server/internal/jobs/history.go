@@ -116,8 +116,8 @@ func (s *Service) History(ctx context.Context, filter HistoryFilter) ([]HistoryE
 	if filter.Offset < 0 {
 		filter.Offset = 0
 	}
-	if filter.Mode != "" && filter.Mode != "convert" && filter.Mode != "compress" {
-		return nil, 0, fmt.Errorf("%w: mode must be convert or compress", ErrInvalidInput)
+	if filter.Mode != "" && filter.Mode != "convert" && filter.Mode != "compress" && filter.Mode != "build" {
+		return nil, 0, fmt.Errorf("%w: mode must be convert, compress, or build", ErrInvalidInput)
 	}
 	if filter.Kind != "" && filter.Kind != HistoryJob && filter.Kind != HistoryBatch {
 		return nil, 0, fmt.Errorf("%w: type must be job or batch", ErrInvalidInput)

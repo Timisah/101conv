@@ -39,6 +39,9 @@ func (s *Service) cleanupGuestExpiredLocked(ctx context.Context, policy GuestRet
 	if _, err := s.db.ExecContext(ctx, `WITH expired AS (SELECT id FROM conv_guest_upload_reservations WHERE expires_at<now() ORDER BY expires_at LIMIT 500) DELETE FROM conv_guest_upload_reservations r USING expired e WHERE r.id=e.id`); err != nil {
 		return report, err
 	}
+	if s.documents != nil {
+		_, _ = s.documents.PurgeExpired(ctx)
+	}
 	for _, item := range []struct {
 		fn    func(context.Context, int, int) (CleanupReport, error)
 		hours int
